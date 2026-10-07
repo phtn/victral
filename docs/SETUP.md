@@ -6,8 +6,8 @@ copy of the original `file.txt`. The original `file.md` is a saved HTML page.
 ## Current state
 
 A Bun application with a strict TypeScript CLI, agent loop, tool layer,
-and Ink/React terminal workspace implements the core memory loop with Cohere `command-a-plus-05-2026` as the default agent and compactor,
-and selectable Meta `muse-spark-1.3` and `muse-spark-1.3-contributor`. Runtime
+and Ink/React terminal workspace implements the core memory loop with Meta `muse-spark-1.3-contributor` as the default agent and compactor,
+and selectable Cohere `command-a-plus-05-2026` and Meta `muse-spark-1.3`. Runtime
 prompts use the name Victral, with only the permitted name substitution. See
 `../README.md` for commands, verification, and documented Cohere adaptations.
 Jev automatically evaluates generated summaries in the background when its

@@ -2,7 +2,7 @@
 
 A persistent coding workspace with a TypeScript CLI and a full-screen terminal
 interface, implementing the OptChat specification with Cohere and Meta models.
-The default is Cohere `command-a-plus-05-2026`. The original specification is preserved in [docs/OPTCHAT_SPEC.md](docs/OPTCHAT_SPEC.md).
+The default is Meta `muse-spark-1.3-contributor` for both the agent and the compactor. The original specification is preserved in [docs/OPTCHAT_SPEC.md](docs/OPTCHAT_SPEC.md).
 
 ## Start
 
@@ -38,10 +38,13 @@ Choose the compactor separately if desired:
 bun run start --model muse-spark-1.3 --compactor-model command-a-plus-05-2026
 ```
 
-`--models` lists the supported models without making API requests. During an
-interactive session, `/model` shows the current choices and `/model MODEL_ID`
-switches the main agent between turns while retaining saved memory. The
-compactor stays on its startup selection. Model switches are session-local;
+`--models` lists the supported models with their providers and required
+credentials, without making API requests. Models can be named by list number,
+short name, or full ID: `--model 2` works like
+`--model muse-spark-1.3`. During an interactive session, `/model` shows the
+current agent, the compactor, and the numbered choices; `/model 2` switches
+the main agent between turns while retaining saved memory. The compactor stays
+on its startup selection. Model switches are session-local;
 set `VICTRAL_MODEL` and `VICTRAL_COMPACTOR_MODEL` for defaults. Explicit CLI
 flags take precedence. Legacy `COHERE_MODEL` and `COHERE_COMPACTOR_MODEL`
 variables remain accepted.
@@ -124,7 +127,7 @@ queued work before releasing the chat lock.
 | `/tools` | List agent tools and command execution access |
 | `/metrics` | Show accumulated token, timing, memory, retrieval, and evaluation metrics |
 | `/jev` | Show recent automatic summary evaluations and their status |
-| `/model [MODEL_ID]` | Show models or switch the main agent between turns |
+| `/model [NUMBER_OR_ID]` | Show models or switch the main agent between turns |
 | `/view` | Display the current summary view |
 | `/zoom ID N` | Open a memory range; N must be a power of two |
 | `/date ID` | Display a stored message's local date and time |

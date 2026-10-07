@@ -3,7 +3,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { Storage } from './storage.js';
 import { Memory } from './memory.js';
-import { createModel, MODELS } from './models.js';
+import { createModel, formatModelsList, resolveModelId } from './models.js';
 import { Evaluations } from './evaluations.js';
 import { Metrics } from './metrics.js';
 import { Runner } from './runner.js';
@@ -136,10 +136,12 @@ export class Session extends EventEmitter {
     if (name === '/usage') return JSON.stringify(this.storage.load('usage').slice(-10), null, 2);
     if (name === '/view') return this.memory.render() || 'No saved messages yet.';
     if (name === '/model') {
-      if (!arg) return `Agent: ${this.runner.model.model}\nCompactor: ${this.options.compactorModel}\nAvailable: ${MODELS.join(', ')}`;
+      if (!arg) return `Agent: ${this.runner.model.model}\nCompactor: ${this.options.compactorModel} (fixed at startup)\nAvailable models:\n${formatModelsList()}\n\nSwitch with /model <number or ID>, e.g. /model 2. Switching is session-local and keeps saved memory.`;
       if (this.runner.active) throw new Error('Switch models between turns; /cancel ends the current turn.');
-      this.runner.model = modelFactory(arg, { usage: record => this.metrics.usage(record) }); this.update();
-      return `Model switched to ${arg}.`;
+      const selected = resolveModelId(arg);
+      if (selected === this.runner.model.model) return `Already using ${selected}.`;
+      this.runner.model = modelFactory(selected, { usage: record => this.metrics.usage(record) }); this.update();
+      return `Switched agent to ${selected}. Session-local; saved memory kept. Compactor unchanged (${this.options.compactorModel}).`;
     }
     if (name === '/zoom' || name === '/date') {
       if (!/^\d+$/.test(rest[0] ?? '')) throw new Error(`Usage: ${name} ID${name === '/zoom' ? ' N' : ''}`);

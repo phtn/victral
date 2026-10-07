@@ -1,7 +1,9 @@
 import { test, afterEach } from 'bun:test';
 import assert from 'node:assert/strict';
 import { Meta, metaRequest } from '../src/meta.js';
-import { createModel, MODELS } from '../src/models.js';
+import { createModel, MODELS, MODEL_INFO, formatModelsList, resolveModelId } from '../src/models.js';
+import { MODEL } from '../src/constants.js';
+import { Cohere } from '../src/cohere.js';
 
 test('Meta request groups tool results and preserves encrypted reasoning exactly', () => {
   const native = [
@@ -55,4 +57,21 @@ test('model selection uses the matching provider and preserves requested IDs', (
   assert.equal(MODELS.length, 3);
   for (const model of MODELS) assert.equal(createModel(model, { apiKey: 'test-key' }).model, model);
   assert.throws(() => createModel('unknown'), /Unsupported model/);
+});
+test('default model is the contributor tier with matching providers', () => {
+  assert.equal(MODEL, 'muse-spark-1.3-contributor');
+  assert.ok(createModel(MODEL, { apiKey: 'test-key' }) instanceof Meta);
+  assert.ok(createModel('command-a-plus-05-2026', { apiKey: 'test-key' }) instanceof Cohere);
+});
+test('model input accepts numbers, case variants, and unambiguous short names', () => {
+  assert.equal(MODEL_INFO.length, 3);
+  assert.ok(formatModelsList().includes('1. command-a-plus-05-2026'));
+  assert.equal(resolveModelId('1'), MODELS[0]);
+  assert.equal(resolveModelId('2'), MODELS[1]);
+  assert.equal(resolveModelId('MUSE-SPARK-1.3'), 'muse-spark-1.3');
+  assert.equal(resolveModelId('contributor'), 'muse-spark-1.3-contributor');
+  assert.equal(resolveModelId('command'), MODELS[0]);
+  assert.throws(() => resolveModelId('muse-spark'), /several models/);
+  assert.throws(() => resolveModelId('unknown'), /Unknown model/);
+  assert.throws(() => resolveModelId(''), /Choose a model/);
 });
