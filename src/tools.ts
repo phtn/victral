@@ -8,7 +8,7 @@ const string = { type: 'string' }, integer = { type: 'integer' };
 const tool = (name: string, description: string, properties: ToolDefinition['function']['parameters']['properties'], required = Object.keys(properties)): ToolDefinition => ({
   type: 'function', function: { name, description, parameters: { type: 'object', properties, required } },
 });
-export interface ToolOptions { allowShell?: boolean; timeoutMs?: number }
+export interface ToolOptions { allowShell?: boolean; timeoutMs?: number; fetchImpl?: typeof fetch }
 const SKIP = new Set(['.git', 'node_modules', '.victral', 'dist', 'coverage', '.env']);
 function text(args: Record<string, unknown>, key: string): string {
   if (typeof args[key] !== 'string') throw new Error(`Expected ${key} to be text.`);
@@ -20,7 +20,7 @@ function integerArg(args: Record<string, unknown>, key: string, fallback: number
   return value as number;
 }
 
-export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project: string, { allowShell = false, timeoutMs = 30_000 }: ToolOptions = {}): AgentTools {
+export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project: string, { allowShell = false, timeoutMs = 30_000, fetchImpl = fetch }: ToolOptions = {}): AgentTools {
   project = realpathSync(project);
   const definitions = [
     tool('zoom', 'Expand a saved memory range. n must be a power of two.', { id: integer, n: integer }),
@@ -32,6 +32,7 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
     tool('search_files', 'Search literal text recursively in project files; returns file:line matches. Skips dependencies, build output, .env files, binary files and symlinks. Bounded to 5000 files and 100 matches.', { query: string, path: string }, ['query']),
     tool('git_status', 'Read Git working-tree status.', {}),
     tool('git_diff', 'Read unstaged or staged Git differences, optionally for a project path.', { path: string, staged: { type: 'boolean' } }, []),
+    tool('fetch_url', 'Fetch a page over HTTP(S) with GET and return its text. Non-text responses are summarized, not dumped.', { url: string, timeout_ms: integer }, ['url']),
   ];
   if (allowShell) definitions.push(
     tool('run_command', 'Execute a CLI program directly with an argument array in the project. Use for builds, tests and developer tools. Returns output, exit status and timeout. Default timeout 30s; maximum 120s.', { program: string, args: { type: 'array', items: string }, timeout_ms: integer }, ['program', 'args']),
@@ -155,6 +156,21 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
       const argv = ['git', '--no-pager', '-c', 'core.fsmonitor=false', 'diff', '--no-ext-diff', '--no-textconv', ...(args.staged ? ['--cached'] : [])];
       if (args.path !== undefined) { await resolveFile(text(args, 'path')); argv.push('--', text(args, 'path')); }
       return command(argv, timeoutMs, signal);
+    }
+    if (name === 'fetch_url') {
+      let target: URL;
+      try { target = new URL(text(args, 'url')); } catch { throw new Error('Expected an absolute http(s) URL.'); }
+      if ((target.protocol !== 'http:' && target.protocol !== 'https:') || !target.hostname) throw new Error('Expected an absolute http(s) URL.');
+      const ms = integerArg(args, 'timeout_ms', timeoutMs, 120_000);
+      const timeout = AbortSignal.timeout(ms);
+      const response = await fetchImpl(target.toString(), { signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: 'follow' });
+      signal?.throwIfAborted();
+      const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? '';
+      const data = new Uint8Array(await response.arrayBuffer());
+      const head = `[status: ${response.status}${contentType ? `; content-type: ${contentType}` : ''}; size: ${data.length} bytes]`;
+      const textual = !contentType || contentType.startsWith('text/') || /^application\/(json|javascript|x-www-form-urlencoded|.*\+xml|.*xml)$/.test(contentType);
+      if (!textual) return `${head}\nNon-text response omitted.`;
+      return `${head}\n${capResult(new TextDecoder().decode(data))}`;
     }
     if (allowShell && (name === 'shell' || name === 'run_command')) {
       const ms = integerArg(args, 'timeout_ms', timeoutMs, 120_000);

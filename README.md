@@ -67,7 +67,7 @@ loaded as the user's instructions if present; `--instructions FILE` chooses a
 different file. Nested instruction discovery is not implemented.
 
 File reading, directory listing, exact text edits, recursive literal search,
-and read-only Git status/diff are available by default. Add `--allow-shell` to
+fetching pages over HTTP(S), and read-only Git status/diff are available by default. Add `--allow-shell` to
 give the agent CLI execution:
 
 ```sh

@@ -55,6 +55,25 @@ test('Git tools expose real status/diffs without enabling arbitrary execution', 
   expect(await tools.execute('git_diff', { staged: true })).toContain('+first');
   await expect(tools.execute('git_diff', { path: '../outside' })).rejects.toThrow('outside');
 });
+test('fetch_url returns text, summarizes binary, and rejects non-http(s) URLs', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'victral-tools-')); directories.push(directory);
+  const seen: string[] = [];
+  const stub = async (url: string) => {
+    seen.push(url);
+    const binary = url.endsWith('/binary');
+    const body = new TextEncoder().encode(binary ? 'PNGDATA' : 'hello page');
+    return { status: binary ? 200 : 404, headers: new Headers({ 'content-type': binary ? 'image/png' : 'text/html; charset=utf-8' }), arrayBuffer: async () => body };
+  };
+  const tools = projectTools({ zoom: () => '', date: () => '' }, directory, { fetchImpl: stub as unknown as typeof fetch });
+  expect(tools.definitions.some(t => t.function.name === 'fetch_url')).toBe(true);
+  const page = await tools.execute('fetch_url', { url: 'https://example.com/page' });
+  expect(page).toContain('[status: 404'); expect(page).toContain('hello page');
+  const binary = await tools.execute('fetch_url', { url: 'https://example.com/binary' });
+  expect(binary).toContain('Non-text response omitted'); expect(binary).not.toContain('PNGDATA');
+  expect(seen).toEqual(['https://example.com/page', 'https://example.com/binary']);
+  await expect(tools.execute('fetch_url', { url: 'ftp://example.com/file' })).rejects.toThrow('http(s)');
+  await expect(tools.execute('fetch_url', { url: 'not a url' })).rejects.toThrow('http(s)');
+});
 test('CLI subprocesses do not inherit credential-like environment variables', async () => {
   const { tools } = await fixture(true);
   const previous = process.env.VICTRAL_TEST_TOKEN;
