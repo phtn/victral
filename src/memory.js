@@ -78,11 +78,17 @@ export class Memory extends EventEmitter {
     }
   }
   async build(l, i, signal) {
+    const started = performance.now();
     const source = l === 0
       ? `${this.storage.root[i].kind}: ${this.storage.root[i].text}`
       : `${this.node(l - 1, 2 * i).text}\n${this.node(l - 1, 2 * i + 1).text}`;
-    if (bytes(source) <= this.nodeBudget) { this.storage.saveNode(l, i, source); return; }
+    if (bytes(source) <= this.nodeBudget) {
+      this.storage.saveNode(l, i, source);
+      this.emit('node', { l, i, generated: false, attempts: 0, source_bytes: bytes(source), summary_bytes: bytes(source), duration_ms: performance.now() - started });
+      return;
+    }
     const contextEnd = l === 0 ? i : (i + 1) * 2 ** l;
+    const contextParts = this.view.filter(part => this.end(part) <= contextEnd).map(part => ({ ...part }));
     const instruction = l === 0 ? 'Compress this message' : 'Merge these two lines';
     const stepSource = l === 0 ? source : [this.node(l - 1, 2 * i).text, this.node(l - 1, 2 * i + 1).text].map(text => text.replace(/\r?\n/g, ' ')).join('\n');
     const step = `For scale, this line is exactly 512 bytes:\n${SCALE}\n\n${instruction} into one line, in at most ${this.nodeBudget} bytes:\n${stepSource}`;
@@ -101,7 +107,9 @@ export class Memory extends EventEmitter {
       messages.push(result.message, { role: 'user', content: `That line is ${bytes(line)} bytes; the limit is ${this.nodeBudget}. It must end where it is cut here:\n${cutBytes(line, this.nodeBudget)}| ← LIMIT` });
     }
     if (signal.aborted) throw signal.reason;
-    this.storage.saveNode(l, i, attempts.reduce((a, b) => bytes(a) <= bytes(b) ? a : b));
+    const summary = attempts.reduce((a, b) => bytes(a) <= bytes(b) ? a : b);
+    this.storage.saveNode(l, i, summary);
+    this.emit('node', { l, i, generated: true, context_parts: contextParts, attempts: attempts.length, source_bytes: bytes(source), summary_bytes: bytes(summary), duration_ms: performance.now() - started });
   }
   settle(signal) {
     this.pump();

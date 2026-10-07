@@ -1,4 +1,4 @@
-import test from 'node:test';
+import { test, afterEach } from 'bun:test';
 import assert from 'node:assert/strict';
 import { Cohere, viewBlocks } from '../src/cohere.js';
 

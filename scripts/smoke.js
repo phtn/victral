@@ -10,7 +10,6 @@ import { Runner } from '../src/runner.js';
 import { projectTools } from '../src/tools.js';
 import { MODEL } from '../src/constants.js';
 
-if (fs.existsSync('.env')) process.loadEnvFile('.env');
 const { values } = parseArgs({ options: { model: { type: 'string', default: MODEL } } });
 const modelId = values.model;
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'victral-smoke-'));

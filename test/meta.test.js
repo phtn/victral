@@ -1,4 +1,4 @@
-import test from 'node:test';
+import { test, afterEach } from 'bun:test';
 import assert from 'node:assert/strict';
 import { Meta, metaRequest } from '../src/meta.js';
 import { createModel, MODELS } from '../src/models.js';

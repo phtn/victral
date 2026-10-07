@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "target": "ES2023", "module": "Preserve", "moduleResolution": "Bundler",
+    "jsx": "react-jsx", "strict": true, "noEmit": true,
+    "allowJs": true, "checkJs": false, "skipLibCheck": true,
+    "types": ["bun", "react"], "esModuleInterop": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx"]
+}

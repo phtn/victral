@@ -1,18 +1,23 @@
 # Victral
 
-A terminal agent named Victral, implementing the OptChat specification with
-Cohere and Meta models. The default is Cohere `command-a-plus-05-2026`. The original
-specification is preserved in [docs/OPTCHAT_SPEC.md](docs/OPTCHAT_SPEC.md).
+A persistent coding workspace with a TypeScript CLI and a full-screen terminal
+interface, implementing the OptChat specification with Cohere and Meta models.
+The default is Cohere `command-a-plus-05-2026`. The original specification is preserved in [docs/OPTCHAT_SPEC.md](docs/OPTCHAT_SPEC.md).
 
 ## Start
 
-Requires Node.js 22 or later. There are no packages to install.
+Requires Bun 1.4 or later. Install the locked dependencies first; Bun runs the
+application, scripts, and test suite and loads local `.env` files automatically.
+
+```sh
+bun install
+```
 
 Set `COHERE_API_KEY` in your environment or in a local `.env` file. The example
 in `.env.example` lists the available settings. Never commit your keys.
 
 ```sh
-npm start -- --project /absolute/path/to/your/project
+bun run start --project /absolute/path/to/your/project
 ```
 
 ## Select models
@@ -24,13 +29,13 @@ npm start -- --project /absolute/path/to/your/project
 | `muse-spark-1.3-contributor` | Meta | `META_API_KEY` or `MODEL_API_KEY` |
 
 ```sh
-npm start -- --project /absolute/path/to/your/project --model muse-spark-1.3
+bun run start --project /absolute/path/to/your/project --model muse-spark-1.3
 ```
 
 Choose the compactor separately if desired:
 
 ```sh
-npm start -- --model muse-spark-1.3 --compactor-model command-a-plus-05-2026
+bun run start --model muse-spark-1.3 --compactor-model command-a-plus-05-2026
 ```
 
 `--models` lists the supported models without making API requests. During an
@@ -58,20 +63,67 @@ tools operate on the project selected by `--project`. Its root `AGENTS.md` is
 loaded as the user's instructions if present; `--instructions FILE` chooses a
 different file. Nested instruction discovery is not implemented.
 
-Read, list, and write tools are available by default. Add `--allow-shell` if
-you want the agent to run commands. Shell commands use the project as their
-working directory; this option is not an operating-system sandbox.
+File reading, directory listing, exact text edits, recursive literal search,
+and read-only Git status/diff are available by default. Add `--allow-shell` to
+give the agent CLI execution:
+
+```sh
+bun run start --project /absolute/path/to/your/project --allow-shell
+```
+
+`run_command` executes a program with a literal argument array, suitable for
+builds, tests, and installed developer CLIs. `shell` handles pipelines and
+other shell syntax. Both run in the project root, have a default 30-second
+timeout (maximum 120 seconds), kill their process group on cancellation on
+Unix, and cap output. Environment variables ending in KEY, TOKEN, SECRET,
+PASSWORD, CREDENTIAL, or AUTHORIZATION are removed from subprocesses.
+File tools reject paths and symlinks leaving the project. Command execution
+is not an operating-system sandbox and programs can access the host filesystem.
+Use `/tools` to see exactly which tools are available.
 
 For a single turn:
 
 ```sh
-npm start -- --project /absolute/path/to/your/project --ask "Inspect this project and tell me what you find."
+bun run start --project /absolute/path/to/your/project --ask "Inspect this project and tell me what you find."
 ```
+
+## Terminal workspace
+
+An interactive terminal opens the Ink/React workspace automatically. It has
+streaming conversation history, tool timing and status, a command menu,
+measured metrics, input history, and a composer that stays available during
+agent work. The alternate screen restores your previous terminal on exit.
+Resize to at least 42 columns × 16 rows. Escape cancels a turn or dismisses a
+panel. Input supports pasting, cursor movement, Ctrl+A/Ctrl+E, and Ctrl+U.
+
+| Key | Action |
+| --- | --- |
+| Ctrl+P | Open the command menu; arrows select, Enter inserts a command |
+| Ctrl+O | Toggle the detailed metrics panel |
+| Page Up / Page Down | Scroll conversation or metrics |
+| Up / Down | Recall submitted input |
+| Escape | Dismiss a panel or cancel the active turn |
+| Ctrl+C | Cancel while working; close while idle |
+
+Preview without credentials, API calls, tool execution, or saved data:
+
+```sh
+bun run demo
+```
+
+`--plain` selects the line-oriented interface; pipes select it automatically.
+`--tui` requires an interactive terminal. `--ask` always uses plain streaming
+output and returns a nonzero exit code on a failed turn. Closing stdin finishes
+queued work before releasing the chat lock.
 
 ## Commands
 
 | Command | Effect |
 | --- | --- |
+| `/help` | Show commands and keyboard shortcuts |
+| `/tools` | List agent tools and command execution access |
+| `/metrics` | Show accumulated token, timing, memory, retrieval, and evaluation metrics |
+| `/jev` | Show recent automatic summary evaluations and their status |
 | `/model [MODEL_ID]` | Show models or switch the main agent between turns |
 | `/view` | Display the current summary view |
 | `/zoom ID N` | Open a memory range; N must be a power of two |
@@ -90,11 +142,24 @@ This version does not install an always-on service.
 ## Verification
 
 ```sh
-npm test
-npm run smoke
+bun run check       # strict TypeScript checks and offline tests
+bun run build       # builds dist/cli.js and copies runtime prompt assets
+bun dist/cli.js --help
+bun run smoke
+bun run smoke:jev
 ```
 
-The tests run offline. The smoke test makes real provider requests using only a
+The tests run offline and cover CLI lifecycle, terminal keyboard behavior,
+file boundaries, unique edits, literal argument handling, command timeout and
+cancellation, Git inspection, providers, memory, and evaluations. The built CLI
+needs the installed dependencies and its adjacent prompt assets.
+
+The CLI, session controller, agent loop, tools, and TUI are strict TypeScript.
+Existing provider, storage, compaction, and evaluation modules remain JavaScript
+behind typed application interfaces; they are covered by the existing tests.
+Compatibility `.js` entry points keep current scripts and imports working.
+
+The smoke test makes real provider requests using only a
 synthetic example. It tests compaction, closing and reopening storage, and
 model-driven retrieval through `zoom`. Its artifacts remain in a temporary
 directory, separate from your real chat.
@@ -102,8 +167,8 @@ directory, separate from your real chat.
 Run the same smoke test for either Meta model:
 
 ```sh
-npm run smoke -- --model muse-spark-1.3
-npm run smoke -- --model muse-spark-1.3-contributor
+bun run smoke --model muse-spark-1.3
+bun run smoke --model muse-spark-1.3-contributor
 ```
 
 ## Cohere adaptation
@@ -136,17 +201,63 @@ Provider documentation: [Chat](https://docs.cohere.com/reference/chat),
 [streaming tools](https://docs.cohere.com/docs/tool-use-streaming), and
 [reasoning](https://docs.cohere.com/docs/reasoning).
 
-## Optional Jev evaluation
+## Live metrics and automatic Jev evaluation
+
+New chat messages are stored and summarized automatically; no history import
+is needed. A compact metrics footer appears after each turn. Completed Jev
+evaluations arrive as status lines while idle, and are held until the turn
+ends while a reply is streaming. `/metrics` shows detailed totals; `/jev`
+shows the five most recently updated evaluations.
+
+The display includes:
+
+- Turn duration, time waiting for summaries, average API latency, and average
+  time to first visible response text (including time spent reasoning).
+- Input, output, reasoning, and cache-read tokens, separated by agent and
+  compactor. Reasoning tokens are already included in output tokens.
+- Message count, saved nodes, raw/view byte ratio, view budget, pending
+  summaries, and active or retrying compactor jobs.
+- Tool calls and `zoom` retrievals.
+- Jev's per-summary unsupported-claim, omitted-decision, and inflated-progress
+  probabilities, plus evaluation latency, token usage, pending jobs, errors,
+  skips, and average probabilities.
+
+These are measured counters, not estimated spend or claims of correctness.
+Cache totals account for Cohere's inclusive input counter and Meta's separate
+cache-read counter. Missing provider measurements display as unavailable.
+
+With `TYPESAFE_API_KEY` set, every newly generated summary is automatically
+evaluated in the background. Exact-copy nodes need no lossy-summary audit.
+Jev sees the source, chosen summary, and the original compactor context. The
+memory algorithm, selection of the shortest summary, and turn readiness remain
+unchanged. Evaluations never gate chat or rewrite memory.
+
+Usage, node/turn metrics, and evaluation records are stored in separate daily
+JSONL streams beside the chat, included in `/backup`, and excluded from the
+agent's conversation view. Pending audit jobs retain references to the
+immutable source and context nodes and resume after restart. API failures are
+shown as failures rather than passing results; rate-limit retries are bounded.
+
+Jev's documented state-plus-question limit is 32k tokens. This version uses a
+conservative 24,000-byte guard on the complete audit state rather than claiming
+an exact token count. Oversized audits are marked skipped; their source and
+context are never silently truncated. See [TypeSafe models](https://docs.typesafe.ai/models).
+
+`--no-jev` disables background API evaluations, preserving their queue for a
+future enabled launch. `--no-metrics` suppresses automatic footers while keeping
+saved measurements and the explicit `/metrics` and `/jev` commands available.
+
+## Standalone Jev evaluation
 
 Jev produces typed judgments, rather than summary text. Cohere remains the
-main agent and compactor. Jev is deliberately separate from the original
-memory algorithm: no automatic filtering, deletion, rewriting, or gating.
+main agent and compactor. Jev observes the original memory algorithm without
+automatic filtering, deletion, rewriting, or gating.
 
 Set `TYPESAFE_API_KEY` locally, then evaluate an explicitly chosen source and
 summary:
 
 ```sh
-npm run audit -- --source original.txt --summary summary.txt
+bun run audit --source original.txt --summary summary.txt
 ```
 
 The command sends those two files to TypeSafe's `jev-latest`. It returns three

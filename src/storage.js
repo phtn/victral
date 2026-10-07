@@ -59,7 +59,7 @@ export class Storage {
     this.directory = directory;
     this.release = release;
     this.report = report;
-    for (const sub of ['main', 'tree', 'usage']) {
+    for (const sub of ['main', 'tree', 'usage', 'metrics', 'evaluations']) {
       fs.mkdirSync(path.join(directory, sub), { recursive: true, mode: 0o700 });
     }
     this.root = this.load('main');
@@ -115,6 +115,10 @@ export class Storage {
   }
   usage(record) {
     appendLine(path.join(this.directory, 'usage', `${day()}.jsonl`), { date: new Date().toISOString(), ...record });
+  }
+  telemetry(stream, record) {
+    if (!['metrics', 'evaluations'].includes(stream)) throw new Error('Invalid telemetry stream.');
+    appendLine(path.join(this.directory, stream, `${day()}.jsonl`), { date: new Date().toISOString(), ...record });
   }
   async close() { await this.release(); }
 }

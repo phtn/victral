@@ -5,13 +5,21 @@ copy of the original `file.txt`. The original `file.md` is a saved HTML page.
 
 ## Current state
 
-A dependency-free Node.js terminal runner now implements the core memory
-loop with Cohere `command-a-plus-05-2026` as the default agent and compactor,
+A Bun application with a strict TypeScript CLI, agent loop, tool layer,
+and Ink/React terminal workspace implements the core memory loop with Cohere `command-a-plus-05-2026` as the default agent and compactor,
 and selectable Meta `muse-spark-1.3` and `muse-spark-1.3-contributor`. Runtime
 prompts use the name Victral, with only the permitted name substitution. See
 `../README.md` for commands, verification, and documented Cohere adaptations.
-Jev evaluation is a separate optional audit command, not part of the memory
-algorithm. No always-on service or existing-agent integration is installed.
+Jev automatically evaluates generated summaries in the background when its
+key is configured. Live metrics show evaluation probabilities, token usage,
+latency, and memory progress. Observations live outside the memory algorithm;
+the standalone audit command remains available. No history import is needed
+for new conversations. No always-on service or existing-agent integration is
+installed. Install dependencies with `bun install`; run `bun run check` for
+TypeScript and offline verification, `bun run build` for the distributable
+entry point, or `bun run demo` to preview the workspace without network calls.
+File search, exact edits, and Git inspection are built in; `--allow-shell` adds
+structured CLI and shell execution with bounded output and cancellation.
 
 ## Before choosing the integration
 

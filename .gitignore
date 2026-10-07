@@ -3,3 +3,5 @@
 !.env.example
 .victral/
 node_modules/
+dist/
+coverage/

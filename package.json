@@ -1,13 +1,36 @@
 {
   "name": "victral",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "packageManager": "bun@1.4.0",
+  "engines": {
+    "bun": ">=1.4.0"
+  },
   "scripts": {
-    "start": "node src/cli.js",
-    "test": "node --test",
-    "smoke": "node scripts/smoke.js",
-    "audit": "node scripts/audit.js"
+    "start": "bun src/cli.ts",
+    "test": "bun test",
+    "smoke": "bun scripts/smoke.js",
+    "audit": "bun scripts/audit.js",
+    "smoke:jev": "bun scripts/jev-smoke.js",
+    "dev": "bun --watch src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "bun build src/cli.ts --target=bun --packages=external --outdir=dist && cp src/*.txt dist/",
+    "check": "bun run typecheck && bun test",
+    "demo": "bun src/cli.ts --demo"
+  },
+  "dependencies": {
+    "ink": "^8.0.0",
+    "react": "^19.3.0",
+    "string-width": "^8.3.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "@types/react": "^19.3.0",
+    "ink-testing-library": "^4.0.0",
+    "typescript": "^7.0.2"
+  },
+  "bin": {
+    "victral": "./src/cli.ts"
   }
 }

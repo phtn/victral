@@ -1,4 +1,4 @@
-import test from 'node:test';
+import { test, afterEach } from 'bun:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,12 +9,14 @@ import { bytes, cutBytes, capResult, CAP } from '../src/constants.js';
 import { Runner } from '../src/runner.js';
 import { projectTools } from '../src/tools.js';
 
+const cleanups = [];
+afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 const noModel = { chat: async () => { throw new Error('Unexpected model call'); } };
-async function fixture(t, model = noModel, options = {}) {
+async function fixture(model = noModel, options = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'victral-test-'));
   const storage = await Storage.open(path.join(directory, 'chat'), () => {});
   const memory = new Memory(storage, model, options);
-  t.after(async () => { await memory.stop(); await storage.close(); });
+  cleanups.push(async () => { await memory.stop(); await storage.close(); });
   return { directory, storage, memory };
 }
 test('UTF-8 lengths, safe truncation, and head/tail tool cap', () => {
@@ -25,12 +27,12 @@ test('UTF-8 lengths, safe truncation, and head/tail tool cap', () => {
   assert.equal(Array.from(capped).length, CAP);
   assert.ok(capped.startsWith('HEAD') && capped.endsWith('TAIL') && capped.includes('omitted'));
 });
-test('single writer excludes a second opener and permits restart', async t => {
-  const { storage } = await fixture(t);
+test('single writer excludes a second opener and permits restart', async () => {
+  const { storage } = await fixture();
   await assert.rejects(Storage.open(storage.directory), /already open/);
 });
-test('free nodes, binary ranges, Unicode retrieval, and replay survive restart', async t => {
-  const { storage, memory } = await fixture(t);
+test('free nodes, binary ranges, Unicode retrieval, and replay survive restart', async () => {
+  const { storage, memory } = await fixture();
   for (let i = 0; i < 4; i++) memory.append('user', `decision ${i} 🦓`);
   assert.equal(await memory.drain(AbortSignal.timeout(3000)), true);
   assert.match(memory.zoom(0, 4), /^0\+2\|.*\n2\+2\|/s);
@@ -39,12 +41,12 @@ test('free nodes, binary ranges, Unicode retrieval, and replay survive restart',
   const before = memory.render();
   await memory.stop(); await storage.close();
   const reloaded = await Storage.open(storage.directory);
-  t.after(() => reloaded.close());
+  cleanups.push(() => reloaded.close());
   const next = new Memory(reloaded, noModel);
   assert.equal(next.render(), before);
   assert.equal(next.zoom(2, 1), '2+0|user: decision 2 🦓');
 });
-test('torn final JSON is reported, skipped, and cannot swallow the next append', async t => {
+test('torn final JSON is reported, skipped, and cannot swallow the next append', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'victral-torn-'));
   fs.mkdirSync(path.join(directory, 'main'), { recursive: true });
   fs.writeFileSync(path.join(directory, 'main', day() + '.jsonl'), '{"incomplete":');
@@ -53,14 +55,14 @@ test('torn final JSON is reported, skipped, and cannot swallow the next append',
   store.append('user', 'recovered');
   await store.close();
   const next = await Storage.open(directory, () => {});
-  t.after(() => next.close());
+  cleanups.push(() => next.close());
   assert.equal(next.root.length, 1);
   assert.equal(next.root[0].text, 'recovered');
   assert.equal(reports.length, 1);
 });
-test('view merges the most due adjacent binary siblings, covers every message, and never splits', async t => {
+test('view merges the most due adjacent binary siblings, covers every message, and never splits', async () => {
   const model = { chat: async () => ({ finish_reason: 'COMPLETE', message: { role: 'assistant', content: [{ type: 'text', text: 'user: decisions' }] } }) };
-  const { storage, memory } = await fixture(t, model, { viewBudget: 50, nodeBudget: 45 });
+  const { storage, memory } = await fixture(model, { viewBudget: 50, nodeBudget: 45 });
   for (let i = 0; i < 16; i++) memory.append('user', `decision-${i}`);
   await memory.drain(AbortSignal.timeout(3000));
   let cursor = 0;
@@ -73,14 +75,14 @@ test('view merges the most due adjacent binary siblings, covers every message, a
   const reconstructed = new Memory(storage, model, { viewBudget: 50, nodeBudget: 45 });
   assert.equal(reconstructed.render(), memory.render());
 });
-test('compactor retries with byte feedback in the same conversation, keeps the shortest, and omits IDs from context', async t => {
+test('compactor retries with byte feedback in the same conversation, keeps the shortest, and omits IDs from context', async () => {
   const requests = [];
   const attempts = ['x'.repeat(530), 'x'.repeat(520), 'x'.repeat(519), 'x'.repeat(521), 'x'.repeat(518)];
   const model = { chat: async messages => {
     requests.push(structuredClone(messages));
     return { finish_reason: 'COMPLETE', message: { role: 'assistant', content: [{ type: 'text', text: attempts[requests.length - 1] }] } };
   } };
-  const { memory } = await fixture(t, model);
+  const { memory } = await fixture(model);
   memory.append('user', 'z'.repeat(900));
   await memory.settle(AbortSignal.timeout(3000));
   assert.equal(requests.length, 5);
@@ -89,9 +91,9 @@ test('compactor retries with byte feedback in the same conversation, keeps the s
   assert.match(requests[1][3].content, /530 bytes/);
   assert.ok(!requests[0][1].content[0].text.includes('0+1|'));
 });
-test('settle waits for summaries and cancellation resolves false', async t => {
+test('settle waits for summaries and cancellation resolves false', async () => {
   const model = { chat: async (_messages, { signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })) };
-  const { memory } = await fixture(t, model);
+  const { memory } = await fixture(model);
   memory.append('user', 'x'.repeat(1000));
   const controller = new AbortController();
   const result = memory.settle(controller.signal);
@@ -99,8 +101,8 @@ test('settle waits for summaries and cancellation resolves false', async t => {
   assert.equal(await result, false);
   assert.match(memory.render(), /not summarized/);
 });
-test('fresh turns use prior view, inject mid-turn input at boundary, and log it once', async t => {
-  const { memory, storage } = await fixture(t);
+test('fresh turns use prior view, inject mid-turn input at boundary, and log it once', async () => {
+  const { memory, storage } = await fixture();
   const requests = [];
   let runner;
   const model = { stream: async (messages, options) => {
@@ -119,8 +121,8 @@ test('fresh turns use prior view, inject mid-turn input at boundary, and log it 
   assert.match(requests[2][1].content[0].text, /first instruction/);
   await runner.close();
 });
-test('project file tools reject parent paths and symlinks escaping the project', async t => {
-  const { memory, directory } = await fixture(t);
+test('project file tools reject parent paths and symlinks escaping the project', async () => {
+  const { memory, directory } = await fixture();
   const project = path.join(directory, 'project'); fs.mkdirSync(project);
   const outside = path.join(directory, 'outside'); fs.mkdirSync(outside);
   fs.symlinkSync(outside, path.join(project, 'link'));
@@ -129,4 +131,10 @@ test('project file tools reject parent paths and symlinks escaping the project',
   await assert.rejects(tools.execute('write_file', { path: 'link/file', content: 'no' }), /Symlink/);
   await tools.execute('write_file', { path: 'src/hello.txt', content: 'hello' });
   assert.equal(await tools.execute('read_file', { path: 'src/hello.txt' }), 'hello');
+});
+test('Bun shell tool captures Unicode output, stderr, and nonzero exit status', async () => {
+  const { memory, directory } = await fixture();
+  const tools = projectTools(memory, directory, { allowShell: true });
+  const output = await tools.execute('shell', { command: 'printf "🦓"; printf "shell-warning" >&2; exit 7' });
+  assert.ok(output.includes('🦓') && output.includes('shell-warning') && output.includes('exit: 7'));
 });
