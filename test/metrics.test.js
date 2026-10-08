@@ -56,14 +56,17 @@ test('audit totals refresh for status changes and preserve chronological latest 
   const completed = (key, date, risk) => ({ key, status: 'completed', date, answers: Object.fromEntries(['unsupported_claim', 'user_decision_omitted', 'progress_inflated'].map(name => [name, { noul: risk }])), usage: { input_tokens: 100 }, latency_ms: 200 });
   try {
     expect(metrics.snapshot().jev.completed).toBe(0);
+    expect(metrics.jevStatus()).toEqual({ state: 'enabled', completed: 0, pending: 0, errors: 0, skipped: 0 });
     save({ key: '0:0', status: 'queued' });
     expect(metrics.snapshot().jev.pending).toBe(1);
+    expect(metrics.jevStatus().pending).toBe(1);
     save(completed('0:0', '2026-10-08T02:00:00Z', 0.2));
     const first = metrics.snapshot();
     save(completed('0:1', '2026-10-08T01:00:00Z', 0.4));
     const latest = metrics.snapshot().jev;
     expect(latest.completed).toBe(2); expect(latest.pending).toBe(0);
     expect(latest.latest.key).toBe('0:0');
+    expect(metrics.jevStatus().risks).toEqual({ unsupported: 0.2, omitted: 0.2, inflated: 0.2 });
     expect(latest.averages.unsupported_claim).toBeCloseTo(0.3);
     expect(latest.input_tokens).toBe(200); expect(latest.latency_ms).toBe(400);
     expect(first.jev.completed).toBe(1);
@@ -71,9 +74,11 @@ test('audit totals refresh for status changes and preserve chronological latest 
     expect(metrics.snapshot().jev.averages.unsupported_claim).toBeCloseTo(0.3);
     save({ key: '0:1', status: 'error' });
     expect(metrics.snapshot().jev.errors).toBe(1);
+    expect(metrics.jevStatus().errors).toBe(1);
     expect(metrics.snapshot().jev.completed).toBe(1);
     save({ key: '0:1', status: 'skipped' });
     expect(metrics.snapshot().jev.skipped).toBe(1);
+    expect(metrics.jevStatus().skipped).toBe(1);
   } finally { metrics.close(); }
   expect(evaluations.listenerCount('update')).toBe(0);
 });

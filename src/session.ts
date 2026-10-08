@@ -9,6 +9,7 @@ import { Metrics } from './metrics.js';
 import { Runner } from './runner.js';
 import { projectTools } from './tools.js';
 import { errorMessage, type ModelPort, type ToolActivity, type TurnRecord } from './types.js';
+import type { JevStatus } from './jev-status.js';
 
 // Provider/storage implementations retain their existing JS API during migration.
 const modelFactory = createModel as unknown as (id: string, options: { purpose?: string; usage: (record: unknown) => void }) => ModelPort;
@@ -19,7 +20,7 @@ export interface SessionOptions {
 export interface TranscriptEntry { id: number; role: 'you' | 'victral' | 'system' | 'error' | 'tool'; text: string }
 export interface SessionState {
   entries: readonly TranscriptEntry[]; model: string; active: boolean;
-  phase: string; tool?: ToolActivity; turn?: TurnRecord; metrics: string;
+  phase: string; tool?: ToolActivity; turn?: TurnRecord; metrics: string; jev?: JevStatus;
 }
 export const COMMANDS = [
   ['/help', 'Show commands and keyboard shortcuts'], ['/tools', 'Inspect agent tool access'],
@@ -41,7 +42,7 @@ export class Session extends EventEmitter {
   private closing?: Promise<void>;
   private updateTimer?: ReturnType<typeof setTimeout>;
   private runner: Runner;
-  private evaluationListener: (record: { status: string }) => void;
+  private evaluationListener: () => void;
 
   private constructor(readonly options: SessionOptions, readonly storage: Storage, readonly memory: Memory, readonly evaluations: Evaluations, readonly metrics: Metrics, model: ModelPort) {
     super();
@@ -53,6 +54,7 @@ export class Session extends EventEmitter {
         this.phase = 'Responding'; this.emit('text', text); this.scheduleUpdate();
       },
       onThought: () => { this.phase = 'Thinking'; this.scheduleUpdate(); },
+      onPhase: phase => { this.phase = phase; this.update(); },
       onError: text => { this.add('error', text); this.emit('errorText', text); },
       onTool: activity => {
         this.tool = activity;
@@ -65,9 +67,7 @@ export class Session extends EventEmitter {
     for (const record of storage.root.slice(-60)) {
       if (record.kind === 'user' || record.kind === 'talk') this.add(record.kind === 'user' ? 'you' : 'victral', record.text, false);
     }
-    this.evaluationListener = record => {
-      if (['completed', 'error', 'skipped'].includes(record.status)) this.update();
-    };
+    this.evaluationListener = () => this.scheduleUpdate();
     evaluations.on('update', this.evaluationListener);
     evaluations.pump(); memory.pump();
   }
@@ -105,7 +105,8 @@ export class Session extends EventEmitter {
   private update(): void { if (!this.closed) this.emit('update'); }
   snapshot(): SessionState {
     return { entries: [...this.entries], model: this.runner.model.model, active: this.runner.active,
-      phase: this.phase, tool: this.tool, turn: this.turn, metrics: this.options.metrics ? this.metrics.compact() : '' };
+      phase: this.phase, tool: this.tool, turn: this.turn, metrics: this.options.metrics ? this.metrics.compact() : '',
+      jev: this.options.metrics ? this.metrics.jevStatus() : undefined };
   }
   cancel(): void { this.runner.cancel(); this.phase = 'Canceling'; this.update(); }
   async submit(input: string): Promise<void> {
@@ -119,7 +120,7 @@ export class Session extends EventEmitter {
       } catch (error) { this.add('error', errorMessage(error)); this.emit('errorText', errorMessage(error)); }
       return;
     }
-    this.add('you', line); this.phase = this.runner.active ? 'Input queued' : 'Preparing memory'; this.tool = undefined;
+    this.add('you', line, false); this.phase = this.runner.active ? 'Message received · input queued' : 'Message received · preparing memory'; this.tool = undefined;
     const running = this.runner.submit(line); this.update();
     await running;
     this.phase = this.turn?.status === 'error' ? 'Turn failed' : this.turn?.status === 'canceled' ? 'Canceled' : 'Ready';

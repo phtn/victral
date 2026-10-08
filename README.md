@@ -13,7 +13,8 @@ application, scripts, and test suite and loads local `.env` files automatically.
 bun install
 ```
 
-Set `COHERE_API_KEY` in your environment or in a local `.env` file. The example
+Set `META_API_KEY` (or `MODEL_API_KEY`) for the default model in your environment
+or in a local `.env` file. Selecting Cohere requires `COHERE_API_KEY`. The example
 in `.env.example` lists the available settings. Never commit your keys.
 
 ```sh
@@ -154,6 +155,7 @@ bun run smoke:jev
 ```
 
 The tests run offline and cover CLI lifecycle, terminal keyboard behavior,
+incremental Markdown rendering, smooth streaming and cancellation,
 file boundaries, unique edits, literal argument handling, command timeout and
 cancellation, Git inspection, providers, memory, and evaluations. The built CLI
 needs the installed dependencies and its adjacent prompt assets.
@@ -168,6 +170,25 @@ Both provider adapters share a streaming event parser that preserves UTF-8 text
 and accepts LF, CRLF, and CR separators across network chunks. A provider's
 terminal event completes the request immediately; a connection ending before
 that event remains an error.
+
+Agent text uses [AI SDK `smoothStream`](https://ai-sdk.dev/docs/reference/ai-sdk-core/smooth-stream)
+to display words at 10 ms intervals. The workspace immediately confirms input
+with `✓ Received` and keeps an animated working indicator above the composer
+while preparing memory, waiting for the model, thinking, responding, or running
+tools. `Esc` cancels both the request and any queued display chunks.
+
+The far right of the status bar shows compact Jev evaluations, for example
+`Jev 12✓ 1… · U2% O1% P0%`: completed evaluations, pending work, and the latest
+probabilities for unsupported claims (U), omitted user decisions (O), and inflated
+progress (P). `!` marks errors and `↷` marks skipped evaluations. Narrow terminals
+show counts first; `/jev` opens the full results. `Jev off` and `Jev no key` show
+when evaluation is unavailable. `--no-metrics` hides this summary.
+
+The full-screen workspace renders Markdown as responses stream: headings,
+emphasis, links, lists, task lists, block quotes, code, and tables. Wide tables
+switch to labeled rows when needed. Saved responses retain the original Markdown;
+`--plain` and piped output stream the original text for scripts. Run `bun run demo`
+to preview smoothing and Markdown without API calls.
 
 The CLI, session controller, agent loop, tools, and TUI are strict TypeScript.
 Existing provider, storage, compaction, and evaluation modules remain JavaScript
@@ -264,8 +285,8 @@ saved measurements and the explicit `/metrics` and `/jev` commands available.
 
 ## Standalone Jev evaluation
 
-Jev produces typed judgments, rather than summary text. Cohere remains the
-main agent and compactor. Jev observes the original memory algorithm without
+Jev produces typed judgments, rather than summary text. Meta `muse-spark-1.3-contributor`
+is the default main agent and compactor. Jev observes the original memory algorithm without
 automatic filtering, deletion, rewriting, or gating.
 
 Set `TYPESAFE_API_KEY` locally, then evaluate an explicitly chosen source and

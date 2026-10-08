@@ -9,6 +9,7 @@ import { Runner } from '../src/runner.js';
 import { projectTools } from '../src/tools.js';
 import { Evaluations } from '../src/evaluations.js';
 import { Metrics } from '../src/metrics.js';
+import { MODEL } from '../src/constants.js';
 
 if (!Bun.env.TYPESAFE_API_KEY) throw new Error('Set TYPESAFE_API_KEY locally before running the live Jev smoke test.');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'victral-jev-smoke-'));
@@ -16,8 +17,8 @@ const storage = await Storage.open(path.join(directory, 'chat'));
 let memory, evaluations, metrics, runner;
 try {
   const report = record => metrics.usage(record);
-  const model = createModel('command-a-plus-05-2026', { usage: report });
-  memory = new Memory(storage, createModel('command-a-plus-05-2026', { purpose: 'compactor', usage: report }));
+  const model = createModel(MODEL, { usage: report });
+  memory = new Memory(storage, createModel(MODEL, { purpose: 'compactor', usage: report }));
   evaluations = new Evaluations(memory);
   metrics = new Metrics(storage, memory, evaluations);
   const errors = [];

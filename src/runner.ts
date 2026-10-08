@@ -3,6 +3,7 @@ import { errorMessage } from './types.js';
 import fs from 'node:fs';
 import { viewBlocks } from './cohere.js';
 import { capResult } from './constants.js';
+import { smoothResponse } from './smooth-response.js';
 
 const MASTER = fs.readFileSync(new URL('./MASTER.txt', import.meta.url), 'utf8').trimEnd();
 const VIEW_DOC = fs.readFileSync(new URL('./VIEW_DOC.txt', import.meta.url), 'utf8').trimEnd();
@@ -10,6 +11,7 @@ interface RunnerOptions {
   onText?: (text: string) => void; onThought?: (text: string) => void;
   onError?: (text: string) => void; onTurn?: (record: TurnRecord) => void;
   onTool?: (activity: ToolActivity) => void;
+  onPhase?: (phase: string) => void;
 }
 export class Runner {
   system: string;
@@ -24,8 +26,10 @@ export class Runner {
   onError: (text: string) => void;
   onTurn: (record: TurnRecord) => void;
   onTool: (activity: ToolActivity) => void;
-  constructor(public memory: MemoryPort, public model: ModelPort, public tools: AgentTools, instructions = '', { onText = () => {}, onThought = () => {}, onError = console.error, onTurn = () => {}, onTool = () => {} }: RunnerOptions = {}) {
+  onPhase: (phase: string) => void;
+  constructor(public memory: MemoryPort, public model: ModelPort, public tools: AgentTools, instructions = '', { onText = () => {}, onThought = () => {}, onError = console.error, onTurn = () => {}, onTool = () => {}, onPhase = () => {} }: RunnerOptions = {}) {
     this.onText = onText; this.onThought = onThought; this.onError = onError; this.onTurn = onTurn; this.onTool = onTool;
+    this.onPhase = onPhase;
     this.system = [MASTER, VIEW_DOC, instructions].filter(Boolean).join('\n\n');
     this.queue = [];
     this.active = false;
@@ -70,7 +74,8 @@ export class Runner {
         this.inCall = true;
         try {
           for (;;) {
-            const result = await this.model.stream(messages, {
+            this.onPhase('Waiting for response');
+            const result = await smoothResponse(this.model, messages, {
               tools: this.tools.definitions, signal, onText: this.onText, onThought: this.onThought,
               onEntry: (kind, text) => this.memory.append(kind, text),
             });

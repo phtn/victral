@@ -1,4 +1,5 @@
 import { sseData } from './sse.js';
+import { MODEL } from './constants.js';
 
 const finishReason = reason => reason === 'tool_use' ? 'TOOL_CALL' : reason === 'max_tokens' ? 'MAX_TOKENS' : reason === 'end_turn' ? 'COMPLETE' : reason?.toUpperCase();
 
@@ -33,7 +34,7 @@ function normalize(content, reason, usage) {
   return { message, finish_reason: finishReason(reason), usage };
 }
 export class Meta {
-  constructor({ apiKey = process.env.META_API_KEY || process.env.MODEL_API_KEY, model = 'muse-spark-1.3', usage = () => {}, fetchImpl = fetch, purpose = 'agent' } = {}) {
+  constructor({ apiKey = process.env.META_API_KEY || process.env.MODEL_API_KEY, model = MODEL, usage = () => {}, fetchImpl = fetch, purpose = 'agent' } = {}) {
     if (!apiKey) throw new Error('Set META_API_KEY (or MODEL_API_KEY) in your environment before selecting Meta.');
     Object.assign(this, { apiKey, model, usage, fetchImpl, purpose });
   }

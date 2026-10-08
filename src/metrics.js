@@ -79,6 +79,18 @@ export class Metrics {
     this.auditDirty = false;
     return this.auditTotals;
   }
+  jevStatus() {
+    const audit = this.auditSnapshot(), last = audit.latest;
+    return {
+      state: this.evaluations.reason, completed: audit.completed, pending: audit.pending,
+      errors: audit.errors, skipped: audit.skipped,
+      ...(last ? { risks: {
+        unsupported: last.answers.unsupported_claim.noul,
+        omitted: last.answers.user_decision_omitted.noul,
+        inflated: last.answers.progress_inflated.noul,
+      } } : {}),
+    };
+  }
   snapshot() {
     this.syncHistory();
     const memory = this.memory;

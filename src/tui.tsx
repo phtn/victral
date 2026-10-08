@@ -1,11 +1,16 @@
 import { Box, Text, render, useApp, useInput, useWindowSize } from 'ink'
 import os from 'node:os'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import stringWidth from 'string-width'
 import { COMMANDS, Session, type SessionState } from './session.js'
+import { markdownLines, type MarkdownLine } from './markdown.js'
+import { safeText } from './terminal-text.js'
+import { formatJevStatus } from './jev-status.js'
+export { safeText } from './terminal-text.js'
 
 const VERSION = '0.2.0'
 const codexBlue = '#5aa9ff'
+const user = '#009393'
 const muted = '#8b949e'
 const bright = '#e6edf3'
 const composerBg = '#333333'
@@ -14,13 +19,7 @@ const statusModel = '#e5c07b'
 const statusDot = '#6b7280'
 const statusPath = '#98c379'
 const errorRed = '#ff7b72'
-// Provider output and project names are data, never terminal control sequences.
-export function safeText(text: string): string {
-  return text
-    .replace(/\x1b(?:\][^\x07]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~])/g, '')
-    .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '')
-    .replace(/\t/g, '  ')
-}
+interface DisplayLine { text?: string; spans?: MarkdownLine['spans']; color: string }
 export function wrapLines(text: string, width: number): string[] {
   const result: string[] = []
   for (const line of safeText(text).split('\n')) {
@@ -78,11 +77,12 @@ export function Workspace({ session }: { session: WorkspaceSession }) {
     [history, setHistory] = useState<string[]>([]),
     [historyIndex, setHistoryIndex] = useState(-1)
   const [tick, setTick] = useState(0)
+  const markdownCache = useRef(new Map<number, { text: string; width: number; lines: DisplayLine[] }>())
   const width = Math.max(10, columns - 2)
   const composerHeight = 3,
     headerHeight = 4,
     statusHeight = 1
-  const bodyHeight = Math.max(1, rows - headerHeight - composerHeight - statusHeight)
+  const bodyHeight = Math.max(1, rows - headerHeight - composerHeight - statusHeight - (state.active ? 1 : 0))
   useEffect(() => {
     const closed = () => exit()
     session.on('closed', closed)
@@ -96,25 +96,33 @@ export function Workspace({ session }: { session: WorkspaceSession }) {
     return () => clearInterval(timer)
   }, [state.active])
   const project = shortProject(safeText(session.options.project))
-  const lines = useMemo(() => {
+  const lines = useMemo<DisplayLine[]>(() => {
     if (panel === 'metrics') return wrapLines(session.metrics.detailed(), width).map((text) => ({ text, color: muted }))
     if (!state.entries.length) return []
+    const ids = new Set(state.entries.map(entry => entry.id))
+    for (const id of markdownCache.current.keys()) if (!ids.has(id)) markdownCache.current.delete(id)
+    const lastUser = state.entries.findLast(entry => entry.role === 'you')?.id
     return state.entries.flatMap((entry) => {
       if (entry.role === 'you') {
         return [
-          ...wrapLines(entry.text, Math.max(1, width - 2)).map((text) => ({ text: `> ${text}`, color: bright })),
+          ...wrapLines(entry.text, Math.max(1, width - 2)).map((text) => ({ text: `⟢ ${text}`, color: user })),
+          ...(state.active && entry.id === lastUser ? [{ text: '✓ Received', color: muted }] : []),
           { text: '', color: muted }
         ]
       }
       if (entry.role === 'victral') {
-        return [...wrapLines(entry.text, width).map((text) => ({ text, color: bright })), { text: '', color: muted }]
+        const cached = markdownCache.current.get(entry.id)
+        if (cached?.text === entry.text && cached.width === width) return cached.lines
+        const rendered = [...markdownLines(entry.text, width).map(line => ({ ...line, color: bright })), { text: '', color: muted }]
+        markdownCache.current.set(entry.id, { text: entry.text, width, lines: rendered })
+        return rendered
       }
       return [
         ...wrapLines(entry.text, width).map((text) => ({ text, color: entry.role === 'error' ? errorRed : muted })),
         { text: '', color: muted }
       ]
     })
-  }, [state.entries, panel, width, session])
+  }, [state.entries, state.active, panel, width, session])
   const maxScroll = Math.max(0, lines.length - bodyHeight),
     offset = Math.min(scroll, maxScroll)
   const visible = lines.slice(Math.max(0, lines.length - bodyHeight - offset), lines.length - offset)
@@ -226,6 +234,7 @@ export function Workspace({ session }: { session: WorkspaceSession }) {
   const beforeCursor = inputChars.slice(start, cursor).join('')
   const afterCursor = inputChars.slice(cursor + 1).join('')
   const spinner = ['◐', '◓', '◑', '◒'][tick % 4]
+  const jevStatus = state.jev ? formatJevStatus(state.jev, Math.max(12, width - 13)) : ''
   const statusRight = offset
     ? `↑ ${offset} lines`
     : panel === 'metrics'
@@ -273,10 +282,15 @@ export function Workspace({ session }: { session: WorkspaceSession }) {
             ))
           : visible.map((line, index) => (
               <Text key={index} color={line.color} wrap='truncate-end'>
-                {line.text || ' '}
+                {line.spans ? line.spans.map(({ text, ...style }, index) => <Text key={index} {...style}>{text}</Text>) : line.text || ' '}
               </Text>
             ))}
       </Box>
+      {state.active ? (
+        <Box height={1} paddingX={1} flexShrink={0}>
+          <Text color={codexBlue} wrap='truncate-end'>{`${spinner} Working · ${safeText(state.phase)}`}</Text>
+        </Box>
+      ) : null}
       <Box backgroundColor={composerBg} paddingX={1} paddingY={1} flexShrink={0}>
         <Text wrap='truncate-end'>
           <Text color={bright}>{'⧽ '}</Text>
@@ -302,15 +316,24 @@ export function Workspace({ session }: { session: WorkspaceSession }) {
           )}
         </Text>
       </Box>
-      <Box height={1} paddingX={1} justifyContent='space-between' flexShrink={0}>
-        <Text wrap='truncate-end'>
-          <Text color={statusModel}>{safeText(state.model)}</Text>
-          <Text color={statusDot}>{' · '}</Text>
-          <Text color={statusPath}>{project}</Text>
-        </Text>
-        <Text color={muted} wrap='truncate-end'>
-          {statusRight}
-        </Text>
+      <Box height={1} paddingX={1} flexShrink={0}>
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>
+          <Text wrap='truncate-end'>
+            <Text color={statusModel}>{safeText(state.model)}</Text>
+            <Text color={statusDot}>{' · '}</Text>
+            <Text color={statusPath}>{project}</Text>
+          </Text>
+        </Box>
+        {statusRight ? (
+          <Box marginLeft={1} flexShrink={1} minWidth={0}>
+            <Text color={muted} wrap='truncate-end'>{statusRight}</Text>
+          </Box>
+        ) : null}
+        {jevStatus ? (
+          <Box marginLeft={1} width={stringWidth(jevStatus)} flexShrink={0}>
+            <Text color={state.jev?.errors ? errorRed : muted} wrap='truncate-end'>{jevStatus}</Text>
+          </Box>
+        ) : null}
       </Box>
     </Box>
   )

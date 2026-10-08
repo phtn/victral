@@ -21,7 +21,10 @@
     "demo": "bun src/cli.ts --demo"
   },
   "dependencies": {
+    "ai": "^7.0.133",
+    "entities": "^8.1.0",
     "ink": "^8.0.0",
+    "marked": "^18.1.0",
     "react": "^19.3.0",
     "string-width": "^8.3.0"
   },
