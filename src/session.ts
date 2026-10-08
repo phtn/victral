@@ -10,6 +10,8 @@ import { Runner } from './runner.js';
 import { projectTools } from './tools.js';
 import { errorMessage, type ModelPort, type ToolActivity, type TurnRecord } from './types.js';
 import type { JevStatus } from './jev-status.js';
+import { COMMANDS } from './session-commands.js';
+export { COMMANDS } from './session-commands.js';
 
 // Provider/storage implementations retain their existing JS API during migration.
 const modelFactory = createModel as unknown as (id: string, options: { purpose?: string; usage: (record: unknown) => void }) => ModelPort;
@@ -22,16 +24,6 @@ export interface SessionState {
   entries: readonly TranscriptEntry[]; model: string; active: boolean;
   phase: string; tool?: ToolActivity; turn?: TurnRecord; metrics: string; jev?: JevStatus;
 }
-export const COMMANDS = [
-  ['/help', 'Show commands and keyboard shortcuts'], ['/tools', 'Inspect agent tool access'],
-  ['/metrics', 'Open detailed usage and memory metrics'], ['/jev', 'Show summary evaluations'],
-  ['/model', 'List or switch models'], ['/view', 'Inspect the current memory view'],
-  ['/zoom', 'Expand memory: /zoom ID N'], ['/date', 'Message timestamp: /date ID'],
-  ['/usage', 'Last ten provider usage records'], ['/import', 'Import a transcript: /import FILE'],
-  ['/backup', 'Back up this chat: /backup NEW_PATH'], ['/cancel', 'Cancel the current turn'],
-  ['/exit', 'Save and close the session'],
-] as const;
-
 export class Session extends EventEmitter {
   entries: TranscriptEntry[] = [];
   phase = 'Ready';

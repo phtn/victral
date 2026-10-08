@@ -1,9 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2023", "module": "Preserve", "moduleResolution": "Bundler",
-    "jsx": "react-jsx", "strict": true, "noEmit": true,
+    "jsx": "preserve", "jsxImportSource": "@octanejs/ink/intrinsics", "strict": true, "noEmit": true,
     "allowJs": true, "checkJs": false, "skipLibCheck": true,
-    "types": ["bun", "react"], "esModuleInterop": true
+    "types": ["bun"], "esModuleInterop": true,
+    "plugins": [{ "name": "@tsrx/typescript-plugin" }]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx"]
+  "include": ["src/**/*.ts", "src/**/*.tsrx", "test/**/*.ts", "scripts/**/*.ts", "octane.config.ts"],
+  "tsrx": { "compiler": "octane/compiler/volar" }
 }

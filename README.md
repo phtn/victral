@@ -6,7 +6,8 @@ The default is Meta `muse-spark-1.3-contributor` for both the agent and the comp
 
 ## Start
 
-Requires Bun 1.4 or later. Install the locked dependencies first; Bun runs the
+Requires Bun 1.4 or later; development type checking also needs Node.js
+22.22.2 or later. Install the locked dependencies first; Bun runs the
 application, scripts, and test suite and loads local `.env` files automatically.
 
 ```sh
@@ -93,7 +94,8 @@ bun run start --project /absolute/path/to/your/project --ask "Inspect this proje
 
 ## Terminal workspace
 
-An interactive terminal opens the Ink/React workspace automatically. It has
+An interactive terminal opens the Beast/Octane workspace automatically, using
+the native `@octanejs/ink` terminal renderer. It has
 streaming conversation history, tool timing and status, a command menu,
 measured metrics, input history, and a composer that stays available during
 agent work. The alternate screen restores your previous terminal on exit.
@@ -190,7 +192,21 @@ switch to labeled rows when needed. Saved responses retain the original Markdown
 `--plain` and piped output stream the original text for scripts. Run `bun run demo`
 to preview smoothing and Markdown without API calls.
 
-The CLI, session controller, agent loop, tools, and TUI are strict TypeScript.
+The CLI, session controller, agent loop, and tools are strict TypeScript. The
+terminal UI is authored in `src/workspace.ink.btsx`; Beast generates TSRX and
+Octane compiles it for Ink's universal renderer, without React. `bun run start`,
+`demo`, `test`, `typecheck`, and `build` compile the UI automatically. `bun run dev`
+also rebuilds it when the source changes. Generated TSRX and runtime bundles are
+ignored by Git; run `bun run build:ui` before invoking `bun src/cli.ts` directly.
+The production CLI bundles the compiled UI and needs no compiler at runtime.
+
+Beast and Octane are pinned to 0.8.0, with the matching Ink binding 0.0.21.
+The binding ports Ink 7.1.1; we use no Ink 8-only layout or measurement APIs.
+A guarded build adapter retains Ink 8's filtering of unknown terminal replies
+and recognition of application-keypad Enter. Tests cover those cases alongside
+editing, bracketed paste, Unicode, resizing, and subscription/raw-mode cleanup.
+The TSRX checker uses TypeScript 5.9.3, supported by this pinned toolchain.
+
 Existing provider, storage, compaction, and evaluation modules remain JavaScript
 behind typed application interfaces; they are covered by the existing tests.
 Compatibility `.js` entry points keep current scripts and imports working.

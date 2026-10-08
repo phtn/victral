@@ -8,31 +8,32 @@
     "bun": ">=1.4.0"
   },
   "scripts": {
-    "start": "bun src/cli.ts",
+    "start": "bun run build:ui && bun src/cli.ts",
     "test": "bun test",
     "smoke": "bun scripts/smoke.js",
     "audit": "bun scripts/audit.js",
     "benchmark": "bun scripts/benchmark.js",
     "smoke:jev": "bun scripts/jev-smoke.js",
-    "dev": "bun --watch src/cli.ts",
-    "typecheck": "tsc --noEmit",
-    "build": "bun build src/cli.ts --target=bun --packages=external --outdir=dist && cp src/*.txt dist/",
+    "dev": "bun scripts/dev.ts",
+    "typecheck": "bun run build:ui && tsrx-tsc --noEmit",
+    "build": "bun run build:ui && bun build src/cli.ts --target=bun --packages=external --outdir=dist && cp src/*.txt dist/",
     "check": "bun run typecheck && bun test",
-    "demo": "bun src/cli.ts --demo"
+    "demo": "bun run build:ui && bun src/cli.ts --demo",
+    "build:ui": "bun scripts/build-ui.ts"
   },
   "dependencies": {
+    "@octanejs/ink": "0.0.21",
     "ai": "^7.0.133",
     "entities": "^8.1.0",
-    "ink": "^8.0.0",
     "marked": "^18.1.0",
-    "react": "^19.3.0",
+    "octane": "0.8.0",
     "string-width": "^8.3.0"
   },
   "devDependencies": {
+    "@tsrx/typescript-plugin": "0.6.1",
     "@types/bun": "^1.4.2",
-    "@types/react": "^19.3.0",
-    "ink-testing-library": "^4.0.0",
-    "typescript": "^7.0.2"
+    "beast-tsrx": "0.8.0",
+    "typescript": "5.9.3"
   },
   "bin": {
     "victral": "./src/cli.ts"

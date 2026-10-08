@@ -1,8 +1,7 @@
-import React from 'react';
 import { test, expect, afterEach } from 'bun:test';
-import { render, cleanup } from 'ink-testing-library';
+import { render, cleanup } from './terminal-harness.js';
 import { DemoSession } from '../src/demo.js';
-import { Workspace, safeText, shortProject, wrapLines } from '../src/tui.js';
+import { safeText, shortProject, wrapLines } from '../src/tui.js';
 import stringWidth from 'string-width';
 import { EventEmitter } from 'node:events';
 import type { SessionState } from '../src/session.js';
@@ -22,12 +21,12 @@ test('workspace renders Codex layout, opens command menu and metrics, and submit
     submit: async () => {}, cancel: () => {}, close: async () => {},
     on: () => {}, off: () => {},
   } as unknown as DemoSession;
-  const emptyView = render(<Workspace session={empty} />); await flush();
+  const emptyView = render(empty); await flush();
   expect(emptyView.lastFrame()).toContain('Victral'); expect(emptyView.lastFrame()).toContain('(v0.2.0)');
   expect(emptyView.lastFrame()).toContain('A half-formed idea will do.');
   emptyView.unmount();
   const session = new DemoSession();
-  const view = render(<Workspace session={session} />); await flush();
+  const view = render(session); await flush();
   expect(view.lastFrame()).toContain('Victral'); expect(view.lastFrame()).toContain('(v0.2.0)');
   expect(view.lastFrame()).toContain('muse-spark-1.3-contributor'); expect(view.lastFrame()).toContain('·');
   view.stdin.write('\x10'); await flush(); expect(view.lastFrame()).toContain('/help'); expect(view.lastFrame()).toContain('COMMANDS');
@@ -55,7 +54,7 @@ test('workspace renders incremental Markdown and keeps work visible through pane
     options: { project: '/tmp/markdown', allowShell: false }, metrics: { detailed: () => 'Usage' },
     snapshot: () => ({ ...state, entries: [...state.entries] }), submit: async () => {}, cancel: () => {}, close: async () => {},
   });
-  const view = render(<Workspace session={session} />); await flush();
+  const view = render(session); await flush();
   expect(view.lastFrame()).toContain('✓ Received');
   expect(view.lastFrame()).toContain('Working · Responding');
   expect(view.lastFrame()).toContain('Answer'); expect(view.lastFrame()).toContain('Partial');
@@ -74,7 +73,7 @@ test('workspace renders incremental Markdown and keeps work visible through pane
 });
 test('workspace adapts to narrow terminals and handles live resizing', async () => {
   const session = new DemoSession();
-  const view = render(<Workspace session={session} />); await flush();
+  const view = render(session); await flush();
   Object.defineProperty(view.stdout, 'columns', { configurable: true, value: 44 });
   Object.defineProperty(view.stdout, 'rows', { configurable: true, value: 18 });
   view.stdout.emit('resize'); await flush();
@@ -86,4 +85,39 @@ test('workspace adapts to narrow terminals and handles live resizing', async () 
   Object.defineProperty(view.stdout, 'columns', { configurable: true, value: 30 });
   view.stdout.emit('resize'); await flush(); expect(view.lastFrame()).toContain('resize terminal');
   await session.close();
+});
+
+test('terminal replies stay out of the composer while editing, pasting, and keypad Enter work', async () => {
+  const session = new DemoSession();
+  const view = render(session); await flush();
+  view.stdin.write('hello'); await flush();
+  for (const reply of ['\x1b[<0;12;8M', '\x1b[I', '\x1b[O', '\x1b[12;30R', '\x1b[?1;2c']) {
+    view.stdin.write(reply); await flush();
+  }
+  view.stdin.write('\x1b[D'); await flush();
+  view.stdin.write('!'); await flush();
+  view.stdin.write('\x1b[200~ 文🦓\nnext\x1b[201~'); await flush();
+  view.stdin.write('\x1bOM'); await flush();
+  expect(session.snapshot().entries.at(-1)?.text).toBe('hell! 文🦓\nnexto');
+  await session.close();
+});
+
+test('unmount releases subscriptions and raw input, and remount owns fresh state', async () => {
+  const session = new DemoSession();
+  const view = render(session); await flush();
+  expect(session.listenerCount('update')).toBe(1);
+  expect(session.listenerCount('closed')).toBe(1);
+  expect(view.stdin.rawMode).toBe(true);
+  view.stdin.write('draft'); await flush();
+  view.unmount();
+  await view.waitUntilExit();
+  expect(session.listenerCount('update')).toBe(0);
+  expect(session.listenerCount('closed')).toBe(0);
+  expect(view.stdin.rawMode).toBe(false);
+  const remount = render(session); await flush();
+  expect(remount.lastFrame()).not.toContain('draft');
+  expect(session.listenerCount('update')).toBe(1);
+  await session.close(); await flush();
+  expect(session.listenerCount('update')).toBe(0);
+  expect(session.listenerCount('closed')).toBe(0);
 });

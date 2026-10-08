@@ -1,73 +1,34 @@
-import { Box, Text, render, useApp, useInput, useWindowSize } from 'ink'
-import os from 'node:os'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import stringWidth from 'string-width'
-import { COMMANDS, Session, type SessionState } from './session.js'
-import { markdownLines, type MarkdownLine } from './markdown.js'
-import { safeText } from './terminal-text.js'
-import { formatJevStatus } from './jev-status.js'
-export { safeText } from './terminal-text.js'
-
-const VERSION = '0.2.0'
-const codexBlue = '#5aa9ff'
-const user = '#009393'
-const muted = '#8b949e'
-const bright = '#e6edf3'
-const composerBg = '#333333'
-const composerDim = '#9a9a9a'
-const statusModel = '#e5c07b'
-const statusDot = '#6b7280'
-const statusPath = '#98c379'
-const errorRed = '#ff7b72'
-interface DisplayLine { text?: string; spans?: MarkdownLine['spans']; color: string }
-export function wrapLines(text: string, width: number): string[] {
-  const result: string[] = []
-  for (const line of safeText(text).split('\n')) {
-    let current = '',
-      columns = 0
-    for (const char of line) {
-      const size = stringWidth(char)
-      if (columns + size > width && current) {
-        result.push(current)
-        current = ''
-        columns = 0
-      }
-      current += char
-      columns += size
-    }
-    result.push(current)
-  }
-  return result
-}
-function useSession(session: WorkspaceSession): SessionState {
+module /** @jsxImportSource @octanejs/ink/intrinsics */
+import { Box, Text, useApp, useInput, useWindowSize } from '@octanejs/ink';
+import { useEffect, useMemo, useRef, useState } from 'octane/universal/native';
+import stringWidth from 'string-width';
+import { COMMANDS } from './session-commands.js';
+import { markdownLines, type MarkdownLine } from './markdown.js';
+import { safeText, shortProject, wrapLines, type WorkspaceSession } from './tui-model.js';
+import { formatJevStatus } from './jev-status.js';
+module
+  const VERSION = '0.2.0'
+  const codexBlue = '#5aa9ff'
+  const user = '#009393'
+  const muted = '#8b949e'
+  const bright = '#e6edf3'
+  const composerBg = '#333333'
+  const composerDim = '#9a9a9a'
+  const statusModel = '#e5c07b'
+  const statusDot = '#6b7280'
+  const statusPath = '#98c379'
+  const errorRed = '#ff7b72'
+  interface DisplayLine { text?: string; spans?: MarkdownLine['spans']; color: string }
+props { session }: { session: WorkspaceSession }
+setup
   const [state, setState] = useState(() => session.snapshot())
   useEffect(() => {
     const update = () => setState(session.snapshot())
     session.on('update', update)
     update()
-    return () => {
-      session.off('update', update)
-    }
+    return () => { session.off('update', update) }
   }, [session])
-  return state
-}
-export interface WorkspaceSession extends Pick<Session, 'snapshot' | 'submit' | 'cancel' | 'close'> {
-  on(event: string, listener: () => void): unknown
-  off(event: string, listener: () => void): unknown
-  options: { project: string; allowShell: boolean }
-  metrics: { detailed(): string }
-}
-
-export function shortProject(project: string): string {
-  const home = os.homedir()
-  if (project === home) return '~'
-  if (project.startsWith(home + '/')) return `~/${project.slice(home.length + 1)}`
-  return project
-}
-
-export function Workspace({ session }: { session: WorkspaceSession }) {
-  const state = useSession(session),
-    { columns, rows } = useWindowSize(),
+  const { columns, rows } = useWindowSize(),
     { exit } = useApp()
   const [input, setInput] = useState(''),
     [cursor, setCursor] = useState(0),
@@ -244,106 +205,60 @@ export function Workspace({ session }: { session: WorkspaceSession }) {
         : state.active
           ? `${spinner} ${state.phase}`
           : ''
-  if (rows < 16 || columns < 42)
-    return (
-      <Box flexDirection='column'>
-        <Text color={codexBlue}>VICTRAL · resize terminal</Text>
-        <Text>Use at least 42 columns × 16 rows.</Text>
-        <Text>Ctrl+C to close, or start with --plain.</Text>
-      </Box>
-    )
-  return (
-    <Box flexDirection='column' width={columns} height={rows}>
-      <Box
-        flexDirection='row'
-        width={columns}
-        justifyContent='space-between'
-        paddingX={1}
-        paddingTop={1}
-        flexShrink={0}>
-        <Text wrap='truncate-end'>
-          <Text color={codexBlue}>{'💲 '}</Text>
-          <Text bold color={bright}>
-            Victral
-          </Text>
-          <Text color={muted}>{` (v${VERSION})`}</Text>
-        </Text>
-        <Text color={muted} wrap='truncate-end'>{`  ${project}`}</Text>
-        <Text></Text>
-      </Box>
-      <Box flexDirection='column' paddingX={1} flexGrow={1} flexShrink={1}>
-        {!state.entries.length && panel === 'chat' ? <Text color={codexBlue}>A half-formed idea will do.</Text> : null}
-        {panel === 'commands'
-          ? menu.map(([command, description]) => (
-              <Text key={command} color={COMMANDS[selected]![0] === command ? codexBlue : muted} wrap='truncate-end'>
-                {COMMANDS[selected]![0] === command ? '⟢ ' : '  '}
-                {command.padEnd(10)} {description}
-              </Text>
-            ))
-          : visible.map((line, index) => (
-              <Text key={index} color={line.color} wrap='truncate-end'>
-                {line.spans ? line.spans.map(({ text, ...style }, index) => <Text key={index} {...style}>{text}</Text>) : line.text || ' '}
-              </Text>
-            ))}
-      </Box>
-      {state.active ? (
-        <Box height={1} paddingX={1} flexShrink={0}>
-          <Text color={codexBlue} wrap='truncate-end'>{`${spinner} Working · ${safeText(state.phase)}`}</Text>
-        </Box>
-      ) : null}
-      <Box backgroundColor={composerBg} paddingX={1} paddingY={1} flexShrink={0}>
-        <Text wrap='truncate-end'>
-          <Text color={bright}>{'⧽ '}</Text>
-          {input ? (
-            <>
-              <Text color={bright}>{beforeCursor}</Text>
-              <Text inverse={panel !== 'commands'}>{inputChars[cursor] ?? ' '}</Text>
-              <Text color={bright}>{afterCursor}</Text>
-            </>
-          ) : (
-            <>
-              <Text inverse={panel !== 'commands'}> </Text>
-              <Text color={composerDim}>
-                {state.active
-                  ? 'Steer the agent while it works…'
-                  : panel === 'commands'
-                    ? 'Type a command…'
-                    : panel === 'metrics'
-                      ? 'Metrics open · Esc to return…'
-                      : 'Ask anything about your project…'}
-              </Text>
-            </>
-          )}
-        </Text>
-      </Box>
-      <Box height={1} paddingX={1} flexShrink={0}>
-        <Box flexGrow={1} flexShrink={1} minWidth={0}>
-          <Text wrap='truncate-end'>
-            <Text color={statusModel}>{safeText(state.model)}</Text>
-            <Text color={statusDot}>{' · '}</Text>
-            <Text color={statusPath}>{project}</Text>
-          </Text>
-        </Box>
-        {statusRight ? (
-          <Box marginLeft={1} flexShrink={1} minWidth={0}>
-            <Text color={muted} wrap='truncate-end'>{statusRight}</Text>
-          </Box>
-        ) : null}
-        {jevStatus ? (
-          <Box marginLeft={1} width={stringWidth(jevStatus)} flexShrink={0}>
-            <Text color={state.jev?.errors ? errorRed : muted} wrap='truncate-end'>{jevStatus}</Text>
-          </Box>
-        ) : null}
-      </Box>
-    </Box>
-  )
-}
-export async function startTui(session: WorkspaceSession): Promise<void> {
-  const instance = render(<Workspace session={session} />, { exitOnCtrlC: false, alternateScreen: true, maxFps: 24 })
-  try {
-    await instance.waitUntilExit()
-  } finally {
-    instance.cleanup()
-    await session.close()
-  }
-}
+
+if rows < 16 || columns < 42
+  Box(flexDirection="column")
+    Text(color={codexBlue}) VICTRAL · resize terminal
+    Text Use at least 42 columns × 16 rows.
+    Text Ctrl+C to close, or start with --plain.
+else
+  Box(flexDirection="column" width={columns} height={rows})
+    Box(flexDirection="row" width={columns} justifyContent="space-between" paddingX={1} paddingTop={1} flexShrink={0})
+      Text(wrap="truncate-end")
+        Text(color={codexBlue}) #{'💲 '}
+        Text(bold color={bright}) Victral
+        Text(color={muted}) #{` (v${VERSION})`}
+      Text(color={muted} wrap="truncate-end") #{`  ${project}`}
+      Text
+    Box(flexDirection="column" paddingX={1} flexGrow={1} flexShrink={1})
+      if !state.entries.length && panel === 'chat'
+        Text(color={codexBlue}) A half-formed idea will do.
+      if panel === 'commands'
+        each item in menu key item[0]
+          Text(color={COMMANDS[selected]![0] === item[0] ? codexBlue : muted} wrap="truncate-end")
+            | #{(COMMANDS[selected]![0] === item[0] ? '⟢ ' : '  ') + item[0].padEnd(10) + ' ' + item[1]}
+      else
+        each line, index in visible key index
+          Text(color={line.color} wrap="truncate-end")
+            if line.spans
+              each span, spanIndex in line.spans key spanIndex
+                Text({...span}) #{span.text}
+            else
+              Text #{line.text || ' '}
+    if state.active
+      Box(height={1} paddingX={1} flexShrink={0})
+        Text(color={codexBlue} wrap="truncate-end") #{`${spinner} Working · ${safeText(state.phase)}`}
+    Box(backgroundColor={composerBg} paddingX={1} paddingY={1} flexShrink={0})
+      Text(wrap="truncate-end")
+        Text(color={bright}) #{'⧽ '}
+        if input
+          fragment
+            Text(color={bright}) #{beforeCursor}
+            Text(inverse={panel !== 'commands'}) #{inputChars[cursor] ?? ' '}
+            Text(color={bright}) #{afterCursor}
+        else
+          fragment
+            Text(inverse={panel !== 'commands'}) #{' '}
+            Text(color={composerDim}) #{state.active ? 'Steer the agent while it works…' : panel === 'commands' ? 'Type a command…' : panel === 'metrics' ? 'Metrics open · Esc to return…' : 'Ask anything about your project…'}
+    Box(height={1} paddingX={1} flexShrink={0})
+      Box(flexGrow={1} flexShrink={1} minWidth={0})
+        Text(wrap="truncate-end")
+          Text(color={statusModel}) #{safeText(state.model)}
+          Text(color={statusDot}) #{' · '}
+          Text(color={statusPath}) #{project}
+      if statusRight
+        Box(marginLeft={1} flexShrink={0} minWidth={0})
+          Text(color={muted} wrap="truncate-end") #{statusRight}
+      if jevStatus
+        Box(marginLeft={1} width={stringWidth(jevStatus)} flexShrink={0})
+          Text(color={state.jev?.errors ? errorRed : muted} wrap="truncate-end") #{jevStatus}
