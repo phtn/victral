@@ -71,7 +71,8 @@ export class Evaluations extends EventEmitter {
           result = await this.audit(state.source, state.summary, { apiKey: this.apiKey, model: job.requested_model || this.model, context: state.context, signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]) });
           break;
         } catch (error) {
-          if (signal.aborted || retries >= 2 || !/HTTP (429|529)\b/.test(error.message)) throw error;
+          // TypeSafe also returns 503 model_unavailable during intermittent failures.
+          if (signal.aborted || retries >= 2 || !/HTTP (429|503|529)\b/.test(error.message)) throw error;
           retries++;
           await new Promise((resolve, reject) => {
             const abort = () => { clearTimeout(timer); reject(signal.reason); };

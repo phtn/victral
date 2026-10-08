@@ -288,7 +288,9 @@ Usage, node/turn metrics, and evaluation records are stored in separate daily
 JSONL streams beside the chat, included in `/backup`, and excluded from the
 agent's conversation view. Pending audit jobs retain references to the
 immutable source and context nodes and resume after restart. API failures are
-shown as failures rather than passing results; rate-limit retries are bounded.
+shown as failures rather than passing results. HTTP 429, 503, and 529 failures
+get at most two retries with exponential backoff. The error counter includes
+saved failed audits across sessions; restarting does not retry those failures.
 
 Jev's documented state-plus-question limit is 32k tokens. This version uses a
 conservative 24,000-byte guard on the complete audit state rather than claiming

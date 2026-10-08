@@ -101,14 +101,28 @@ test('oversized audit inputs are marked skipped instead of truncated or counted 
   expect(calls).toBe(0);
   expect(evaluations.latest.get('0:0').status).toBe('skipped');
 });
-test('TypeSafe rate-limit retries are bounded and successful evaluation retains retry count', async () => {
+test.each([429, 503, 529])('TypeSafe HTTP %i retries recover and successful evaluation retains retry count', async status => {
   let calls = 0;
-  const { memory, evaluations } = await setup({ retryMs: 1, audit: async () => { calls++; if (calls < 3) throw new Error('TypeSafe HTTP 429: busy'); return result(); } });
+  const { memory, evaluations } = await setup({ retryMs: 1, audit: async () => { calls++; if (calls < 3) throw new Error(`TypeSafe HTTP ${status}: temporarily unavailable`); return result(); } });
   memory.append('user', 'instruction '.repeat(70));
   await memory.drain(AbortSignal.timeout(3000));
   await evaluations.drain(AbortSignal.timeout(3000));
   expect(calls).toBe(3);
   expect(evaluations.latest.get('0:0').retries).toBe(2);
+});
+test('persistent TypeSafe 503 failures stop after two retries without blocking summaries', async () => {
+  let calls = 0;
+  const { memory, evaluations } = await setup({ retryMs: 1, audit: async () => {
+    calls++;
+    throw new Error('TypeSafe HTTP 503: {"detail":{"error_type":"model_unavailable"}}');
+  } });
+  memory.append('user', 'instruction '.repeat(70));
+  expect(await memory.drain(AbortSignal.timeout(3000))).toBe(true);
+  expect(await evaluations.drain(AbortSignal.timeout(3000))).toBe(true);
+  expect(calls).toBe(3);
+  expect(evaluations.latest.get('0:0').status).toBe('error');
+  expect(evaluations.latest.get('0:0').error).toContain('model_unavailable');
+  expect(memory.node(0, 0).text).toContain('ZEBRA-7319');
 });
 test('cache totals handle Cohere inclusive input and Meta exclusive input without double counting', () => {
   const totals = usageTotals([
