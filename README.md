@@ -57,6 +57,8 @@ tool steps. Native content, encrypted reasoning, and signatures are replayed
 inside a turn and excluded from the permanent memory log. Compactor effort is
 `medium`. Meta requires an output limit; this adapter uses 16,384 tokens and
 reports incomplete generations instead of silently accepting them.
+The agent loop rejects failed or missing completion reasons before executing
+tools, and reports a failed turn if a tool step contains no calls.
 
 Meta's Contributor tier permits using prompts and completions for training;
 its Standard tier does not. See [Meta models](https://dev.meta.ai/docs/models)
@@ -151,7 +153,7 @@ This version does not install an always-on service.
 bun run check       # strict TypeScript checks and offline tests
 bun run build       # builds dist/cli.js and copies runtime prompt assets
 bun dist/cli.js --help
-bun run benchmark  # CPU-only metrics benchmark with 10,000 saved messages
+bun run benchmark  # CPU-only metrics and memory benchmark with 10,000 messages
 bun run smoke
 bun run smoke:jev
 ```
@@ -165,8 +167,15 @@ needs the installed dependencies and its adjacent prompt assets.
 Metrics accumulate saved usage, turns, and message sizes once, and refresh audit
 totals when evaluations change. Streaming UI updates reuse those totals while
 reading current view and compactor state. The benchmark measures repeated metrics
-updates after replay; it makes no API requests or persistent writes. Pass a
+updates, memory replay with both a full summary tree and an unfinished backlog,
+and idle compactor scheduling. It makes no API requests or persistent writes. Pass a
 history size with `bun run benchmark 1000` to compare different workloads.
+
+Memory maintains view byte totals and eligible sibling merges incrementally.
+The compactor indexes unfinished work on restart, then queues nodes as their
+sources become ready. Idle scheduling avoids scanning saved history. Level and
+index priority, context readiness, most-due folding, and retry behavior retain
+the specification's rules.
 
 Both provider adapters share a streaming event parser that preserves UTF-8 text
 and accepts LF, CRLF, and CR separators across network chunks. A provider's

@@ -17,7 +17,7 @@ export function formatJevStatus(jev: JevStatus, width: number): string {
   const errors = jev.errors ? ` ${count.format(jev.errors)}!` : ''
   const skipped = jev.skipped ? ` ${count.format(jev.skipped)}-` : ''
   const risks = jev.risks
-    ? `U${Math.round(jev.risks.unsupported * 100)} O${Math.round(jev.risks.omitted * 100)} P${Math.round(jev.risks.inflated * 100)}`
+    ? `U${Math.round(jev.risks.unsupported * 100)}% O${Math.round(jev.risks.omitted * 100)}% P${Math.round(jev.risks.inflated * 100)}%`
     : ''
   const counts = `${label} ${completed}${pending}${errors}`
   const variants = [

@@ -62,3 +62,31 @@ test('Runner drains smooth output before tools, preserves reasoning callbacks, a
   await runner.submit('Check files'); await runner.close();
   expect(events).toEqual(['Waiting for response', 'thinking', 'Checking ', 'files', 'tool', 'Waiting for response', 'All ', 'done']);
 });
+
+test.each(['MAX_TOKENS', 'ERROR', 'ERROR_TOXIC', undefined])('Runner reports unsuccessful termination %s before executing tools', async finish_reason => {
+  let executed = 0;
+  const errors: string[] = [], statuses: string[] = [];
+  const model: ModelPort = { model: 'test', async stream() {
+    return { message: { role: 'assistant', content: 'partial', tool_calls: [{ id: 'call', function: { name: 'write_file', arguments: '{}' } }] }, finish_reason };
+  } };
+  const memory: MemoryPort = { append() {}, async settle() { return true; }, render: () => '', zoom: () => '', date: () => '' };
+  const runner = new Runner(memory, model, { definitions: [], async execute() { executed++; return 'written'; } }, '', {
+    onError: text => errors.push(text), onTurn: turn => statuses.push(turn.status),
+  });
+  await runner.submit('Make a change'); await runner.close();
+  expect(executed).toBe(0);
+  expect(statuses).toEqual(['error']);
+  expect(errors).toHaveLength(1);
+  expect(errors[0]).toContain(finish_reason === 'MAX_TOKENS' ? 'output limit' : finish_reason ?? 'missing finish reason');
+});
+test('Runner rejects a tool termination with no calls instead of reporting completion', async () => {
+  const errors: string[] = [], statuses: string[] = [];
+  const model: ModelPort = { model: 'test', async stream() { return { message: { role: 'assistant', content: [] }, finish_reason: 'TOOL_CALL' }; } };
+  const memory: MemoryPort = { append() {}, async settle() { return true; }, render: () => '', zoom: () => '', date: () => '' };
+  const runner = new Runner(memory, model, { definitions: [], async execute() { throw new Error('unexpected tool'); } }, '', {
+    onError: text => errors.push(text), onTurn: turn => statuses.push(turn.status),
+  });
+  await runner.submit('Check files'); await runner.close();
+  expect(statuses).toEqual(['error']);
+  expect(errors).toEqual(['Model requested a tool step without tool calls.']);
+});

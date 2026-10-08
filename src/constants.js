@@ -7,11 +7,14 @@ export const CAP = 30_000
 export const MARKS = [50_000, 80_000, 100_000]
 export const MODEL = 'muse-spark-1.3-contributor'
 export const bytes = (text) => Buffer.byteLength(text, 'utf8')
-export const cutBytes = (text, limit) =>
-  Buffer.from(text)
-    .subarray(0, limit)
-    .toString('utf8')
-    .replace(/\uFFFD$/, '')
+export function cutBytes(text, limit) {
+  const data = Buffer.from(text)
+  let end = Math.min(data.length, Math.max(0, Math.floor(limit)))
+  // Back up only when the cut lands inside an encoded character. Removing a
+  // decoded replacement character also removed genuine U+FFFD from the input.
+  if (end < data.length) while (end > 0 && (data[end] & 0xc0) === 0x80) end--
+  return data.subarray(0, end).toString('utf8')
+}
 export function capResult(text) {
   const chars = Array.from(text)
   if (chars.length <= CAP) return text

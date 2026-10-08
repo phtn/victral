@@ -81,7 +81,11 @@ export class Runner {
             });
             messages.push(result.message); // Keep provider content intact within the turn.
             if (result.finish_reason === 'MAX_TOKENS') throw new Error('Model output limit reached; response is incomplete.');
+            if (result.finish_reason !== 'COMPLETE' && result.finish_reason !== 'TOOL_CALL') {
+              throw new Error(`Model response did not complete: ${result.finish_reason ?? 'missing finish reason'}.`);
+            }
             const calls = result.message.tool_calls ?? [];
+            if (result.finish_reason === 'TOOL_CALL' && !calls.length) throw new Error('Model requested a tool step without tool calls.');
             for (const call of calls) {
               toolCalls++;
               if (call.function.name === 'zoom') retrievals++;

@@ -94,7 +94,7 @@ export class Metrics {
   snapshot() {
     this.syncHistory();
     const memory = this.memory;
-    const viewBytes = memory.view.reduce((sum, p) => sum + bytes(memory.text(p)), 0);
+    const viewBytes = memory.viewBytes ?? memory.view.reduce((sum, p) => sum + bytes(memory.text(p)), 0);
     const audit = this.auditSnapshot();
     return {
       messages: memory.storage.root.length, nodes: memory.storage.nodes.size, raw_bytes: this.rawBytes, view_bytes: viewBytes,

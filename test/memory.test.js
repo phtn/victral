@@ -23,6 +23,14 @@ test('UTF-8 lengths, safe truncation, and head/tail tool cap', () => {
   assert.equal(bytes(SCALE), 512);
   assert.equal(bytes('🦓'), 4);
   assert.equal(cutBytes('a🦓z', 3), 'a');
+  assert.equal(cutBytes('a\uFFFDz', 4), 'a\uFFFD');
+  for (const original of ['a🦓z', 'é文\uFFFDz', 'plain']) {
+    for (let limit = 0; limit <= bytes(original) + 1; limit++) {
+      let prefix = '';
+      for (const char of original) { if (bytes(prefix + char) > limit) break; prefix += char; }
+      assert.equal(cutBytes(original, limit), prefix);
+    }
+  }
   const capped = capResult('HEAD' + 'x'.repeat(40_000) + 'TAIL');
   assert.equal(Array.from(capped).length, CAP);
   assert.ok(capped.startsWith('HEAD') && capped.endsWith('TAIL') && capped.includes('omitted'));
@@ -74,6 +82,88 @@ test('view merges the most due adjacent binary siblings, covers every message, a
   for (const [start, end] of ranges) assert.ok(memory.view.some(p => memory.start(p) <= start && memory.end(p) >= end));
   const reconstructed = new Memory(storage, model, { viewBudget: 50, nodeBudget: 45 });
   assert.equal(reconstructed.render(), memory.render());
+});
+
+// Deliberately recompute sizes and scan all siblings: a small, independent
+// reference for the specification's incremental, most-due folding rule.
+function referenceFit(view, memory, T) {
+  let size = view.reduce((sum, part) => sum + bytes(memory.text(part)), 0);
+  while (size > memory.viewBudget) {
+    let best = -1, weight = -Infinity;
+    for (let j = 0; j + 1 < view.length; j++) {
+      const a = view[j], b = view[j + 1];
+      if (a.l !== b.l || a.i % 2 || b.i !== a.i + 1 || !memory.node(a.l + 1, a.i / 2)) continue;
+      const due = (T - a.i * 2 ** a.l) / 2 ** (a.l + 2);
+      if (due > weight) { best = j; weight = due; }
+    }
+    if (best < 0) break;
+    const a = view[best], b = view[best + 1], parent = { l: a.l + 1, i: a.i / 2 };
+    size += bytes(memory.text(parent)) - bytes(memory.text(a)) - bytes(memory.text(b));
+    view.splice(best, 2, parent);
+  }
+}
+test('indexed scheduling preserves source/context readiness, scan priority, retries, and view folding', async () => {
+  let calls = 0;
+  const model = { chat: async messages => {
+    assert.ok(!messages[1].content[0].text.includes('not summarized yet'));
+    await Bun.sleep(++calls % 3);
+    return { finish_reason: 'COMPLETE', message: { role: 'assistant', content: [{ type: 'text', text: 'user: retain the decisions and original sources 🦓' }] } };
+  } };
+  const { storage, memory } = await fixture(model, { nodeBudget: 64, viewBudget: 200, jobs: 3, retry: 2, report: () => {} });
+  const reference = [];
+  let seen = 0;
+  memory.on('change', () => {
+    while (seen < storage.root.length) reference.push({ l: 0, i: seen++ });
+    referenceFit(reference, memory, storage.root.length);
+    assert.deepEqual(memory.view, reference);
+    assert.equal(memory.viewBytes, memory.view.reduce((sum, part) => sum + bytes(memory.text(part)), 0));
+  });
+  const build = memory.build.bind(memory), attempts = new Map();
+  memory.build = async (l, i, signal) => {
+    const key = `${l}:${i}`, first = memory.first(), T = storage.root.length;
+    let expected;
+    for (let level = 0; 2 ** level <= T && !expected; level++) {
+      for (let index = 0; (index + 1) * 2 ** level <= T; index++) {
+        if (memory.node(level, index) || (memory.busy.has(`${level}:${index}`) && `${level}:${index}` !== key)) continue;
+        if ((level === 0 ? index : (index + 1) * 2 ** level) > first) continue;
+        if (level && (!memory.node(level - 1, 2 * index) || !memory.node(level - 1, 2 * index + 1))) continue;
+        expected = `${level}:${index}`; break;
+      }
+    }
+    assert.equal(key, expected);
+    const attempt = (attempts.get(key) ?? 0) + 1; attempts.set(key, attempt);
+    if (['0:3', '1:0', '1:2'].includes(key) && attempt === 1) throw new Error('temporary compactor failure');
+    return build(l, i, signal);
+  };
+  for (let i = 0; i < 32; i++) memory.append('user', i % 3 ? `decision ${i} 🦓 `.repeat(20) : `keep ${i}`);
+  assert.equal(await memory.drain(AbortSignal.timeout(3000)), true);
+  assert.equal(storage.nodes.size, 63);
+  assert.equal(memory.remaining, 0);
+  for (const key of ['0:3', '1:0', '1:2']) assert.equal(attempts.get(key), 2);
+  const next = new Memory(storage, model, { nodeBudget: 64, viewBudget: 200 });
+  const replay = [];
+  for (let i = 0; i < storage.root.length; i++) { replay.push({ l: 0, i }); referenceFit(replay, next, i + 1); }
+  assert.deepEqual(next.view, replay);
+  assert.equal(next.viewBytes, next.view.reduce((sum, part) => sum + bytes(next.text(part)), 0));
+  await next.stop();
+});
+test('restart indexes unfinished merges and idle pumps do not scan saved history', async () => {
+  const { storage, memory } = await fixture();
+  for (let i = 0; i < 32; i++) storage.append('user', `choice ${i}`);
+  for (let i = 0; i < 32; i++) storage.saveNode(0, i, `user: choice ${i}`);
+  // A completed later sibling must be retained while earlier gaps catch up.
+  storage.saveNode(1, 7, 'user: choice 14\nuser: choice 15');
+  const resumed = new Memory(storage, noModel);
+  cleanups.push(() => resumed.stop());
+  assert.equal(await resumed.drain(AbortSignal.timeout(3000)), true);
+  assert.equal(storage.nodes.size, 63);
+  const get = storage.nodes.get.bind(storage.nodes);
+  let reads = 0;
+  storage.nodes.get = key => { reads++; return get(key); };
+  for (let i = 0; i < 100; i++) resumed.pump();
+  assert.equal(reads, 0);
+  const alreadyCanceled = new AbortController(); alreadyCanceled.abort();
+  assert.equal(await resumed.drain(alreadyCanceled.signal), false);
 });
 test('compactor retries with byte feedback in the same conversation, keeps the shortest, and omits IDs from context', async () => {
   const requests = [];
