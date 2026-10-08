@@ -24,11 +24,12 @@ test('workspace renders Codex layout, opens command menu and metrics, and submit
   const emptyView = render(empty); await flush();
   expect(emptyView.lastFrame()).toContain('Victral'); expect(emptyView.lastFrame()).toContain('(v0.2.0)');
   expect(emptyView.lastFrame()).toContain('A half-formed idea will do.');
+  expect(emptyView.lastFrame()).toContain('ms1.3 · /tmp/victral-empty');
   emptyView.unmount();
   const session = new DemoSession();
   const view = render(session); await flush();
   expect(view.lastFrame()).toContain('Victral'); expect(view.lastFrame()).toContain('(v0.2.0)');
-  expect(view.lastFrame()).toContain('muse-spark-1.3-contributor'); expect(view.lastFrame()).toContain('·');
+  expect(view.lastFrame()).toContain('ms1.3c ·');
   view.stdin.write('\x10'); await flush(); expect(view.lastFrame()).toContain('/help'); expect(view.lastFrame()).toContain('COMMANDS');
   view.stdin.write('\x1b'); await flush();
   view.stdin.write('\x0f'); await flush(); expect(view.lastFrame()).toContain('DEMO METRICS'); expect(view.lastFrame()).toContain('METRICS');
@@ -67,6 +68,8 @@ test('workspace renders incremental Markdown and keeps work visible through pane
   expect(view.lastFrame()).toContain('Usage'); expect(view.lastFrame()).toContain('Working · Running read_file');
   state.active = false; session.emit('update'); await flush();
   expect(view.lastFrame()).not.toContain('Working');
+  state.model = 'muse-spark-1.3'; session.emit('update'); await flush();
+  expect(view.lastFrame()).toContain('ms1.3 · /tmp/markdown');
   state.jev = { state: 'enabled', completed: 1, pending: 0, errors: 0, skipped: 0, risks: { unsupported: 0.02, omitted: 0.01, inflated: 0 } };
   session.emit('update'); await flush();
   expect(view.lastFrame()!.split('\n').findLast(line => line.includes('Jev'))!.trimEnd()).toEndWith('Jev 1✓ · U2% O1% P0%');
@@ -81,6 +84,7 @@ test('workspace adapts to narrow terminals and handles live resizing', async () 
   expect(view.lastFrame()!.split('\n').every(line => stringWidth(line) <= 44)).toBe(true);
   const footer = view.lastFrame()!.split('\n').findLast(line => line.includes('Jev'))!.trimEnd();
   expect(footer).toEndWith('Jev 12✓ 1… · U2% O1% P0%');
+  expect(footer).toContain('ms1.3c');
   expect(stringWidth(footer)).toBe(43);
   Object.defineProperty(view.stdout, 'columns', { configurable: true, value: 30 });
   view.stdout.emit('resize'); await flush(); expect(view.lastFrame()).toContain('resize terminal');

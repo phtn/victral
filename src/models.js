@@ -3,33 +3,40 @@ import { MODEL } from './constants.js';
 import { randomUUID } from 'node:crypto';
 
 export const MODEL_INFO = [
-  { id: 'muse-spark-1.3', provider: 'Meta', credential: 'META_API_KEY or MODEL_API_KEY' },
-  { id: 'muse-spark-1.3-contributor', provider: 'Meta', credential: 'META_API_KEY or MODEL_API_KEY' },
+  { id: 'muse-spark-1.3', shortName: 'ms1.3', provider: 'Meta', credential: 'META_API_KEY or MODEL_API_KEY' },
+  { id: 'muse-spark-1.3-contributor', shortName: 'ms1.3c', provider: 'Meta', credential: 'META_API_KEY or MODEL_API_KEY' },
 ];
 export const MODELS = MODEL_INFO.map(entry => entry.id);
-export function formatModelsList() {
-  return MODEL_INFO.map((entry, index) => `  ${index + 1}. ${entry.id} (${entry.provider}; needs ${entry.credential})`).join('\n');
+const exactModel = lowered => MODEL_INFO.find(entry => entry.id.toLowerCase() === lowered || entry.shortName === lowered);
+export function shortModelName(model) {
+  return exactModel(String(model).trim().toLowerCase())?.shortName ?? model;
 }
-// Accept a list number, an exact ID (any case), or an unambiguous short
-// name/prefix, so `/model 2` and `/model contributor` work like the full ID.
+export function formatModelsList() {
+  return MODEL_INFO.map((entry, index) => `  ${index + 1}. ${entry.id} (${entry.provider}; alias ${entry.shortName}; needs ${entry.credential})`).join('\n');
+}
+// Resolve exact aliases before partial IDs, so ms1.3 selects Standard even
+// though the Contributor alias starts with the same characters.
 export function resolveModelId(input) {
   const text = String(input ?? '').trim();
-  if (!text) throw new Error(`Choose a model:\n${formatModelsList()}\nUse /model <number or ID>, e.g. /model 2.`);
+  const hint = 'Use /model <number, short name, or ID>, e.g. /model ms1.3c.';
+  if (!text) throw new Error(`Choose a model:\n${formatModelsList()}\n${hint}`);
   const index = Number(text);
   if (/^\d+$/.test(text)) {
     if (Number.isSafeInteger(index) && index >= 1 && index <= MODEL_INFO.length) return MODEL_INFO[index - 1].id;
     throw new Error(`Model number must be between 1 and ${MODEL_INFO.length}.\n${formatModelsList()}`);
   }
   const lowered = text.toLowerCase();
-  const exact = MODEL_INFO.find(entry => entry.id.toLowerCase() === lowered);
+  const exact = exactModel(lowered);
   if (exact) return exact.id;
   const matches = MODEL_INFO.filter(entry => entry.id.toLowerCase().includes(lowered));
   if (matches.length === 1) return matches[0].id;
-  if (matches.length > 1) throw new Error(`"${text}" matches several models:\n${formatModelsList()}\nUse /model <number or ID>, e.g. /model 2.`);
-  throw new Error(`Unknown model "${text}". Available models:\n${formatModelsList()}\nUse /model <number or ID>, e.g. /model 2.`);
+  if (matches.length > 1) throw new Error(`"${text}" matches several models:\n${formatModelsList()}\n${hint}`);
+  throw new Error(`Unknown model "${text}". Available models:\n${formatModelsList()}\n${hint}`);
 }
 export function createModel(model = MODEL, options = {}) {
-  if (!MODELS.includes(model)) throw new Error(`Unsupported model: ${model}.\n${formatModelsList()}`);
+  const selected = exactModel(String(model).trim().toLowerCase());
+  if (!selected) throw new Error(`Unsupported model: ${model}.\n${formatModelsList()}`);
+  model = selected.id;
   const report = options.usage ?? (() => {});
   const provider = new Meta({ ...options, model, usage: () => {} });
   for (const method of ['chat', 'stream']) {

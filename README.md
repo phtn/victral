@@ -24,31 +24,34 @@ bun run start --project /absolute/path/to/your/project
 
 ## Select models
 
-| Model ID | Provider | Credential |
-| --- | --- | --- |
-| `muse-spark-1.3` | Meta | `META_API_KEY` or `MODEL_API_KEY` |
-| `muse-spark-1.3-contributor` | Meta | `META_API_KEY` or `MODEL_API_KEY` |
+| Short name | Model ID | Provider | Credential |
+| --- | --- | --- | --- |
+| `ms1.3` | `muse-spark-1.3` | Meta | `META_API_KEY` or `MODEL_API_KEY` |
+| `ms1.3c` | `muse-spark-1.3-contributor` | Meta | `META_API_KEY` or `MODEL_API_KEY` |
 
 ```sh
-bun run start --project /absolute/path/to/your/project --model muse-spark-1.3
+bun run start --project /absolute/path/to/your/project --model ms1.3
 ```
 
 Choose the compactor separately if desired:
 
 ```sh
-bun run start --model muse-spark-1.3 --compactor-model muse-spark-1.3-contributor
+bun run start --model ms1.3 --compactor-model ms1.3c
 ```
 
 `--models` lists the supported models with their providers and required
 credentials, without making API requests. Models can be named by list number,
-short name, or full ID: `--model 1` works like
+short name, or full ID: `--model ms1.3` and `--model 1` work like
 `--model muse-spark-1.3`. During an interactive session, `/model` shows the
-current agent, the compactor, and the numbered choices; `/model 1` switches
+current agent, the compactor, and the numbered choices; `/model ms1.3` switches
 the main agent between turns while retaining saved memory. The compactor stays
 on its startup selection. Model switches are session-local;
 set `VICTRAL_MODEL` and `VICTRAL_COMPACTOR_MODEL` for defaults. Explicit CLI
 flags take precedence. The numbered choices are 1 for `muse-spark-1.3` and
-2 for `muse-spark-1.3-contributor`.
+2 for `muse-spark-1.3-contributor`. Short names also work in the environment
+settings and smoke scripts, and are case-insensitive. API requests and saved
+usage retain the full model IDs. The status bar shows the selected model's short
+name and updates when switching with `/model`.
 
 Meta requests go directly to `https://api.meta.ai/v1/messages`, using the
 documented Anthropic-compatible Messages surface to preserve reasoning across

@@ -129,7 +129,7 @@ export class Session extends EventEmitter {
     if (name === '/usage') return JSON.stringify(this.storage.load('usage').slice(-10), null, 2);
     if (name === '/view') return this.memory.render() || 'No saved messages yet.';
     if (name === '/model') {
-      if (!arg) return `Agent: ${this.runner.model.model}\nCompactor: ${this.options.compactorModel} (fixed at startup)\nAvailable models:\n${formatModelsList()}\n\nSwitch with /model <number or ID>, e.g. /model 2. Switching is session-local and keeps saved memory.`;
+      if (!arg) return `Agent: ${this.runner.model.model}\nCompactor: ${this.options.compactorModel} (fixed at startup)\nAvailable models:\n${formatModelsList()}\n\nSwitch with /model <number, short name, or ID>, e.g. /model ms1.3c. Switching is session-local and keeps saved memory.`;
       if (this.runner.active) throw new Error('Switch models between turns; /cancel ends the current turn.');
       const selected = resolveModelId(arg);
       if (selected === this.runner.model.model) return `Already using ${selected}.`;

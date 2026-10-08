@@ -73,6 +73,12 @@ test('model input accepts numbers, case variants, and unambiguous short names', 
   assert.equal(resolveModelId('2'), MODELS[1]);
   assert.equal(resolveModelId('MUSE-SPARK-1.3'), 'muse-spark-1.3');
   assert.equal(resolveModelId('contributor'), 'muse-spark-1.3-contributor');
+  for (const { id, shortName } of MODEL_INFO) {
+    assert.equal(resolveModelId(shortName), id);
+    assert.equal(resolveModelId(` ${shortName.toUpperCase()} `), id);
+    assert.equal(createModel(shortName, { apiKey: 'test-key' }).model, id);
+    assert.ok(formatModelsList().includes(`alias ${shortName}`));
+  }
   assert.throws(() => resolveModelId('3'), /between 1 and 2/);
   assert.throws(() => resolveModelId('muse-spark'), /several models/);
   assert.throws(() => resolveModelId('unknown'), /Unknown model/);

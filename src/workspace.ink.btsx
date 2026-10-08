@@ -6,6 +6,7 @@ import { COMMANDS } from './session-commands.js';
 import { markdownLines, type MarkdownLine } from './markdown.js';
 import { safeText, shortProject, wrapLines, type WorkspaceSession } from './tui-model.js';
 import { formatJevStatus } from './jev-status.js';
+import { shortModelName } from './models.js';
 module
   const VERSION = '0.2.0'
   const codexBlue = '#5aa9ff'
@@ -253,7 +254,7 @@ else
     Box(height={1} paddingX={1} flexShrink={0})
       Box(flexGrow={1} flexShrink={1} minWidth={0})
         Text(wrap="truncate-end")
-          Text(color={statusModel}) #{safeText(state.model)}
+          Text(color={statusModel}) #{safeText(shortModelName(state.model))}
           Text(color={statusDot}) #{' · '}
           Text(color={statusPath}) #{project}
       if statusRight

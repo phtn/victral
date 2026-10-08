@@ -61,7 +61,7 @@ async function main(): Promise<void> {
     return
   }
   if (values.models) {
-    console.log(`Available models:\n${formatModelsList()}\n\nSelect with --model <number or ID>, e.g. --model 2.`)
+    console.log(`Available models:\n${formatModelsList()}\n\nSelect with --model <number, short name, or ID>, e.g. --model ms1.3c.`)
     return
   }
   if (values.plain && values.tui) throw new Error('Choose either --plain or --tui.')
