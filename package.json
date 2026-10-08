@@ -12,6 +12,7 @@
     "test": "bun test",
     "smoke": "bun scripts/smoke.js",
     "audit": "bun scripts/audit.js",
+    "benchmark": "bun scripts/benchmark.js",
     "smoke:jev": "bun scripts/jev-smoke.js",
     "dev": "bun --watch src/cli.ts",
     "typecheck": "tsc --noEmit",

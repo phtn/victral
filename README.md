@@ -148,6 +148,7 @@ This version does not install an always-on service.
 bun run check       # strict TypeScript checks and offline tests
 bun run build       # builds dist/cli.js and copies runtime prompt assets
 bun dist/cli.js --help
+bun run benchmark  # CPU-only metrics benchmark with 10,000 saved messages
 bun run smoke
 bun run smoke:jev
 ```
@@ -156,6 +157,17 @@ The tests run offline and cover CLI lifecycle, terminal keyboard behavior,
 file boundaries, unique edits, literal argument handling, command timeout and
 cancellation, Git inspection, providers, memory, and evaluations. The built CLI
 needs the installed dependencies and its adjacent prompt assets.
+
+Metrics accumulate saved usage, turns, and message sizes once, and refresh audit
+totals when evaluations change. Streaming UI updates reuse those totals while
+reading current view and compactor state. The benchmark measures repeated metrics
+updates after replay; it makes no API requests or persistent writes. Pass a
+history size with `bun run benchmark 1000` to compare different workloads.
+
+Both provider adapters share a streaming event parser that preserves UTF-8 text
+and accepts LF, CRLF, and CR separators across network chunks. A provider's
+terminal event completes the request immediately; a connection ending before
+that event remains an error.
 
 The CLI, session controller, agent loop, tools, and TUI are strict TypeScript.
 Existing provider, storage, compaction, and evaluation modules remain JavaScript

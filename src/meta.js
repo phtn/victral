@@ -1,3 +1,5 @@
+import { sseData } from './sse.js';
+
 const finishReason = reason => reason === 'tool_use' ? 'TOOL_CALL' : reason === 'max_tokens' ? 'MAX_TOKENS' : reason === 'end_turn' ? 'COMPLETE' : reason?.toUpperCase();
 
 export function metaRequest(messages, tools, model, maxTokens = 16_384, purpose = 'agent') {
@@ -55,9 +57,8 @@ export class Meta {
   }
   async stream(messages, { onText = () => {}, onThought = () => {}, onEntry = () => {}, ...options } = {}) {
     const response = await this.request(messages, { ...options, stream: true });
-    const reader = response.body.getReader(), decoder = new TextDecoder();
     const content = new Map(), argumentsByIndex = new Map();
-    let buffer = '', ended = false, reason, usage = {};
+    let ended = false, reason, usage = {};
     const event = async payload => {
       if (!payload.trim() || payload.trim() === '[DONE]') return;
       const e = JSON.parse(payload);
@@ -87,27 +88,13 @@ export class Meta {
       if (e.type === 'message_stop') ended = true;
       if (e.type === 'error') throw new Error(`Meta stream: ${e.error?.message ?? 'unknown error'}`);
     };
-    try {
-      for (;;) {
-        const chunk = await reader.read();
-        buffer += decoder.decode(chunk.value ?? new Uint8Array(), { stream: !chunk.done });
-        buffer = buffer.replace(/\r\n/g, '\n');
-        let boundary;
-        while ((boundary = buffer.indexOf('\n\n')) >= 0) {
-          const frame = buffer.slice(0, boundary); buffer = buffer.slice(boundary + 2);
-          const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
-          if (data) await event(data);
-        }
-        if (chunk.done) break;
-      }
-      if (buffer.trim()) {
-        const data = buffer.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
-        if (data) await event(data);
-      }
-      if (!ended) throw new Error('Meta stream ended before message_stop.');
-      const result = normalize([...content.values()], reason, usage);
-      this.recordUsage(result);
-      return result;
-    } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+    for await (const payload of sseData(response.body)) {
+      await event(payload);
+      if (ended) break;
+    }
+    if (!ended) throw new Error('Meta stream ended before message_stop.');
+    const result = normalize([...content.values()], reason, usage);
+    this.recordUsage(result);
+    return result;
   }
 }

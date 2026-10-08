@@ -28,6 +28,14 @@ export class Metrics {
     this.requests = storage.load('usage');
     this.events = storage.load('metrics');
     this.sessionStart = this.requests.length;
+    this.requestCount = 0; this.eventCount = 0; this.rootCount = 0;
+    this.rawBytes = 0; this.generated = 0; this.free = 0;
+    this.turns = 0; this.toolCalls = 0; this.retrievals = 0;
+    this.totals = usageTotals([]); this.sessionTotals = usageTotals([]);
+    this.purposeTotals = Object.fromEntries(['agent', 'compactor'].map(p => [p, usageTotals([])]));
+    this.auditDirty = true;
+    this.evaluationListener = () => { this.auditDirty = true; };
+    evaluations.on('update', this.evaluationListener);
     this.nodeListener = node => {
       const { context_parts, ...metrics } = node;
       this.record({ type: 'node', ...metrics });
@@ -36,32 +44,62 @@ export class Metrics {
   }
   usage(record) { this.storage.usage(record); this.requests.push(record); }
   record(record) { this.storage.telemetry('metrics', record); this.events.push(record); }
-  snapshot() {
-    const memory = this.memory;
-    const rawBytes = memory.storage.root.reduce((sum, r) => sum + bytes(`${r.kind}: ${r.text}`), 0);
-    const viewBytes = memory.view.reduce((sum, p) => sum + bytes(memory.text(p)), 0);
+  // Saved streams are append-only. Process each record once, including replayed
+  // history, rather than rescanning them for every streamed UI update.
+  syncHistory() {
+    const add = (target, delta) => { for (const key of Object.keys(delta)) target[key] += delta[key]; };
+    while (this.requestCount < this.requests.length) {
+      const index = this.requestCount++, record = this.requests[index], delta = usageTotals([record]);
+      add(this.totals, delta);
+      if (index >= this.sessionStart) add(this.sessionTotals, delta);
+      if (Object.hasOwn(this.purposeTotals, record.purpose)) add(this.purposeTotals[record.purpose], delta);
+    }
+    while (this.eventCount < this.events.length) {
+      const record = this.events[this.eventCount++];
+      if (record.type === 'node') { if (record.generated) this.generated++; else this.free++; }
+      if (record.type === 'turn') {
+        this.turns++; this.toolCalls += record.tool_calls; this.retrievals += record.retrievals;
+        this.lastTurn = record;
+      }
+    }
+    const root = this.memory.storage.root;
+    while (this.rootCount < root.length) {
+      const record = root[this.rootCount++];
+      this.rawBytes += bytes(`${record.kind}: ${record.text}`);
+    }
+  }
+  auditSnapshot() {
+    if (!this.auditDirty) return this.auditTotals;
     const auditRecords = [...this.evaluations.latest.values()];
-    const completed = auditRecords.filter(r => r.status === 'completed').sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
+    const completed = auditRecords.filter(r => r.status === 'completed');
     const averages = Object.fromEntries(['unsupported_claim', 'user_decision_omitted', 'progress_inflated'].map(name =>
       [name, completed.length ? completed.reduce((sum, r) => sum + r.answers[name].noul, 0) / completed.length : null]));
-    const nodes = this.events.filter(e => e.type === 'node');
-    const turns = this.events.filter(e => e.type === 'turn');
+    const latest = completed.reduce((last, record) => !last || (record.date ?? '').localeCompare(last.date ?? '') >= 0 ? record : last, null);
+    this.auditTotals = { completed: completed.length, pending: auditRecords.filter(r => ['queued', 'running'].includes(r.status)).length, errors: auditRecords.filter(r => r.status === 'error').length, skipped: auditRecords.filter(r => r.status === 'skipped').length, averages, latest, input_tokens: completed.reduce((sum, r) => sum + number(r.usage?.input_tokens), 0), latency_ms: completed.reduce((sum, r) => sum + number(r.latency_ms), 0) };
+    this.auditDirty = false;
+    return this.auditTotals;
+  }
+  snapshot() {
+    this.syncHistory();
+    const memory = this.memory;
+    const viewBytes = memory.view.reduce((sum, p) => sum + bytes(memory.text(p)), 0);
+    const audit = this.auditSnapshot();
     return {
-      messages: memory.storage.root.length, nodes: memory.storage.nodes.size, raw_bytes: rawBytes, view_bytes: viewBytes,
-      view_budget: memory.viewBudget, compression: viewBytes ? rawBytes / viewBytes : 0,
+      messages: memory.storage.root.length, nodes: memory.storage.nodes.size, raw_bytes: this.rawBytes, view_bytes: viewBytes,
+      view_budget: memory.viewBudget, compression: viewBytes ? this.rawBytes / viewBytes : 0,
       pending_summaries: memory.view.filter(p => !memory.node(p.l, p.i)).length,
       compactor_running: [...memory.busy.values()].filter(e => !e.timer).length,
       compactor_retries: [...memory.busy.values()].filter(e => e.timer).length,
-      generated: nodes.filter(n => n.generated).length, free: nodes.filter(n => !n.generated).length,
-      turns: turns.length, tool_calls: turns.reduce((sum, e) => sum + e.tool_calls, 0), retrievals: turns.reduce((sum, e) => sum + e.retrievals, 0),
-      usage: usageTotals(this.requests), session: usageTotals(this.requests.slice(this.sessionStart)),
-      by_purpose: Object.fromEntries(['agent', 'compactor'].map(p => [p, usageTotals(this.requests.filter(r => r.purpose === p))])),
-      jev: { state: this.evaluations.reason, completed: completed.length, pending: auditRecords.filter(r => ['queued', 'running'].includes(r.status)).length, errors: auditRecords.filter(r => r.status === 'error').length, skipped: auditRecords.filter(r => r.status === 'skipped').length, averages, latest: completed.at(-1) ?? null, input_tokens: completed.reduce((sum, r) => sum + number(r.usage?.input_tokens), 0), latency_ms: completed.reduce((sum, r) => sum + number(r.latency_ms), 0) },
+      generated: this.generated, free: this.free,
+      turns: this.turns, tool_calls: this.toolCalls, retrievals: this.retrievals,
+      usage: { ...this.totals }, session: { ...this.sessionTotals },
+      by_purpose: Object.fromEntries(Object.entries(this.purposeTotals).map(([p, totals]) => [p, { ...totals }])),
+      jev: { ...audit, state: this.evaluations.reason, averages: { ...audit.averages } },
     };
   }
   compact() {
     const s = this.snapshot(), u = s.session;
-    const lastTurn = this.events.findLast(e => e.type === 'turn');
+    const lastTurn = this.lastTurn;
     const last = s.jev.latest;
     return [
       `[metrics] ${lastTurn ? `turn ${seconds(lastTurn.duration_ms)} · wait ${seconds(lastTurn.settle_ms)} · ` : ''}session tokens ${u.input} in / ${u.output} out · cached ${u.cacheKnown ? u.cached : 'n/a'} · zoom ${s.retrievals}`,
@@ -87,5 +125,5 @@ export class Metrics {
         : `  ${range}: ${r.status}${r.error || r.reason ? ` · ${r.error || r.reason}` : ''}`;
     })].join('\n');
   }
-  close() { this.memory.off('node', this.nodeListener); }
+  close() { this.memory.off('node', this.nodeListener); this.evaluations.off('update', this.evaluationListener); }
 }

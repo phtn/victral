@@ -1,4 +1,5 @@
-import { MODEL, MARKS } from './constants.js'
+import { MARKS } from './constants.js'
+import { sseData } from './sse.js'
 
 export function viewBlocks(view) {
   const blocks = []
@@ -17,7 +18,7 @@ export function viewBlocks(view) {
 export class Cohere {
   constructor({
     apiKey = process.env.COHERE_API_KEY,
-    model = 'comman-a-plus-05-2026',
+    model = 'command-a-plus-05-2026',
     usage = () => {},
     fetchImpl = fetch,
     purpose = 'agent'
@@ -65,10 +66,7 @@ export class Cohere {
   }
   async stream(messages, { onText = () => {}, onThought = () => {}, onEntry = () => {}, ...options } = {}) {
     const response = await this.request(messages, { ...options, stream: true })
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = '',
-      ended = false,
+    let ended = false,
       finishReason,
       usage,
       toolPlan = ''
@@ -114,46 +112,20 @@ export class Cohere {
       }
       if (e.type === 'error') throw new Error(e.message ?? 'Cohere stream error.')
     }
-    try {
-      for (;;) {
-        const chunk = await reader.read()
-        buffer += decoder.decode(chunk.value ?? new Uint8Array(), { stream: !chunk.done })
-        buffer = buffer.replace(/\r\n/g, '\n')
-        let boundary
-        while ((boundary = buffer.indexOf('\n\n')) >= 0) {
-          const frame = buffer.slice(0, boundary)
-          buffer = buffer.slice(boundary + 2)
-          const data = frame
-            .split('\n')
-            .filter((line) => line.startsWith('data:'))
-            .map((line) => line.slice(5).trimStart())
-            .join('\n')
-          if (data) await event(data)
-        }
-        if (chunk.done) break
-      }
-      if (buffer.trim()) {
-        const data = buffer
-          .split('\n')
-          .filter((line) => line.startsWith('data:'))
-          .map((line) => line.slice(5).trimStart())
-          .join('\n')
-        if (data) await event(data)
-      }
-      if (!ended) throw new Error('Cohere stream ended before message-end.')
-      const message = { role: 'assistant', content: [...content.values()] }
-      if (calls.size) {
-        message.tool_calls = [...calls.values()]
-        // Cohere rejects a replay containing both thinking blocks and tool_plan.
-        // Keep the generated thinking intact; include tool_plan for non-reasoning turns.
-        if (!message.content.some((block) => block.type === 'thinking')) message.tool_plan = toolPlan
-      }
-      const result = { message, finish_reason: finishReason, usage }
-      this.recordUsage(result)
-      return result
-    } finally {
-      await reader.cancel().catch(() => {})
-      reader.releaseLock()
+    for await (const payload of sseData(response.body)) {
+      await event(payload)
+      if (ended) break
     }
+    if (!ended) throw new Error('Cohere stream ended before message-end.')
+    const message = { role: 'assistant', content: [...content.values()] }
+    if (calls.size) {
+      message.tool_calls = [...calls.values()]
+      // Cohere rejects a replay containing both thinking blocks and tool_plan.
+      // Keep the generated thinking intact; include tool_plan for non-reasoning turns.
+      if (!message.content.some((block) => block.type === 'thinking')) message.tool_plan = toolPlan
+    }
+    const result = { message, finish_reason: finishReason, usage }
+    this.recordUsage(result)
+    return result
   }
 }
