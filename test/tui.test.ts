@@ -17,7 +17,7 @@ test('workspace renders Codex layout, opens command menu and metrics, and submit
   const empty = {
     options: { project: '/tmp/victral-empty', allowShell: false },
     metrics: { detailed: () => 'empty' },
-    snapshot: () => ({ entries: [], model: 'command-a-plus-05-2026', active: false, phase: 'Ready', metrics: '' }),
+    snapshot: () => ({ entries: [], model: 'muse-spark-1.3', active: false, phase: 'Ready', metrics: '' }),
     submit: async () => {}, cancel: () => {}, close: async () => {},
     on: () => {}, off: () => {},
   } as unknown as DemoSession;

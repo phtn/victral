@@ -1,10 +1,8 @@
-import { Cohere } from './cohere.js';
 import { Meta } from './meta.js';
 import { MODEL } from './constants.js';
 import { randomUUID } from 'node:crypto';
 
 export const MODEL_INFO = [
-  { id: 'command-a-plus-05-2026', provider: 'Cohere', credential: 'COHERE_API_KEY' },
   { id: 'muse-spark-1.3', provider: 'Meta', credential: 'META_API_KEY or MODEL_API_KEY' },
   { id: 'muse-spark-1.3-contributor', provider: 'Meta', credential: 'META_API_KEY or MODEL_API_KEY' },
 ];
@@ -18,7 +16,10 @@ export function resolveModelId(input) {
   const text = String(input ?? '').trim();
   if (!text) throw new Error(`Choose a model:\n${formatModelsList()}\nUse /model <number or ID>, e.g. /model 2.`);
   const index = Number(text);
-  if (Number.isSafeInteger(index) && index >= 1 && index <= MODEL_INFO.length) return MODEL_INFO[index - 1].id;
+  if (/^\d+$/.test(text)) {
+    if (Number.isSafeInteger(index) && index >= 1 && index <= MODEL_INFO.length) return MODEL_INFO[index - 1].id;
+    throw new Error(`Model number must be between 1 and ${MODEL_INFO.length}.\n${formatModelsList()}`);
+  }
   const lowered = text.toLowerCase();
   const exact = MODEL_INFO.find(entry => entry.id.toLowerCase() === lowered);
   if (exact) return exact.id;
@@ -30,9 +31,7 @@ export function resolveModelId(input) {
 export function createModel(model = MODEL, options = {}) {
   if (!MODELS.includes(model)) throw new Error(`Unsupported model: ${model}.\n${formatModelsList()}`);
   const report = options.usage ?? (() => {});
-  const provider = MODEL_INFO.find(entry => entry.id === model)?.provider === 'Cohere'
-    ? new Cohere({ ...options, model, usage: () => {} })
-    : new Meta({ ...options, model, usage: () => {} });
+  const provider = new Meta({ ...options, model, usage: () => {} });
   for (const method of ['chat', 'stream']) {
     const original = provider[method].bind(provider);
     provider[method] = async (messages, request = {}) => {

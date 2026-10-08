@@ -5,7 +5,7 @@ import { bytes } from '../src/constants.js';
 
 function fixture() {
   const requests = [
-    { purpose: 'agent', usage: { tokens: { input_tokens: 100, output_tokens: 20, reasoning_tokens: 10 }, cached_tokens: 30 }, latency_ms: 200, ttft_ms: 100 },
+    { purpose: 'agent', usage: { input_tokens: 70, output_tokens: 20, output_tokens_details: { thinking_tokens: 10 }, cache_read_input_tokens: 30 }, latency_ms: 200, ttft_ms: 100 },
     { purpose: 'compactor', usage: { input_tokens: 70, output_tokens: 20, cache_read_input_tokens: 30 } },
     { purpose: 'agent', status: 'error' },
   ];
@@ -28,7 +28,7 @@ test('incremental metrics match full totals across saved history and appended re
     const appended = [
       { purpose: 'agent', usage: { input_tokens: 50, output_tokens: 4, cache_read_input_tokens: 20 }, latency_ms: 100 },
       { purpose: 'compactor', status: 'canceled' },
-      { purpose: 'compactor', usage: { tokens: { input_tokens: 12, output_tokens: 3 } } },
+      { purpose: 'compactor', usage: { input_tokens: 12, output_tokens: 3 } },
     ];
     for (const record of appended) { metrics.usage(record); metrics.snapshot(); }
     storage.root.push({ kind: 'talk', text: 'decisions preserved 🦓' });

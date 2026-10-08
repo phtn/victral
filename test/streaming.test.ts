@@ -63,7 +63,7 @@ test('Runner drains smooth output before tools, preserves reasoning callbacks, a
   expect(events).toEqual(['Waiting for response', 'thinking', 'Checking ', 'files', 'tool', 'Waiting for response', 'All ', 'done']);
 });
 
-test.each(['MAX_TOKENS', 'ERROR', 'ERROR_TOXIC', undefined])('Runner reports unsuccessful termination %s before executing tools', async finish_reason => {
+test.each(['MAX_TOKENS', 'ERROR', 'UNKNOWN_STOP', undefined])('Runner reports unsuccessful termination %s before executing tools', async finish_reason => {
   let executed = 0;
   const errors: string[] = [], statuses: string[] = [];
   const model: ModelPort = { model: 'test', async stream() {

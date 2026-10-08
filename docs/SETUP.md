@@ -8,9 +8,9 @@ copy of the original `file.txt`. The original `file.md` is a saved HTML page.
 A Bun application with a strict TypeScript CLI, agent loop, tool layer,
 and Beast/Octane terminal workspace with `@octanejs/ink` implements the core
 memory loop with Meta `muse-spark-1.3-contributor` as the default agent and compactor,
-and selectable Cohere `command-a-plus-05-2026` and Meta `muse-spark-1.3`. Runtime
+and selectable Meta `muse-spark-1.3`. Runtime
 prompts use the name Victral, with only the permitted name substitution. See
-`../README.md` for commands, verification, and documented Cohere adaptations.
+`../README.md` for commands, verification, and Meta request behavior.
 Jev automatically evaluates generated summaries in the background when its
 key is configured. Live metrics show evaluation probabilities, token usage,
 latency, and memory progress. Observations live outside the memory algorithm;

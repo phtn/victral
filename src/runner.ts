@@ -1,7 +1,7 @@
 import type { MemoryPort, ModelPort, AgentTools, Message, TurnRecord, ToolActivity } from './types.js';
 import { errorMessage } from './types.js';
 import fs from 'node:fs';
-import { viewBlocks } from './cohere.js';
+import { viewBlocks } from './view.js';
 import { capResult } from './constants.js';
 import { smoothResponse } from './smooth-response.js';
 
@@ -109,7 +109,7 @@ export class Runner {
               this.memory.append('echo', output);
               messages.push({ role: 'tool', tool_call_id: call.id, content: [{ type: 'text', text: output }] });
             }
-            // Cohere has no send() for an in-flight HTTP request; inject queued input at this tool boundary.
+            // Inject input queued during the HTTP request at this tool boundary.
             if (this.queue.length) {
               const additions = this.take();
               messages.push({ role: 'user', content: additions.map(e => e.text).join('\n\n') });

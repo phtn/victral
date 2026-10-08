@@ -1,7 +1,7 @@
 # Victral
 
 A persistent coding workspace with a TypeScript CLI and a full-screen terminal
-interface, implementing the OptChat specification with Cohere and Meta models.
+interface, implementing the OptChat specification with Meta models.
 The default is Meta `muse-spark-1.3-contributor` for both the agent and the compactor. The original specification is preserved in [docs/OPTCHAT_SPEC.md](docs/OPTCHAT_SPEC.md).
 
 ## Start
@@ -15,7 +15,7 @@ bun install
 ```
 
 Set `META_API_KEY` (or `MODEL_API_KEY`) for the default model in your environment
-or in a local `.env` file. Selecting Cohere requires `COHERE_API_KEY`. The example
+or in a local `.env` file. The example
 in `.env.example` lists the available settings. Never commit your keys.
 
 ```sh
@@ -26,7 +26,6 @@ bun run start --project /absolute/path/to/your/project
 
 | Model ID | Provider | Credential |
 | --- | --- | --- |
-| `command-a-plus-05-2026` | Cohere | `COHERE_API_KEY` |
 | `muse-spark-1.3` | Meta | `META_API_KEY` or `MODEL_API_KEY` |
 | `muse-spark-1.3-contributor` | Meta | `META_API_KEY` or `MODEL_API_KEY` |
 
@@ -37,19 +36,19 @@ bun run start --project /absolute/path/to/your/project --model muse-spark-1.3
 Choose the compactor separately if desired:
 
 ```sh
-bun run start --model muse-spark-1.3 --compactor-model command-a-plus-05-2026
+bun run start --model muse-spark-1.3 --compactor-model muse-spark-1.3-contributor
 ```
 
 `--models` lists the supported models with their providers and required
 credentials, without making API requests. Models can be named by list number,
-short name, or full ID: `--model 2` works like
+short name, or full ID: `--model 1` works like
 `--model muse-spark-1.3`. During an interactive session, `/model` shows the
-current agent, the compactor, and the numbered choices; `/model 2` switches
+current agent, the compactor, and the numbered choices; `/model 1` switches
 the main agent between turns while retaining saved memory. The compactor stays
 on its startup selection. Model switches are session-local;
 set `VICTRAL_MODEL` and `VICTRAL_COMPACTOR_MODEL` for defaults. Explicit CLI
-flags take precedence. Legacy `COHERE_MODEL` and `COHERE_COMPACTOR_MODEL`
-variables remain accepted.
+flags take precedence. The numbered choices are 1 for `muse-spark-1.3` and
+2 for `muse-spark-1.3-contributor`.
 
 Meta requests go directly to `https://api.meta.ai/v1/messages`, using the
 documented Anthropic-compatible Messages surface to preserve reasoning across
@@ -161,7 +160,7 @@ bun run smoke:jev
 The tests run offline and cover CLI lifecycle, terminal keyboard behavior,
 incremental Markdown rendering, smooth streaming and cancellation,
 file boundaries, unique edits, literal argument handling, command timeout and
-cancellation, Git inspection, providers, memory, and evaluations. The built CLI
+cancellation, Git inspection, the Meta adapter, memory, and evaluations. The built CLI
 needs the installed dependencies and its adjacent prompt assets.
 
 Metrics accumulate saved usage, turns, and message sizes once, and refresh audit
@@ -177,8 +176,8 @@ sources become ready. Idle scheduling avoids scanning saved history. Level and
 index priority, context readiness, most-due folding, and retry behavior retain
 the specification's rules.
 
-Both provider adapters share a streaming event parser that preserves UTF-8 text
-and accepts LF, CRLF, and CR separators across network chunks. A provider's
+The Meta adapter uses a streaming event parser that preserves UTF-8 text
+and accepts LF, CRLF, and CR separators across network chunks. The adapter's
 terminal event completes the request immediately; a connection ending before
 that event remains an error.
 
@@ -216,7 +215,7 @@ and recognition of application-keypad Enter. Tests cover those cases alongside
 editing, bracketed paste, Unicode, resizing, and subscription/raw-mode cleanup.
 The TSRX checker uses TypeScript 5.9.3, supported by this pinned toolchain.
 
-Existing provider, storage, compaction, and evaluation modules remain JavaScript
+The Meta adapter, storage, compaction, and evaluation modules remain JavaScript
 behind typed application interfaces; they are covered by the existing tests.
 Compatibility `.js` entry points keep current scripts and imports working.
 
@@ -232,23 +231,12 @@ bun run smoke --model muse-spark-1.3
 bun run smoke --model muse-spark-1.3-contributor
 ```
 
-## Cohere adaptation
+## Memory implementation
 
 Storage, binary summaries, compactor prompts, original constants, incremental
 view merging, settle, retrieval, and fresh-turn construction follow the
-specification. Cohere's native V2 API is used:
-
-- Provider-neutral view pieces use the specification's cache mark positions.
-  The documented Cohere API does not expose the Anthropic/OpenAI breakpoint
-  fields in the specification; unsupported fields are not sent. Usage records
-  retain actual `cached_tokens` when returned. Cache efficiency is measured,
-  not guaranteed.
-- Cohere rejects replayed thinking content combined with `tool_plan`. When
-  thinking blocks exist, they remain intact in the in-turn request history
-  and the separate `tool_plan` field is omitted. Thinking is never stored in
-  the permanent chat log. Non-reasoning tool plans are replayed normally.
-- Provider-native reasoning defaults are used; Cohere has no documented
-  equivalent of the reference compactor's “medium effort” setting.
+specification. View pieces retain the specification's cache mark positions.
+Cache efficiency is measured from actual usage records, not guaranteed.
 
 The runtime prompts use the specification's permitted name substitution:
 “OptChat” becomes “Victral”; the reference document remains unchanged.
@@ -257,10 +245,6 @@ Optional subagents, computer-use workers, an HTML memory browser, and a daemon
 are not implemented. The runner does not attach memory to existing Codex,
 Claude Code, or Cursor sessions. Work performed outside this runner is known
 only if its transcript or findings are imported.
-
-Provider documentation: [Chat](https://docs.cohere.com/reference/chat),
-[streaming tools](https://docs.cohere.com/docs/tool-use-streaming), and
-[reasoning](https://docs.cohere.com/docs/reasoning).
 
 ## Live metrics and automatic Jev evaluation
 
@@ -284,8 +268,8 @@ The display includes:
   skips, and average probabilities.
 
 These are measured counters, not estimated spend or claims of correctness.
-Cache totals account for Cohere's inclusive input counter and Meta's separate
-cache-read counter. Missing provider measurements display as unavailable.
+Cache totals include Meta's separate cache-read counter in total input tokens.
+Missing provider measurements display as unavailable.
 
 With `TYPESAFE_API_KEY` set, every newly generated summary is automatically
 evaluated in the background. Exact-copy nodes need no lossy-summary audit.

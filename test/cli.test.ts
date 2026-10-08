@@ -13,17 +13,17 @@ test('model listing names providers, credentials, and selection format', async (
   const models = Bun.spawn([process.execPath, cli, '--models'], { stdout: 'pipe', stderr: 'pipe' });
   const output = await new Response(models.stdout).text();
   expect(await models.exited).toBe(0);
-  expect(output).toContain('command-a-plus-05-2026');
-  expect(output).toContain('Cohere');
-  expect(output).toContain('COHERE_API_KEY');
+  expect(output).toContain('1. muse-spark-1.3 (Meta; needs META_API_KEY or MODEL_API_KEY)');
+  expect(output).toContain('2. muse-spark-1.3-contributor (Meta; needs META_API_KEY or MODEL_API_KEY)');
+  expect(output.match(/^  \d+\./gm)).toHaveLength(2);
   expect(output).toContain('--model <number or ID>');
 });
 test('plain piped commands close cleanly and release chat storage', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'victral-cli-'));
   try {
     for (let i = 0; i < 2; i++) {
-      const child = Bun.spawn([process.execPath, cli, '--plain', '--model', 'command-a-plus-05-2026', '--compactor-model', 'command-a-plus-05-2026', '--project', directory, '--chat-dir', path.join(directory, 'chat'), '--no-jev'], {
-        cwd: directory, env: { ...process.env, COHERE_API_KEY: 'offline-test', TYPESAFE_API_KEY: '', VICTRAL_MODEL: '', COHERE_MODEL: '' },
+      const child = Bun.spawn([process.execPath, cli, '--plain', '--model', 'muse-spark-1.3', '--compactor-model', 'muse-spark-1.3-contributor', '--project', directory, '--chat-dir', path.join(directory, 'chat'), '--no-jev'], {
+        cwd: directory, env: { ...process.env, META_API_KEY: 'offline-test', TYPESAFE_API_KEY: '', VICTRAL_MODEL: '' },
         stdin: new TextEncoder().encode('/tools\n/exit\n'), stdout: 'pipe', stderr: 'pipe',
       });
       const output = await new Response(child.stdout).text();

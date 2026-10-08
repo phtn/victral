@@ -1,6 +1,5 @@
 import { test, expect } from 'bun:test';
 import { sseData } from '../src/sse.js';
-import { Cohere } from '../src/cohere.js';
 import { Meta } from '../src/meta.js';
 
 const encoder = new TextEncoder();
@@ -39,12 +38,6 @@ test('SSE flushes a final unterminated frame and releases the reader after error
 });
 
 const fixtures = [
-  { Provider: Cohere, terminal: 'message-end', events: [
-    { type: 'content-start', index: 0, delta: { message: { content: { type: 'text', text: '' } } } },
-    { type: 'content-delta', index: 0, delta: { message: { content: { text: 'hello 🦓' } } } },
-    { type: 'content-end', index: 0 },
-    { type: 'message-end', delta: { finish_reason: 'COMPLETE', usage: { tokens: { input_tokens: 10 } } } },
-  ] },
   { Provider: Meta, terminal: 'message_stop', events: [
     { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
     { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'hello 🦓' } },
@@ -63,7 +56,7 @@ for (const { Provider, terminal, events } of fixtures) {
     expect(logs).toEqual([{ kind: 'talk', text: 'hello 🦓' }]);
     expect(visible.join('')).toBe('hello 🦓');
     expect(usage).toHaveLength(1);
-    expect(result.usage.tokens?.input_tokens ?? result.usage.input_tokens).toBe(10);
+    expect(result.usage.input_tokens).toBe(10);
   });
   test(`${Provider.name} finishes at ${terminal} without waiting for HTTP EOF`, async () => {
     let canceled = false;
@@ -93,7 +86,3 @@ for (const { Provider, terminal, events } of fixtures) {
     expect(usage).toHaveLength(0);
   });
 }
-
-test('direct Cohere construction uses the supported model ID', () => {
-  expect(new Cohere({ apiKey: 'test-key' }).model).toBe('command-a-plus-05-2026');
-});

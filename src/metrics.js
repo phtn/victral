@@ -9,7 +9,8 @@ export function usageTotals(records) {
     result.calls++;
     if (['error', 'canceled'].includes(record.status)) { result.errors++; continue; }
     const u = record.usage ?? {};
-    // Meta input_tokens excludes cache reads; Cohere tokens.input_tokens includes them.
+    // Separate cache-read counts are excluded from input_tokens. Older saved
+    // usage formats include reads in their input counter; retain their totals.
     const meta = typeof u.cache_read_input_tokens === 'number';
     const cached = meta ? u.cache_read_input_tokens : u.cached_tokens;
     result.cached += number(cached);

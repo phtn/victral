@@ -76,13 +76,13 @@ async function main(): Promise<void> {
   }
   const project = fs.realpathSync(values.project)
   if (!fs.statSync(project).isDirectory()) throw new Error('--project must select a directory.')
-  const model = resolveModelId(values.model ?? process.env.VICTRAL_MODEL ?? process.env.COHERE_MODEL ?? MODEL)
+  const model = resolveModelId(values.model ?? process.env.VICTRAL_MODEL ?? MODEL)
   const session = await Session.open({
     project,
     chatDir: path.resolve(values['chat-dir']),
     model,
     compactorModel: resolveModelId(
-      values['compactor-model'] ?? process.env.VICTRAL_COMPACTOR_MODEL ?? process.env.COHERE_COMPACTOR_MODEL ?? model),
+      values['compactor-model'] ?? process.env.VICTRAL_COMPACTOR_MODEL ?? model),
     instructions: values.instructions,
     allowShell: values['allow-shell'],
     jev: !values['no-jev'],

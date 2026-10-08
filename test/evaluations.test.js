@@ -124,7 +124,7 @@ test('persistent TypeSafe 503 failures stop after two retries without blocking s
   expect(evaluations.latest.get('0:0').error).toContain('model_unavailable');
   expect(memory.node(0, 0).text).toContain('ZEBRA-7319');
 });
-test('cache totals handle Cohere inclusive input and Meta exclusive input without double counting', () => {
+test('cache totals preserve older inclusive counters and Meta separate cache reads without double counting', () => {
   const totals = usageTotals([
     { usage: { tokens: { input_tokens: 100, output_tokens: 20, reasoning_tokens: 10 }, cached_tokens: 30 }, latency_ms: 200, ttft_ms: 100 },
     { usage: { input_tokens: 70, output_tokens: 20, cache_read_input_tokens: 30, output_tokens_details: { thinking_tokens: 5 } }, latency_ms: 400 },
@@ -135,18 +135,20 @@ test('cache totals handle Cohere inclusive input and Meta exclusive input withou
 });
 test('provider instrumentation records measured latency, first text, tokens, and failed calls', async () => {
   const events = [
-    { type: 'content-start', index: 0, delta: { message: { content: { type: 'text', text: '' } } } },
-    { type: 'content-delta', index: 0, delta: { message: { content: { text: 'ok' } } } },
-    { type: 'content-end', index: 0 },
-    { type: 'message-end', delta: { finish_reason: 'COMPLETE', usage: { tokens: { input_tokens: 5, output_tokens: 1 } } } },
+    { type: 'message_start', message: { usage: { input_tokens: 5 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } },
+    { type: 'message_stop' },
   ];
   const records = [];
-  const model = createModel('command-a-plus-05-2026', { apiKey: 'test-key', usage: r => records.push(r), fetchImpl: async () => new Response(events.map(e => `data: ${JSON.stringify(e)}\n\n`).join('')) });
+  const model = createModel('muse-spark-1.3-contributor', { apiKey: 'test-key', usage: r => records.push(r), fetchImpl: async () => new Response(events.map(e => `data: ${JSON.stringify(e)}\n\n`).join('')) });
   await model.stream([]);
   expect(records).toHaveLength(1);
   expect(records[0].latency_ms).toBeGreaterThanOrEqual(0);
   expect(records[0].ttft_ms).toBeGreaterThanOrEqual(0);
-  expect(records[0].usage.tokens.input_tokens).toBe(5);
+  expect(records[0].usage.input_tokens).toBe(5);
   model.fetchImpl = async () => new Response('busy', { status: 503 });
   await expect(model.chat([])).rejects.toThrow('HTTP 503');
   expect(records).toHaveLength(2);
