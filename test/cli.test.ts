@@ -28,7 +28,8 @@ test('plain piped commands close cleanly and release chat storage', async () => 
       });
       const output = await new Response(child.stdout).text();
       const error = await new Response(child.stderr).text();
-      expect(error).toBe(''); expect(await child.exited).toBe(0); expect(output).toContain('search_files'); expect(output).toContain('Command execution: disabled');
+      expect(error).toBe(''); expect(await child.exited).toBe(0); expect(output).toContain('search_files'); expect(output).toContain('glob_files'); expect(output).toContain('apply_patch'); expect(output).toContain('Command execution: disabled');
+      expect(output).not.toContain('start_command');
       expect(output).toContain('Victral · muse-spark-1.3');
       expect(output).toContain('Switched agent to muse-spark-1.3-contributor');
     }

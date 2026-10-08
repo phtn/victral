@@ -18,7 +18,7 @@ Usage: victral [options]
   --model ID              Main agent model (number, short name, or full ID; see --models)
   --compactor-model ID    Background memory model (same format; defaults to --model)
   --instructions FILE     Load custom instructions instead of AGENTS.md
-  --allow-shell           Enable run_command and shell agent tools
+  --allow-shell           Enable CLI, shell and background command tools
   --ask TEXT              Run one turn, then exit
   --plain                 Use a line-oriented terminal (automatic for pipes)
   --tui                   Require the full-screen terminal interface
@@ -30,7 +30,7 @@ Usage: victral [options]
   --version, -v           Show version
 
 In the workspace: Ctrl+P commands · Ctrl+O metrics · Esc cancel
-Agent tools: files, exact edits, search, URL fetching, Git status/diff, optional CLI execution.
+Agent tools: files, patches, glob/regex search, URL fetching, Git status/diff, optional foreground/background CLI execution.
 `
 async function main(): Promise<void> {
   const { values } = parseArgs({

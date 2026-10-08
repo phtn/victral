@@ -131,7 +131,7 @@ export class Runner {
   }
   async close() {
     this.closed = true; this.cancel();
-    await this.running;
-    this.take();
+    try { await this.running; }
+    finally { this.take(); await this.tools.close?.(); }
   }
 }

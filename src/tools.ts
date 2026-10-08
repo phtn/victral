@@ -2,6 +2,9 @@ import fs from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { capResult } from './constants.js';
+import { discoverFiles } from './file-discovery.js';
+import { applyProjectPatch } from './apply-patch.js';
+import { CommandTools } from './command-tools.js';
 import type { AgentTools, MemoryPort, ToolDefinition } from './types.js';
 
 const string = { type: 'string' }, integer = { type: 'integer' };
@@ -9,7 +12,6 @@ const tool = (name: string, description: string, properties: ToolDefinition['fun
   type: 'function', function: { name, description, parameters: { type: 'object', properties, required } },
 });
 export interface ToolOptions { allowShell?: boolean; timeoutMs?: number; fetchImpl?: typeof fetch }
-const SKIP = new Set(['.git', 'node_modules', '.victral', 'dist', 'coverage', '.env']);
 function text(args: Record<string, unknown>, key: string): string {
   if (typeof args[key] !== 'string') throw new Error(`Expected ${key} to be text.`);
   return args[key];
@@ -18,6 +20,17 @@ function integerArg(args: Record<string, unknown>, key: string, fallback: number
   const value = args[key] ?? fallback;
   if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > max) throw new Error(`${key} must be an integer between 1 and ${max}.`);
   return value as number;
+}
+function booleanArg(args: Record<string, unknown>, key: string, fallback: boolean): boolean {
+  if (args[key] === undefined) return fallback;
+  if (typeof args[key] !== 'boolean') throw new Error(`${key} must be boolean.`);
+  return args[key];
+}
+function programArgs(args: Record<string, unknown>): string[] {
+  const program = text(args, 'program');
+  if (!program || program.startsWith('-') || program.includes('\0')) throw new Error('Expected a CLI program name.');
+  if (!Array.isArray(args.args) || !args.args.every(arg => typeof arg === 'string' && !arg.includes('\0'))) throw new Error('args must be an array of strings.');
+  return [program, ...args.args];
 }
 
 export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project: string, { allowShell = false, timeoutMs = 30_000, fetchImpl = fetch }: ToolOptions = {}): AgentTools {
@@ -29,7 +42,9 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
     tool('read_file', 'Read a UTF-8 project file with optional 1-based line range.', { path: string, start_line: integer, end_line: integer }, ['path']),
     tool('write_file', 'Write a complete UTF-8 project file, creating parent directories.', { path: string, content: string }),
     tool('edit_file', 'Replace exactly one occurrence of old_text. Fails if it is absent or ambiguous.', { path: string, old_text: string, new_text: string }),
-    tool('search_files', 'Search literal text recursively in project files; returns file:line matches. Skips dependencies, build output, .env files, binary files and symlinks. Bounded to 5000 files and 100 matches.', { query: string, path: string }, ['query']),
+    tool('apply_patch', 'Apply a multi-file text patch. Format: *** Begin Patch, then *** Add File: path (lines prefixed +), *** Update File: path (optional *** Move to: path; @@ hunks with space context, - removals, + additions), or *** Delete File: path, then *** End Patch. Optional *** End of File anchors a hunk. Context must match exactly and uniquely. All paths and hunks are validated before writing; failed writes are rolled back. Paths are project-relative.', { patch: string }),
+    tool('glob_files', 'Find project files by glob (e.g. **/*.{ts,js}). Patterns match project-relative paths, even when path scopes a subdirectory. Skips dependencies, build output, .env files and symlinks. Bounded to 5000 files; default 200 results, maximum 1000.', { pattern: string, path: string, max_results: integer }, ['pattern']),
+    tool('search_files', 'Search project text; returns file:line matches. query is literal by default; regex enables JavaScript regular expressions and case_sensitive defaults true. Optional glob filters project-relative paths. Skips dependencies, build output, .env files, binary files and symlinks. Bounded to 5000 files; default 100 matches, maximum 1000.', { query: string, path: string, regex: { type: 'boolean' }, case_sensitive: { type: 'boolean' }, glob: string, max_results: integer }, ['query']),
     tool('git_status', 'Read Git working-tree status.', {}),
     tool('git_diff', 'Read unstaged or staged Git differences, optionally for a project path.', { path: string, staged: { type: 'boolean' } }, []),
     tool('fetch_url', 'Fetch a page over HTTP(S) with GET and return its text. Non-text responses are summarized, not dumped.', { url: string, timeout_ms: integer }, ['url']),
@@ -37,7 +52,11 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
   if (allowShell) definitions.push(
     tool('run_command', 'Execute a CLI program directly with an argument array in the project. Use for builds, tests and developer tools. Returns output, exit status and timeout. Default timeout 30s; maximum 120s.', { program: string, args: { type: 'array', items: string }, timeout_ms: integer }, ['program', 'args']),
     tool('shell', 'Execute a shell command in the project. Use run_command when shell syntax is unnecessary. Timeout 30s, maximum 120s.', { command: string, timeout_ms: integer }, ['command']),
+    tool('start_command', 'Start a CLI program in the background with literal arguments. Returns command_id immediately; use command_status to read output and stop_command to terminate it. Default timeout 120s, maximum 600s. At most 8 running commands. Jobs survive completed turns and stop on originating-turn cancellation or session close. No interactive stdin.', { program: string, args: { type: 'array', items: string }, timeout_ms: integer }, ['program', 'args']),
+    tool('command_status', 'Read a background command by command_id. Optional wait_ms waits up to 10s for completion (default 0). Output is a cumulative capped snapshot. IDs are local to this session; the most recent 32 results are retained.', { command_id: string, wait_ms: integer }, ['command_id']),
+    tool('stop_command', 'Terminate a background command and its process group; return its final output and exit status.', { command_id: string }),
   );
+  const commands = new CommandTools(project);
   const contained = (filename: string) => filename === project || filename.startsWith(project + path.sep);
   async function resolveFile(relative: string): Promise<string> {
     if (path.isAbsolute(relative)) throw new Error('Expected a relative project path.');
@@ -56,30 +75,6 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
       }
     }
     return filename;
-  }
-  async function command(argv: string[], ms: number, signal?: AbortSignal): Promise<string> {
-    signal?.throwIfAborted();
-    const env = { ...process.env };
-    for (const key of Object.keys(env)) if (/(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTHORIZATION)$/i.test(key)) delete env[key];
-    // A process group lets cancellation terminate grandchildren as well as the CLI.
-    const child = Bun.spawn(argv, { cwd: project, env, detached: process.platform !== 'win32', stdout: 'pipe', stderr: 'pipe' });
-    let output = '', truncated = false, timedOut = false;
-    const kill = () => {
-      try { if (process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { /* Already exited. */ }
-    };
-    const timer = setTimeout(() => { timedOut = true; kill(); }, ms);
-    signal?.addEventListener('abort', kill, { once: true });
-    const consume = async (stream: ReadableStream<Uint8Array>) => {
-      const decoder = new TextDecoder();
-      const capture = (chunk: string) => { const next = output + chunk; output = capResult(next); truncated ||= output !== next; };
-      for await (const chunk of stream) capture(decoder.decode(chunk, { stream: true }));
-      capture(decoder.decode());
-    };
-    try {
-      const [code] = await Promise.all([child.exited, consume(child.stdout), consume(child.stderr)]);
-      signal?.throwIfAborted();
-      return `${output}\n[exit: ${code}; signal: ${child.signalCode ?? 'none'}; timeout: ${timedOut}${truncated ? '; output capped' : ''}]`;
-    } finally { clearTimeout(timer); signal?.removeEventListener('abort', kill); kill(); }
   }
   async function execute(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
     signal?.throwIfAborted();
@@ -118,44 +113,22 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
       await fs.writeFile(filename, content, 'utf8');
       return `${name === 'edit_file' ? 'Edited' : 'Wrote'} ${args.path}.`;
     }
-    if (name === 'search_files') {
-      const query = text(args, 'query');
-      if (!query || query.includes('\n')) throw new Error('query must be nonempty, single-line text.');
-      const matches: string[] = []; let scanned = 0, limited = false;
-      async function visit(filename: string): Promise<void> {
-        signal?.throwIfAborted();
-        if (matches.length >= 100 || scanned >= 5000) { limited = true; return; }
-        const stat = await fs.lstat(filename);
-        if (stat.isSymbolicLink()) return;
-        if (stat.isDirectory()) {
-          for (const entry of (await fs.readdir(filename)).sort()) {
-            if (SKIP.has(entry) || entry.startsWith('.env.')) continue;
-            await visit(path.join(filename, entry));
-            if (limited) break;
-          }
-        } else if (stat.isFile()) {
-          scanned++;
-          if (stat.size > 1_000_000) return;
-          const data = await fs.readFile(filename);
-          if (data.includes(0)) return;
-          const lines = data.toString('utf8').split('\n');
-          for (let i = 0; i < lines.length; i++) if (lines[i]!.includes(query)) {
-            matches.push(`${path.relative(project, filename)}:${i + 1}: ${lines[i]!.slice(0, 500)}`);
-            if (matches.length >= 100) { limited = true; break; }
-          }
-        }
-      }
-      const filename = await resolveFile(args.path === undefined ? '.' : text(args, 'path'));
-      if (SKIP.has(path.basename(filename)) || path.basename(filename).startsWith('.env.')) throw new Error('Search excludes this path.');
-      await visit(filename);
-      return capResult(`${matches.join('\n') || 'No matches.'}\n[${scanned} files scanned${limited ? '; search limit reached' : ''}]`);
+    if (name === 'apply_patch') return applyProjectPatch(text(args, 'patch'), resolveFile, signal);
+    if (name === 'search_files' || name === 'glob_files') {
+      const query = name === 'search_files' ? text(args, 'query') : undefined;
+      if (query !== undefined && (!query || /[\r\n\0]/.test(query))) throw new Error('query must be nonempty, single-line text.');
+      const pattern = name === 'glob_files' ? text(args, 'pattern') : args.glob === undefined ? undefined : text(args, 'glob');
+      if (pattern !== undefined && (!pattern || pattern.includes('\0') || path.isAbsolute(pattern) || pattern.split('/').includes('..'))) throw new Error('Expected a nonempty project-relative glob without .. segments.');
+      return discoverFiles({ root: await resolveFile(args.path === undefined ? '.' : text(args, 'path')), project, signal, query, pattern,
+        regex: booleanArg(args, 'regex', false), caseSensitive: booleanArg(args, 'case_sensitive', true),
+        maxResults: integerArg(args, 'max_results', name === 'glob_files' ? 200 : 100, 1000) });
     }
-    if (name === 'git_status') return command(['git', '--no-pager', '-c', 'core.fsmonitor=false', 'status', '--short', '--branch'], timeoutMs, signal);
+    if (name === 'git_status') return commands.run(['git', '--no-pager', '-c', 'core.fsmonitor=false', 'status', '--short', '--branch'], timeoutMs, signal);
     if (name === 'git_diff') {
       if (args.staged !== undefined && typeof args.staged !== 'boolean') throw new Error('staged must be boolean.');
       const argv = ['git', '--no-pager', '-c', 'core.fsmonitor=false', 'diff', '--no-ext-diff', '--no-textconv', ...(args.staged ? ['--cached'] : [])];
       if (args.path !== undefined) { await resolveFile(text(args, 'path')); argv.push('--', text(args, 'path')); }
-      return command(argv, timeoutMs, signal);
+      return commands.run(argv, timeoutMs, signal);
     }
     if (name === 'fetch_url') {
       let target: URL;
@@ -174,13 +147,17 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
     }
     if (allowShell && (name === 'shell' || name === 'run_command')) {
       const ms = integerArg(args, 'timeout_ms', timeoutMs, 120_000);
-      if (name === 'shell') return command([process.env.SHELL ?? '/bin/sh', '-c', text(args, 'command')], ms, signal);
-      const program = text(args, 'program');
-      if (!program || program.startsWith('-') || program.includes('\0')) throw new Error('Expected a CLI program name.');
-      if (!Array.isArray(args.args) || !args.args.every(arg => typeof arg === 'string' && !arg.includes('\0'))) throw new Error('args must be an array of strings.');
-      return command([program, ...args.args], ms, signal);
+      if (name === 'shell') return commands.run([process.env.SHELL ?? '/bin/sh', '-c', text(args, 'command')], ms, signal);
+      return commands.run(programArgs(args), ms, signal);
     }
+    if (allowShell && name === 'start_command') return commands.start(programArgs(args), integerArg(args, 'timeout_ms', 120_000, 600_000), signal);
+    if (allowShell && name === 'command_status') {
+      const wait = args.wait_ms ?? 0;
+      if (!Number.isSafeInteger(wait) || (wait as number) < 0 || (wait as number) > 10_000) throw new Error('wait_ms must be an integer between 0 and 10000.');
+      return commands.status(text(args, 'command_id'), wait as number, signal);
+    }
+    if (allowShell && name === 'stop_command') return commands.stop(text(args, 'command_id'));
     throw new Error(`Unknown or disabled tool: ${name}`);
   }
-  return { definitions, execute };
+  return { definitions, execute, close: () => commands.close() };
 }

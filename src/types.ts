@@ -14,6 +14,7 @@ export interface ToolDefinition {
 export interface AgentTools {
   definitions: ToolDefinition[];
   execute(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<string>;
+  close?(): Promise<void>;
 }
 export interface MemoryPort {
   append(kind: MessageKind, text: string): unknown;

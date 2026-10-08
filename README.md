@@ -72,9 +72,10 @@ tools operate on the project selected by `--project`. Its root `AGENTS.md` is
 loaded as the user's instructions if present; `--instructions FILE` chooses a
 different file. Nested instruction discovery is not implemented.
 
-File reading, directory listing, exact text edits, recursive literal search,
-fetching pages over HTTP(S), and read-only Git status/diff are available by default. Add `--allow-shell` to
-give the agent CLI execution:
+File reading, directory listing, exact text edits, multi-file patches, glob
+discovery, literal or regex search, HTTP(S) fetching, and read-only Git
+status/diff are available by default. Add `--allow-shell` to give the agent
+foreground and background CLI execution:
 
 ```sh
 bun run start --project /absolute/path/to/your/project --allow-shell
@@ -82,13 +83,57 @@ bun run start --project /absolute/path/to/your/project --allow-shell
 
 `run_command` executes a program with a literal argument array, suitable for
 builds, tests, and installed developer CLIs. `shell` handles pipelines and
-other shell syntax. Both run in the project root, have a default 30-second
-timeout (maximum 120 seconds), kill their process group on cancellation on
-Unix, and cap output. Environment variables ending in KEY, TOKEN, SECRET,
+other shell syntax. Both run in the project root and have a default 30-second
+timeout (maximum 120 seconds). `start_command` returns a session-local
+`command_id` immediately, allowing the agent to continue working during a
+build or test run. `command_status` returns cumulative output and exit status,
+optionally waiting up to 10 seconds; `stop_command` terminates the job.
+Background jobs default to 120 seconds and allow up to 600 seconds, with at
+most eight running jobs and the most recent 32 results retained. They have
+closed stdin, survive completed turns, and stop on cancellation of the turn
+that started them or on session shutdown. All commands kill their process
+group on cancellation on Unix and cap output. Environment variables ending in KEY, TOKEN, SECRET,
 PASSWORD, CREDENTIAL, or AUTHORIZATION are removed from subprocesses.
 File tools reject paths and symlinks leaving the project. Command execution
 is not an operating-system sandbox and programs can access the host filesystem.
 Use `/tools` to see exactly which tools are available.
+
+`glob_files` accepts a `pattern`, optional directory `path`, and `max_results`
+(default 200, maximum 1000). Patterns such as `**/*.{ts,js}` match paths relative
+to the project root, including when `path` scopes the scan. `search_files`
+retains literal, case-sensitive matching by default; set `regex: true` for
+JavaScript regular expressions, `case_sensitive: false` for case folding,
+and `glob` to restrict file types. Its result limit defaults to 100 and allows
+up to 1000. Both scan at most 5000 files and skip dependencies, build output,
+`.env` files, and symlinks; text search also skips binary files and files over
+1 MB. Results report when a scan or result limit is reached.
+Regex matching runs in a worker with a two-second deadline per file so a
+backtracking pattern can be canceled without blocking the agent.
+
+`apply_patch` accepts a single `patch` string with up to 100 file operations:
+
+```diff
+*** Begin Patch
+*** Add File: src/new.ts
++export const enabled = true;
+*** Update File: src/existing.ts
+@@
+-export const count = 1;
++export const count = 2;
+*** Delete File: obsolete.txt
+*** End Patch
+```
+
+Update hunks start with `@@` and use a space for unchanged context, `-` for
+removed lines, and `+` for added lines. Include enough existing context for a
+unique, exact match. `*** End of File` anchors a hunk to the file's end;
+`*** Move to: new/path` immediately after an Update File header moves the
+updated file. Patches preserve existing newline style and final-newline
+presence; added files end with a newline. They reject overwrites, duplicate
+targets, binary files, file symlinks, and paths outside the project. Every path
+and hunk is validated before writing, and earlier file changes are restored
+if a later write fails. This is a file-content rollback, not a filesystem
+transaction; newly created empty parent directories may remain after failure.
 
 For a single turn:
 
@@ -162,8 +207,9 @@ bun run smoke:jev
 
 The tests run offline and cover CLI lifecycle, terminal keyboard behavior,
 incremental Markdown rendering, smooth streaming and cancellation,
-file boundaries, unique edits, literal argument handling, command timeout and
-cancellation, Git inspection, the Meta adapter, memory, and evaluations. The built CLI
+file boundaries, unique edits, patch validation and rollback, glob and regex
+search, literal argument handling, foreground and background command timeout,
+cancellation and shutdown, Git inspection, the Meta adapter, memory, and evaluations. The built CLI
 needs the installed dependencies and its adjacent prompt assets.
 
 Metrics accumulate saved usage, turns, and message sizes once, and refresh audit
