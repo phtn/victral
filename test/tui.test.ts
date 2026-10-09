@@ -6,6 +6,7 @@ import stringWidth from 'string-width';
 import { EventEmitter } from 'node:events';
 import type { SessionState } from '../src/session.js';
 import type { WorkspaceSession } from '../src/tui.js';
+import { copyMarkdown } from '../src/clipboard.js';
 
 afterEach(cleanup);
 const flush = () => new Promise(resolve => setTimeout(resolve, 60));
@@ -44,6 +45,111 @@ test('workspace renders Codex layout, opens command menu and metrics, and submit
 });
 test('project paths shorten with a tilde', () => {
   expect(shortProject('/elsewhere/project')).toBe('/elsewhere/project');
+});
+test('clicking response controls copies the original Markdown and respects scrolling and hit boundaries', async () => {
+  const markdown = '# Hello 🦓\n\n**bold** and [link](https://example.com)\n\n```ts\nconst value = 1;\n```';
+  const state: SessionState = {
+    entries: [{ id: 1, role: 'victral', text: markdown }, { id: 2, role: 'victral', text: Array.from({ length: 50 }, (_, i) => `Later line ${i}`).join('  \n') }],
+    model: 'muse-spark-1.3', active: false, phase: 'Ready', metrics: '',
+  };
+  const session: WorkspaceSession & EventEmitter = Object.assign(new EventEmitter(), {
+    options: { project: '/tmp/copy', allowShell: false }, metrics: { detailed: () => 'Usage' },
+    snapshot: () => ({ ...state, entries: [...state.entries] }), submit: async () => {}, cancel: () => {}, close: async () => {},
+  });
+  const view = render(session); await flush();
+  const copyRow = () => view.lastFrame()!.split('\n').findIndex(line => line.includes('[Copy Markdown]')) + 1;
+  view.stdin.write('draft'); await flush();
+  let y = copyRow();
+  expect(y).toBeGreaterThan(2);
+  for (const click of [`\x1b[<0;1;${y}M`, `\x1b[<0;25;${y}M`, `\x1b[<0;2;${y}m`, `\x1b[<2;2;${y}M`]) {
+    view.stdin.write(click); await flush();
+  }
+  expect(view.copied).toEqual([]);
+  view.stdin.write(`\x1b[<0;2;${y}M`); await flush();
+  expect(view.copied).toEqual([state.entries[1]!.text]);
+  expect(view.lastFrame()).toContain('[Copied]');
+  expect(view.lastFrame()).toContain('draft');
+  state.entries[1]!.text += '  \nMore streamed text'; session.emit('update'); await flush();
+  expect(view.lastFrame()).toContain('[Copy Markdown]');
+  view.stdin.write('\x1b[H'); await flush();
+  expect(view.lastFrame()).toContain('Hello 🦓');
+  y = copyRow();
+  view.stdin.write(`\x1b[<0;3;${y}M`); await flush();
+  expect(view.copied).toEqual([expect.any(String), markdown]);
+  expect(view.lastFrame()).toContain('[Copied]');
+  view.stdin.write('\x0f'); await flush();
+  view.stdin.write(`\x1b[<0;3;${y}M`); await flush();
+  expect(view.copied).toHaveLength(2);
+});
+test('terminal clipboard fallback encodes original Unicode Markdown in OSC 52', async () => {
+  const writes: string[] = [];
+  const text = '**🦓**\n```ts\nconst x = 1;\n```';
+  const result = await copyMarkdown(text, { write: (value: string | Uint8Array) => { writes.push(String(value)); return true; } }, 'linux');
+  expect(result).toBe('sent');
+  expect(writes).toEqual([`\x1b]52;c;${Buffer.from(text).toString('base64')}\x07`]);
+});
+test('clipboard errors remain in the response control and allow retry', async () => {
+  const session = new DemoSession();
+  let attempts = 0;
+  const view = render(session, async () => {
+    if (++attempts === 1) throw new Error('clipboard unavailable');
+    return 'sent';
+  });
+  await flush();
+  const y = view.lastFrame()!.split('\n').findIndex(line => line.includes('[Copy Markdown]')) + 1;
+  view.stdin.write(`\x1b[<0;2;${y}M`); await flush();
+  expect(view.lastFrame()).toContain('[Copy failed · retry]');
+  view.stdin.write(`\x1b[<0;2;${y}M`); await flush();
+  expect(view.lastFrame()).toContain('[Copy sent]');
+  expect(attempts).toBe(2);
+  await session.close();
+});
+test('thread scrolls by wheel and keyboard, holds its place during streaming, and follows again at the bottom', async () => {
+  const state: SessionState = {
+    entries: [{ id: 0, role: 'victral', text: Array.from({ length: 60 }, (_, i) => `Thread line ${i.toString().padStart(2, '0')}`).join('  \n') }],
+    model: 'muse-spark-1.3', active: false, phase: 'Ready', metrics: '',
+  };
+  const session: WorkspaceSession & EventEmitter = Object.assign(new EventEmitter(), {
+    options: { project: '/tmp/scroll', allowShell: false }, metrics: { detailed: () => 'Usage' },
+    snapshot: () => ({ ...state, entries: [...state.entries] }), submit: async () => {}, cancel: () => {}, close: async () => {},
+  });
+  const view = render(session); await flush();
+  const firstLine = () => /Thread line \d+/.exec(view.lastFrame()!)?.[0];
+  expect(view.frames.join('')).toContain('\x1b[?1000h\x1b[?1006h');
+  expect(view.lastFrame()).toContain('Thread line 59');
+  expect(view.lastFrame()).not.toContain('Thread line 00');
+  expect(view.lastFrame()!.split('\n')).toHaveLength(view.stdout.rows);
+  view.stdin.write('draft'); await flush();
+  view.stdin.write('\x1b[<64;12;8M\x1b[<64;12;8M'); await flush();
+  expect(view.lastFrame()).toContain('↑ 6 lines');
+  expect(view.lastFrame()).toContain('draft');
+  const anchor = firstLine();
+  state.entries[0]!.text += '  \nThread line 60  \nThread line 61';
+  state.active = true; session.emit('update'); await flush();
+  expect(firstLine()).toBe(anchor);
+  expect(view.lastFrame()).toContain('Working');
+  expect(view.lastFrame()).not.toContain('Thread line 61');
+  view.stdin.write('\x1b[5~'); await flush();
+  expect(firstLine()).not.toBe(anchor);
+  view.stdin.write('\x1b[6~'); await flush();
+  expect(firstLine()).toBe(anchor);
+  view.stdin.write('\x1b[H'); await flush();
+  expect(firstLine()).toBe('Thread line 00');
+  view.stdin.write('\x1b[1;2B'); await flush();
+  expect(firstLine()).toBe('Thread line 03');
+  view.stdin.write('\x1b[<65;12;8M'); await flush();
+  expect(firstLine()).toBe('Thread line 06');
+  view.stdin.write('\x1b[F'); await flush();
+  expect(view.lastFrame()).toContain('Thread line 61');
+  state.entries[0]!.text += '  \nThread line 62'; session.emit('update'); await flush();
+  expect(view.lastFrame()).toContain('Thread line 62');
+  view.stdin.write('\x1b[H'); await flush();
+  Object.defineProperty(view.stdout, 'rows', { configurable: true, value: 18 });
+  view.stdout.emit('resize'); await flush();
+  expect(firstLine()).toBe('Thread line 00');
+  expect(view.lastFrame()).toContain('draft');
+  view.unmount(); await view.waitUntilExit();
+  expect(view.frames.join('')).toContain('\x1b[?1006l\x1b[?1000l');
 });
 test('workspace renders incremental Markdown and keeps work visible through panels and tool phases', async () => {
   const state: SessionState = {

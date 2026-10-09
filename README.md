@@ -216,9 +216,18 @@ panel. Input supports pasting, cursor movement, Ctrl+A/Ctrl+E, and Ctrl+U.
 | Ctrl+P | Open the command menu; arrows select, Enter inserts a command |
 | Ctrl+O | Toggle the detailed metrics panel |
 | Page Up / Page Down | Scroll conversation or metrics |
+| Mouse wheel / Shift+Up / Shift+Down | Scroll three lines at a time |
+| Home / End | Jump to the beginning / latest messages |
 | Up / Down | Recall submitted input |
 | Escape | Dismiss a panel or cancel the active turn |
 | Ctrl+C | Cancel while working; close while idle |
+
+Scrolling up keeps your place as replies stream. Returning to the bottom
+resumes following new messages. Hold Shift to select terminal text with the mouse.
+Click **[Copy Markdown]** beneath a response to copy its original Markdown,
+including code fences and links. macOS uses the system clipboard; other terminals
+receive an OSC 52 clipboard request and show **[Copy sent]**. Those terminals must
+allow clipboard writes for the request to take effect.
 
 Preview without credentials, API calls, tool execution, or saved data:
 

@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { renderWorkspace, type WorkspaceSession } from '../src/tui.js';
+import type { CopyResponse } from '../src/clipboard.js';
 
 class Output extends EventEmitter {
   columns = 100;
@@ -28,16 +29,17 @@ class Input extends EventEmitter {
 }
 
 const instances = new Set<ReturnType<typeof renderWorkspace>>();
-export function render(session: WorkspaceSession) {
+export function render(session: WorkspaceSession, copyResponse?: CopyResponse) {
   const stdout = new Output(), stderr = new Output(), stdin = new Input();
+  const copied: string[] = [];
   const instance = renderWorkspace(session, {
     stdout: stdout as unknown as NodeJS.WriteStream,
     stderr: stderr as unknown as NodeJS.WriteStream,
     stdin: stdin as unknown as NodeJS.ReadStream,
     debug: true, interactive: true, exitOnCtrlC: false, patchConsole: false,
-  });
+  }, copyResponse ?? (async (text) => { copied.push(text); return 'copied'; }));
   instances.add(instance);
-  return { ...instance, stdout, stderr, stdin, frames: stdout.frames, lastFrame: stdout.lastFrame };
+  return { ...instance, stdout, stderr, stdin, copied, frames: stdout.frames, lastFrame: stdout.lastFrame };
 }
 
 export async function cleanup() {

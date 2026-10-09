@@ -124,7 +124,7 @@ export class Session extends EventEmitter {
     const [name, ...rest] = line.split(/\s+/); const arg = rest.join(' ');
     if (name === '/exit') { await this.close(); return; }
     if (name === '/cancel') { this.cancel(); return; }
-    if (name === '/help') return COMMANDS.map(([cmd, description]) => `${cmd.padEnd(10)} ${description}`).join('\n') + '\n\nEsc cancels · Ctrl+P commands · Ctrl+O metrics · PgUp/PgDn scroll · Ctrl+C cancel / close';
+    if (name === '/help') return COMMANDS.map(([cmd, description]) => `${cmd.padEnd(10)} ${description}`).join('\n') + '\n\nEsc cancels · Ctrl+P commands · Ctrl+O metrics · Wheel / Shift+↑↓ / PgUp/PgDn scroll · Home/End jump · Ctrl+C cancel / close';
     if (name === '/tools') return this.runner.tools.definitions.map(t => `${t.function.name.padEnd(14)} ${t.function.description}`).join('\n') + `\n\nCommand execution: ${this.options.allowShell ? 'enabled' : 'disabled (start with --allow-shell)'}`;
     if (name === '/metrics') return this.metrics.detailed();
     if (name === '/jev') return this.metrics.jevDetails();

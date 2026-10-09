@@ -1,5 +1,5 @@
 module /** @jsxImportSource @octanejs/ink/intrinsics */
-import { Box, Text, useApp, useInput, useWindowSize } from '@octanejs/ink';
+import { Box, Text, useApp, useInput, useStdout, useWindowSize } from '@octanejs/ink';
 import { useEffect, useMemo, useRef, useState } from 'octane/universal/native';
 import stringWidth from 'string-width';
 import { COMMANDS } from './session-commands.js';
@@ -7,6 +7,7 @@ import { markdownLines, type MarkdownLine } from './markdown.js';
 import { safeText, shortProject, wrapLines, type WorkspaceSession } from './tui-model.js';
 import { formatJevStatus } from './jev-status.js';
 import { shortModelName } from './models.js';
+import { copyMarkdown, type CopyResponse } from './clipboard.js';
 module
   const VERSION = '0.2.0'
   const codexBlue = '#5aa9ff'
@@ -19,8 +20,8 @@ module
   const statusDot = '#6b7280'
   const statusPath = '#98c379'
   const errorRed = '#ff7b72'
-  interface DisplayLine { text?: string; spans?: MarkdownLine['spans']; color: string }
-props { session }: { session: WorkspaceSession }
+  interface DisplayLine { text?: string; spans?: MarkdownLine['spans']; color: string; copyId?: number }
+props { session, copyResponse = copyMarkdown }: { session: WorkspaceSession; copyResponse?: CopyResponse }
 setup
   const [state, setState] = useState(() => session.snapshot())
   useEffect(() => {
@@ -30,21 +31,37 @@ setup
     return () => { session.off('update', update) }
   }, [session])
   const { columns, rows } = useWindowSize(),
-    { exit } = useApp()
+    { exit } = useApp(),
+    { stdout } = useStdout()
   const [input, setInput] = useState(''),
     [cursor, setCursor] = useState(0),
-    [scroll, setScroll] = useState(0)
+    [scroll, setScroll] = useState<number | null>(null)
   const [panel, setPanel] = useState<'chat' | 'metrics' | 'commands'>('chat')
   const [selected, setSelected] = useState(0),
     [history, setHistory] = useState<string[]>([]),
     [historyIndex, setHistoryIndex] = useState(-1)
   const [tick, setTick] = useState(0)
+  const [copyFeedback, setCopyFeedback] = useState<{ id: number; text: string; label: string } | null>(null)
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      if (copyTimer.current) clearTimeout(copyTimer.current)
+    }
+  }, [])
   const markdownCache = useRef(new Map<number, { text: string; width: number; lines: DisplayLine[] }>())
   const width = Math.max(10, columns - 2)
   const composerHeight = 3,
-    headerHeight = 4,
+    headerHeight = 2,
     statusHeight = 1
   const bodyHeight = Math.max(1, rows - headerHeight - composerHeight - statusHeight - (state.active ? 1 : 0))
+  useEffect(() => {
+    if (!stdout.isTTY) return
+    stdout.write('\x1b[?1000h\x1b[?1006h')
+    return () => { stdout.write('\x1b[?1006l\x1b[?1000l') }
+  }, [stdout])
   useEffect(() => {
     const closed = () => exit()
     session.on('closed', closed)
@@ -75,7 +92,11 @@ setup
       if (entry.role === 'victral') {
         const cached = markdownCache.current.get(entry.id)
         if (cached?.text === entry.text && cached.width === width) return cached.lines
-        const rendered = [...markdownLines(entry.text, width).map(line => ({ ...line, color: bright })), { text: '', color: muted }]
+        const rendered = [
+          ...markdownLines(entry.text, width).map(line => ({ ...line, color: bright })),
+          { text: '[Copy Markdown]', color: codexBlue, copyId: entry.id },
+          { text: '', color: muted }
+        ]
         markdownCache.current.set(entry.id, { text: entry.text, width, lines: rendered })
         return rendered
       }
@@ -86,8 +107,40 @@ setup
     })
   }, [state.entries, state.active, panel, width, session])
   const maxScroll = Math.max(0, lines.length - bodyHeight),
-    offset = Math.min(scroll, maxScroll)
-  const visible = lines.slice(Math.max(0, lines.length - bodyHeight - offset), lines.length - offset)
+    top = scroll === null ? maxScroll : Math.min(scroll, maxScroll),
+    offset = maxScroll - top
+  const visible = lines.slice(top, top + bodyHeight)
+  const copyLabel = (line: DisplayLine) => {
+    const entry = state.entries.find(entry => entry.id === line.copyId)
+    return copyFeedback && copyFeedback.id === line.copyId && copyFeedback.text === entry?.text
+      ? copyFeedback.label : '[Copy Markdown]'
+  }
+  const copyEntry = async (id: number) => {
+    const entry = state.entries.find(entry => entry.id === id && entry.role === 'victral')
+    if (!entry) return
+    const text = entry.text
+    let label: string
+    try {
+      const result = await copyResponse(text, stdout)
+      label = result === 'copied' ? '[Copied]' : '[Copy sent]'
+    } catch {
+      label = '[Copy failed · retry]'
+    }
+    if (!mounted.current) return
+    if (copyTimer.current) clearTimeout(copyTimer.current)
+    setCopyFeedback({ id, text, label })
+    copyTimer.current = setTimeout(() => setCopyFeedback(null), 2000)
+  }
+  useEffect(() => {
+    setScroll((prev) => prev === null ? null : Math.min(prev, maxScroll))
+  }, [maxScroll])
+  const scrollBy = (amount: number) => {
+    setScroll((prev) => {
+      const current = prev === null ? maxScroll : Math.min(prev, maxScroll)
+      const next = Math.max(0, Math.min(maxScroll, current + amount))
+      return next === maxScroll ? null : next
+    })
+  }
   const menu = COMMANDS.slice(
     Math.max(0, selected - Math.floor(bodyHeight / 2)),
     Math.max(0, selected - Math.floor(bodyHeight / 2)) + bodyHeight
@@ -96,7 +149,7 @@ setup
     if (!value.trim()) return
     setInput('')
     setCursor(0)
-    setScroll(0)
+    setScroll(null)
     setPanel('chat')
     setHistoryIndex(-1)
     setHistory((prev) => [...prev.slice(-99), value])
@@ -105,32 +158,50 @@ setup
     })
   }
   useInput((key, event) => {
+    const click = /^\x1b\[<0;(\d+);(\d+)M$/.exec(key)
+    if (click) {
+      if (panel !== 'chat' || rows < 16 || columns < 42) return
+      const x = Number(click[1]), y = Number(click[2])
+      const line = visible[y - headerHeight - 1]
+      if (y > headerHeight && y <= headerHeight + bodyHeight && line?.copyId !== undefined && x >= 2 && x < 2 + stringWidth(copyLabel(line))) {
+        void copyEntry(line.copyId)
+      }
+      return
+    }
     if (event.ctrl && key === 'c') {
       if (state.active) session.cancel()
       else void session.close()
       return
     }
     if (event.escape) {
-      if (panel !== 'chat') setPanel('chat')
+      if (panel !== 'chat') {
+        setPanel('chat')
+        setScroll(null)
+      }
       else if (state.active) session.cancel()
       return
     }
     if (event.ctrl && key === 'p') {
       setPanel((prev) => (prev === 'commands' ? 'chat' : 'commands'))
+      setScroll(null)
       setSelected(0)
       return
     }
     if (event.ctrl && key === 'o') {
       setPanel((prev) => (prev === 'metrics' ? 'chat' : 'metrics'))
-      setScroll(0)
+      setScroll(null)
       return
     }
-    if (event.pageUp) {
-      setScroll((prev) => Math.min(maxScroll, prev + bodyHeight))
+    if (panel !== 'commands' && (event.pageUp || (event.shift && event.upArrow))) {
+      scrollBy(event.pageUp ? -bodyHeight : -3)
       return
     }
-    if (event.pageDown) {
-      setScroll((prev) => Math.max(0, prev - bodyHeight))
+    if (panel !== 'commands' && (event.pageDown || (event.shift && event.downArrow))) {
+      scrollBy(event.pageDown ? bodyHeight : 3)
+      return
+    }
+    if (panel !== 'commands' && (event.home || event.end)) {
+      setScroll(event.home && maxScroll > 0 ? 0 : null)
       return
     }
     if (panel === 'commands') {
@@ -205,7 +276,7 @@ setup
         ? 'COMMANDS'
         : state.active
           ? `${spinner} ${state.phase}`
-          : ''
+          : maxScroll > 0 && columns >= 80 ? 'PgUp/PgDn · scroll' : ''
 
 if rows < 16 || columns < 42
   Box(flexDirection="column")
@@ -221,7 +292,7 @@ else
         Text(color={muted}) #{` (v${VERSION})`}
       Text(color={muted} wrap="truncate-end") #{`  ${project}`}
       Text
-    Box(flexDirection="column" paddingX={1} flexGrow={1} flexShrink={1})
+    Box(flexDirection="column" paddingX={1} height={bodyHeight} flexShrink={0})
       if !state.entries.length && panel === 'chat'
         Text(color={codexBlue}) A half-formed idea will do.
       if panel === 'commands'
@@ -230,12 +301,16 @@ else
             | #{(COMMANDS[selected]![0] === item[0] ? '⟢ ' : '  ') + item[0].padEnd(10) + ' ' + item[1]}
       else
         each line, index in visible key index
-          Text(color={line.color} wrap="truncate-end")
-            if line.spans
-              each span, spanIndex in line.spans key spanIndex
-                Text({...span}) #{span.text}
-            else
-              Text #{line.text || ' '}
+          Box(height={1} flexShrink={0})
+            Text(color={line.color} wrap="truncate-end")
+              if line.copyId !== undefined
+                Text #{copyLabel(line)}
+              else
+                if line.spans
+                  each span, spanIndex in line.spans key spanIndex
+                    Text({...span}) #{span.text}
+                else
+                  Text #{line.text || ' '}
     if state.active
       Box(height={1} paddingX={1} flexShrink={0})
         Text(color={codexBlue} wrap="truncate-end") #{`${spinner} Working · ${safeText(state.phase)}`}
