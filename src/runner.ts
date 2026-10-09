@@ -1,12 +1,10 @@
 import type { MemoryPort, ModelPort, AgentTools, Message, TurnRecord, ToolActivity } from './types.js';
 import { errorMessage } from './types.js';
-import fs from 'node:fs';
 import { viewBlocks } from './view.js';
+import { systemPrompt } from './prompt.js';
 import { capResult } from './constants.js';
 import { smoothResponse } from './smooth-response.js';
 
-const MASTER = fs.readFileSync(new URL('./MASTER.txt', import.meta.url), 'utf8').trimEnd();
-const VIEW_DOC = fs.readFileSync(new URL('./VIEW_DOC.txt', import.meta.url), 'utf8').trimEnd();
 interface RunnerOptions {
   onText?: (text: string) => void; onThought?: (text: string) => void;
   onError?: (text: string) => void; onTurn?: (record: TurnRecord) => void;
@@ -30,7 +28,8 @@ export class Runner {
   constructor(public memory: MemoryPort, public model: ModelPort, public tools: AgentTools, instructions = '', { onText = () => {}, onThought = () => {}, onError = console.error, onTurn = () => {}, onTool = () => {}, onPhase = () => {} }: RunnerOptions = {}) {
     this.onText = onText; this.onThought = onThought; this.onError = onError; this.onTurn = onTurn; this.onTool = onTool;
     this.onPhase = onPhase;
-    this.system = [MASTER, VIEW_DOC, instructions].filter(Boolean).join('\n\n');
+    this.system = systemPrompt(instructions);
+    memory.configure?.(this.system, tools.definitions);
     this.queue = [];
     this.active = false;
     this.inCall = false;
@@ -59,17 +58,19 @@ export class Runner {
         this.controller = new AbortController();
         const signal = this.controller.signal;
         if (!await this.memory.settle(signal)) {
-          // Cancellation while waiting: retain the user's message in the log, unanswered.
+          // Retain input on cancellation or a compaction failure, unanswered.
           this.take();
-          this.onTurn({ status: 'canceled', duration_ms: performance.now() - started, settle_ms: performance.now() - started, tool_calls: 0, retrievals: 0 });
+          if (!signal.aborted) this.onError('Memory compaction failed. Send another message to retry.');
+          this.onTurn({ status: signal.aborted ? 'canceled' : 'error', duration_ms: performance.now() - started, settle_ms: performance.now() - started, tool_calls: 0, retrievals: 0 });
           break;
         }
         const settled = performance.now();
         const view = this.memory.render(); // Always before new input is logged.
         const entries = this.take();
+        const context = this.tools.context?.();
         const messages: Message[] = [
           { role: 'system', content: this.system },
-          { role: 'user', content: [...viewBlocks(view), { type: 'text', text: entries.map(e => e.text).join('\n\n') }] },
+          { role: 'user', content: [...viewBlocks(view), ...(context ? [{ type: 'text', text: context }] : []), { type: 'text', text: entries.map(e => e.text).join('\n\n') }] },
         ];
         this.inCall = true;
         try {
@@ -97,7 +98,9 @@ export class Runner {
               try {
                 const args: unknown = JSON.parse(call.function.arguments);
                 if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Tool arguments must be an object.');
-                output = await this.tools.execute(call.function.name, args as Record<string, unknown>, signal);
+                output = await this.tools.execute(call.function.name, args as Record<string, unknown>, signal, name => {
+                  toolCalls++; if (name === 'zoom') retrievals++;
+                });
               } catch (error) {
                 toolStatus = 'error';
                 if (signal.aborted) throw error;

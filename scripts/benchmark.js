@@ -23,7 +23,7 @@ for (let round = 0; round < 5; round++) {
 samples.sort((a, b) => a - b);
 metrics.close();
 
-// A full binary summary cache with realistic 400-byte nodes exercises replay
+// A full binary summary cache with realistic 400-byte nodes exercises restore
 // and scheduling at scale. Storage here is in memory; durability is tested by
 // the normal suite, independently of CPU timing and filesystem speed.
 const nodes = new Map(), summary = 'user: retain decisions and their original sources. '.repeat(8).slice(0, 400);
@@ -33,25 +33,33 @@ for (let l = 0; 2 ** l <= history; l++) {
 const get = nodes.get.bind(nodes);
 let nodeReads = 0;
 nodes.get = key => { nodeReads++; return get(key); };
-const replaySamples = [], pumpSamples = [], pendingReplaySamples = [];
+const initializationSamples = [], restoreSamples = [], pumpSamples = [], pendingRestoreSamples = [];
 let idleReads = 0, viewParts = 0;
+const noModel = { chat() { throw new Error('Unexpected model request in CPU benchmark.'); } };
+const pendingView = root.map((_, i) => [0, i]);
 for (let round = 0; round < 5; round++) {
-  const start = performance.now();
-  const replay = new Memory({ root, nodes }, { chat() { throw new Error('Unexpected model request in CPU benchmark.'); } });
-  replaySamples.push(performance.now() - start);
-  viewParts = replay.view.length;
+  const initStart = performance.now();
+  const initialized = new Memory({ root, nodes }, noModel);
+  initializationSamples.push(performance.now() - initStart);
+  const saved = initialized.view.map(({ l, i }) => [l, i]);
+  await initialized.stop();
+  const restoreStart = performance.now();
+  const restored = new Memory({ root, nodes, loadView: (name = 'view') => name === 'view' ? saved : null }, noModel);
+  restoreSamples.push(performance.now() - restoreStart);
+  viewParts = restored.view.length;
   nodeReads = 0;
   const pumpStart = performance.now();
-  for (let i = 0; i < iterations; i++) replay.pump();
+  for (let i = 0; i < iterations; i++) restored.pump();
   pumpSamples.push((performance.now() - pumpStart) / iterations);
   idleReads = nodeReads / iterations;
-  await replay.stop();
+  await restored.stop();
   const pendingStart = performance.now();
-  const pending = new Memory({ root, nodes: new Map() }, {});
-  pendingReplaySamples.push(performance.now() - pendingStart);
+  const pending = new Memory({ root, nodes: new Map(), loadView: (name = 'view') => name === 'view' ? pendingView : null }, {});
+  pendingRestoreSamples.push(performance.now() - pendingStart);
   await pending.stop();
 }
-replaySamples.sort((a, b) => a - b); pumpSamples.sort((a, b) => a - b); pendingReplaySamples.sort((a, b) => a - b);
+initializationSamples.sort((a, b) => a - b); restoreSamples.sort((a, b) => a - b);
+pumpSamples.sort((a, b) => a - b); pendingRestoreSamples.sort((a, b) => a - b);
 console.log(JSON.stringify({ history, iterations, median_ms_per_snapshot: samples[2],
-  memory: { nodes: nodes.size, view_parts: viewParts, median_replay_ms: replaySamples[2], median_pending_replay_ms: pendingReplaySamples[2], median_idle_pump_ms: pumpSamples[2], node_reads_per_idle_pump: idleReads },
+  memory: { nodes: nodes.size, view_parts: viewParts, median_initialization_ms: initializationSamples[2], median_restore_ms: restoreSamples[2], median_pending_restore_ms: pendingRestoreSamples[2], median_idle_pump_ms: pumpSamples[2], node_reads_per_idle_pump: idleReads },
 }, null, 2));

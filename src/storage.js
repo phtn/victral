@@ -3,6 +3,9 @@ import path from 'node:path';
 import net from 'node:net';
 import { bytes } from './constants.js';
 
+export const STORAGE_STREAMS = ['main', 'tree', 'usage', 'metrics', 'evaluations', 'plans'];
+export const VIEW_FILES = ['view.json', 'view-batch.json', 'compaction-view.json'];
+
 export function day(date = new Date()) {
   return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
 }
@@ -59,13 +62,13 @@ export class Storage {
     this.directory = directory;
     this.release = release;
     this.report = report;
-    for (const sub of ['main', 'tree', 'usage', 'metrics', 'evaluations']) {
+    for (const sub of STORAGE_STREAMS) {
       fs.mkdirSync(path.join(directory, sub), { recursive: true, mode: 0o700 });
     }
     this.root = this.load('main');
     this.root.sort((a, b) => a.i - b.i);
     this.root.forEach((record, i) => {
-      if (record.i !== i || typeof record.text !== 'string' || !['user', 'talk', 'tool', 'echo', 'note'].includes(record.kind)) {
+      if (record.i !== i || typeof record.text !== 'string' || !['user', 'talk', 'tool', 'echo', 'work', 'note'].includes(record.kind)) {
         throw new Error('Invalid message IDs or records. Restore the log from backup before continuing.');
       }
     });
@@ -98,7 +101,7 @@ export class Storage {
     return records;
   }
   append(kind, text) {
-    if (!['user', 'talk', 'tool', 'echo', 'note'].includes(kind) || typeof text !== 'string') throw new Error('Invalid message.');
+    if (!['user', 'talk', 'tool', 'echo', 'work', 'note'].includes(kind) || typeof text !== 'string') throw new Error('Invalid message.');
     const date = new Date();
     const record = { i: this.root.length, kind, text, size: bytes(`${kind}: ${text}`), date: date.toISOString() };
     appendLine(path.join(this.directory, 'main', `${day(date)}.jsonl`), record);
@@ -113,12 +116,39 @@ export class Storage {
     this.nodes.set(key, record);
     return record;
   }
+  loadView(name = 'view') {
+    if (!VIEW_FILES.includes(`${name}.json`)) throw new Error('Invalid view file.');
+    const filename = path.join(this.directory, `${name}.json`);
+    if (!fs.existsSync(filename)) return null;
+    try {
+      const value = JSON.parse(fs.readFileSync(filename, 'utf8'));
+      const valid = name === 'view' ? Array.isArray(value) : name === 'view-batch' ? typeof value === 'boolean'
+        : value && Array.isArray(value.parts) && typeof value.shrinking === 'boolean';
+      if (!valid) throw new Error('Invalid view schema.');
+      return value;
+    }
+    catch { throw new Error(`Invalid ${name}.json; restore it from backup.`); }
+  }
+  saveView(value, name = 'view') {
+    if (!VIEW_FILES.includes(`${name}.json`)) throw new Error('Invalid view file.');
+    const filename = path.join(this.directory, `${name}.json`), temporary = `${filename}.tmp`;
+    const fd = fs.openSync(temporary, 'w', 0o600);
+    try {
+      const data = Buffer.from(JSON.stringify(value) + '\n');
+      if (fs.writeSync(fd, data) !== data.length) throw new Error('Short view write.');
+      fs.fsyncSync(fd);
+    } finally { fs.closeSync(fd); }
+    fs.renameSync(temporary, filename); syncDirectory(this.directory);
+  }
   usage(record) {
     appendLine(path.join(this.directory, 'usage', `${day()}.jsonl`), { date: new Date().toISOString(), ...record });
   }
   telemetry(stream, record) {
     if (!['metrics', 'evaluations'].includes(stream)) throw new Error('Invalid telemetry stream.');
     appendLine(path.join(this.directory, stream, `${day()}.jsonl`), { date: new Date().toISOString(), ...record });
+  }
+  savePlan(record) {
+    appendLine(path.join(this.directory, 'plans', `${day()}.jsonl`), record);
   }
   async close() { await this.release(); }
 }

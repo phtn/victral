@@ -1,4 +1,4 @@
-export type MessageKind = 'user' | 'talk' | 'tool' | 'echo' | 'note';
+export type MessageKind = 'user' | 'talk' | 'tool' | 'echo' | 'work' | 'note';
 export interface ContentBlock { type: string; text?: string; [key: string]: unknown }
 export interface ToolCall { id: string; function: { name: string; arguments: string } }
 export interface Message {
@@ -13,14 +13,16 @@ export interface ToolDefinition {
 }
 export interface AgentTools {
   definitions: ToolDefinition[];
-  execute(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<string>;
+  execute(name: string, args: Record<string, unknown>, signal?: AbortSignal, onNestedCall?: (name: string) => void): Promise<string>;
   close?(): Promise<void>;
+  context?(): string;
 }
 export interface MemoryPort {
+  configure?(system: string, tools: ToolDefinition[]): void;
   append(kind: MessageKind, text: string): unknown;
   settle(signal?: AbortSignal): Promise<boolean>;
   render(): string;
-  zoom(id: number, n: number): string;
+  zoom(id: number, n: number, page?: number): string;
   date(id: number): string;
 }
 export interface ModelPort {

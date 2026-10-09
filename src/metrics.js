@@ -102,7 +102,7 @@ export class Metrics {
       view_budget: memory.viewBudget, compression: viewBytes ? this.rawBytes / viewBytes : 0,
       pending_summaries: memory.view.filter(p => !memory.node(p.l, p.i)).length,
       compactor_running: [...memory.busy.values()].filter(e => !e.timer).length,
-      compactor_retries: [...memory.busy.values()].filter(e => e.timer).length,
+      compactor_retries: memory.failures?.size ?? [...memory.busy.values()].filter(e => e.timer).length,
       generated: this.generated, free: this.free,
       turns: this.turns, tool_calls: this.toolCalls, retrievals: this.retrievals,
       usage: { ...this.totals }, session: { ...this.sessionTotals },

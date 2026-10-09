@@ -30,7 +30,7 @@ Usage: victral [options]
   --version, -v           Show version
 
 In the workspace: Ctrl+P commands · Ctrl+O metrics · Esc cancel
-Agent tools: files, patches, glob/regex search, URL fetching, Git status/diff, optional foreground/background CLI execution.
+Agent tools: files, patches, glob/regex search, parallel reads, task plans, URL fetching, Git history/blame/diffs, optional interactive CLI execution.
 `
 async function main(): Promise<void> {
   const { values } = parseArgs({

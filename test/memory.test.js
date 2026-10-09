@@ -86,21 +86,24 @@ test('view merges the most due adjacent binary siblings, covers every message, a
 
 // Deliberately recompute sizes and scan all siblings: a small, independent
 // reference for the specification's incremental, most-due folding rule.
-function referenceFit(view, memory, T) {
-  let size = view.reduce((sum, part) => sum + bytes(memory.text(part)), 0);
-  while (size > memory.viewBudget) {
+function referenceFit(view, memory, T, state) {
+  const render = () => '<chat>\n' + view.map(p => `${memory.start(p)}+${2 ** p.l}|${memory.text(p).replace(/\r\n|\r|\n/g, ' ')}`).join('\n') + (view.length ? '\n' : '') + '</chat>';
+  let size = bytes(render());
+  if (size > memory.viewBudget) state.shrinking = true;
+  while (state.shrinking && size > memory.viewMinimum) {
     let best = -1, weight = -Infinity;
     for (let j = 0; j + 1 < view.length; j++) {
       const a = view[j], b = view[j + 1];
       if (a.l !== b.l || a.i % 2 || b.i !== a.i + 1 || !memory.node(a.l + 1, a.i / 2)) continue;
-      const due = (T - a.i * 2 ** a.l) / 2 ** (a.l + 2);
+      const due = (T - ((b.i + 1) * 2 ** b.l - 1)) / 2 ** a.l;
       if (due > weight) { best = j; weight = due; }
     }
     if (best < 0) break;
     const a = view[best], b = view[best + 1], parent = { l: a.l + 1, i: a.i / 2 };
-    size += bytes(memory.text(parent)) - bytes(memory.text(a)) - bytes(memory.text(b));
     view.splice(best, 2, parent);
+    size = bytes(render());
   }
+  if (size <= memory.viewMinimum) state.shrinking = false;
 }
 test('indexed scheduling preserves source/context readiness, scan priority, retries, and view folding', async () => {
   let calls = 0;
@@ -110,13 +113,13 @@ test('indexed scheduling preserves source/context readiness, scan priority, retr
     return { finish_reason: 'COMPLETE', message: { role: 'assistant', content: [{ type: 'text', text: 'user: retain the decisions and original sources 🦓' }] } };
   } };
   const { storage, memory } = await fixture(model, { nodeBudget: 64, viewBudget: 200, jobs: 3, retry: 2, report: () => {} });
-  const reference = [];
+  const reference = [], state = { shrinking: false };
   let seen = 0;
   memory.on('change', () => {
     while (seen < storage.root.length) reference.push({ l: 0, i: seen++ });
-    referenceFit(reference, memory, storage.root.length);
+    referenceFit(reference, memory, storage.root.length, state);
     assert.deepEqual(memory.view, reference);
-    assert.equal(memory.viewBytes, memory.view.reduce((sum, part) => sum + bytes(memory.text(part)), 0));
+    assert.equal(memory.viewBytes, bytes(memory.render()));
   });
   const build = memory.build.bind(memory), attempts = new Map();
   memory.build = async (l, i, signal) => {
@@ -124,8 +127,8 @@ test('indexed scheduling preserves source/context readiness, scan priority, retr
     let expected;
     for (let level = 0; 2 ** level <= T && !expected; level++) {
       for (let index = 0; (index + 1) * 2 ** level <= T; index++) {
-        if (memory.node(level, index) || (memory.busy.has(`${level}:${index}`) && `${level}:${index}` !== key)) continue;
-        if ((level === 0 ? index : (index + 1) * 2 ** level) > first) continue;
+        if (memory.node(level, index) || memory.failures.has(`${level}:${index}`) || (memory.busy.has(`${level}:${index}`) && `${level}:${index}` !== key)) continue;
+        if (level === 0 && index - first - [...memory.builtAhead].filter(id => id < index).length >= memory.jobs) continue;
         if (level && (!memory.node(level - 1, 2 * index) || !memory.node(level - 1, 2 * index + 1))) continue;
         expected = `${level}:${index}`; break;
       }
@@ -136,15 +139,17 @@ test('indexed scheduling preserves source/context readiness, scan priority, retr
     return build(l, i, signal);
   };
   for (let i = 0; i < 32; i++) memory.append('user', i % 3 ? `decision ${i} 🦓 `.repeat(20) : `keep ${i}`);
-  assert.equal(await memory.drain(AbortSignal.timeout(3000)), true);
-  assert.equal(storage.nodes.size, 63);
+  for (let retry = 0; !await memory.drain(AbortSignal.timeout(3000)); retry++) {
+    assert.ok(retry < 3); memory.append('user', 'retry failed compactions');
+  }
+  let expectedNodes = 0;
+  for (let n = storage.root.length; n >= 1; n = Math.floor(n / 2)) expectedNodes += n;
+  assert.equal(storage.nodes.size, expectedNodes);
   assert.equal(memory.remaining, 0);
   for (const key of ['0:3', '1:0', '1:2']) assert.equal(attempts.get(key), 2);
   const next = new Memory(storage, model, { nodeBudget: 64, viewBudget: 200 });
-  const replay = [];
-  for (let i = 0; i < storage.root.length; i++) { replay.push({ l: 0, i }); referenceFit(replay, next, i + 1); }
-  assert.deepEqual(next.view, replay);
-  assert.equal(next.viewBytes, next.view.reduce((sum, part) => sum + bytes(next.text(part)), 0));
+  assert.deepEqual(next.view, memory.view);
+  assert.equal(next.viewBytes, bytes(next.render()));
   await next.stop();
 });
 test('restart indexes unfinished merges and idle pumps do not scan saved history', async () => {
@@ -165,7 +170,7 @@ test('restart indexes unfinished merges and idle pumps do not scan saved history
   const alreadyCanceled = new AbortController(); alreadyCanceled.abort();
   assert.equal(await resumed.drain(alreadyCanceled.signal), false);
 });
-test('compactor retries with byte feedback in the same conversation, keeps the shortest, and omits IDs from context', async () => {
+test('compactor retries with byte feedback in the same conversation, keeps the shortest, and uses the dash ruler', async () => {
   const requests = [];
   const attempts = ['x'.repeat(530), 'x'.repeat(520), 'x'.repeat(519), 'x'.repeat(521), 'x'.repeat(518)];
   const model = { chat: async messages => {
@@ -179,7 +184,9 @@ test('compactor retries with byte feedback in the same conversation, keeps the s
   assert.equal(bytes(memory.node(0, 0).text), 518);
   assert.equal(requests[1].length, 4);
   assert.match(requests[1][3].content, /530 bytes/);
-  assert.ok(!requests[0][1].content[0].text.includes('0+1|'));
+  assert.match(requests[0][1].content.at(-1).text, /Compaction: compress message 0/);
+  assert.ok(requests[0][1].content.at(-1).text.includes('-'.repeat(512)));
+  assert.ok(requests[0][1].content.at(-1).text.includes('<input>\nuser: '));
 });
 test('settle waits for summaries and cancellation resolves false', async () => {
   const model = { chat: async (_messages, { signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })) };

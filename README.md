@@ -1,8 +1,29 @@
 # Victral
 
 A persistent coding workspace with a TypeScript CLI and a full-screen terminal
-interface, implementing the OptChat specification with Meta models.
-The default is Meta `muse-spark-1.3-contributor` for both the agent and the compactor. The original specification is preserved in [docs/OPTCHAT_SPEC.md](docs/OPTCHAT_SPEC.md).
+interface, implementing the latest OptChat / UniiChat memory design with Meta models.
+The default is Meta `muse-spark-1.3-contributor` for both the agent and the compactor.
+The [upstream specification](docs/OPTCHAT_SPEC.md) is pinned to gist revision
+`3c190e06f34aba0c69f49042c526093269604935` (October 8, 2026).
+[Alignment notes](docs/UPSTREAM_ALIGNMENT.md) describe the implementation and
+provider differences; the [original specification](docs/OPTCHAT_SPEC_ORIGINAL.md)
+is retained for reference.
+
+Memory appends summary lines until the rendered view exceeds 128,000 UTF-8
+bytes, then merges a batch toward 64,000 bytes. It chooses sibling pairs by
+age measured from their last message. `view.json` preserves the exact ranges
+across restarts; `view-batch.json` retains a batch waiting for unfinished parents.
+Compactions share the agent's system prompt, user instructions and tool schema,
+and use a separately saved 16,000–32,000-byte context view. Both views contain
+complete summaries; compaction context stops at the first unbuilt message.
+Failed compactions wait for another message to retry. Long non-tool text is
+logged losslessly as consecutive messages of at most 30,000 UTF-8 bytes.
+`zoom` retrieves long originals in pages (zero-based `page`, default 0).
+
+Existing chat directories without `view.json` initialize it once from their
+saved history. Subsequent launches load it directly, recovering only messages
+appended after its last write. Keep the view files with the logs when backing
+up or moving a chat; `/backup` includes them automatically.
 
 ## Start
 
@@ -73,8 +94,9 @@ loaded as the user's instructions if present; `--instructions FILE` chooses a
 different file. Nested instruction discovery is not implemented.
 
 File reading, directory listing, exact text edits, multi-file patches, glob
-discovery, literal or regex search, HTTP(S) fetching, and read-only Git
-status/diff are available by default. Add `--allow-shell` to give the agent
+discovery, literal or regex search, parallel read operations, persistent task
+plans, HTTP(S) fetching, and read-only Git history, blame and diffs are
+available by default. Add `--allow-shell` to give the agent
 foreground and background CLI execution:
 
 ```sh
@@ -90,13 +112,51 @@ build or test run. `command_status` returns cumulative output and exit status,
 optionally waiting up to 10 seconds; `stop_command` terminates the job.
 Background jobs default to 120 seconds and allow up to 600 seconds, with at
 most eight running jobs and the most recent 32 results retained. They have
-closed stdin, survive completed turns, and stop on cancellation of the turn
+closed stdin by default, survive completed turns, and stop on cancellation of the turn
 that started them or on session shutdown. All commands kill their process
 group on cancellation on Unix and cap output. Environment variables ending in KEY, TOKEN, SECRET,
 PASSWORD, CREDENTIAL, or AUTHORIZATION are removed from subprocesses.
 File tools reject paths and symlinks leaving the project. Command execution
 is not an operating-system sandbox and programs can access the host filesystem.
 Use `/tools` to see exactly which tools are available.
+
+Set `interactive: true` on `start_command` to keep piped stdin open, then
+send literal UTF-8 text through `write_command_input`. Include any newline
+needed by the program. `eof: true` closes stdin after sending; omit `input`
+to send EOF alone. Each write allows up to 64 KiB. Writes that block for two
+seconds or are canceled stop the process to release pending input. These
+commands use pipes, so programs requiring a pseudo-terminal are not supported.
+`list_commands` and `/jobs` show retained jobs and their IDs, statuses, exit
+codes, timeouts, and stdin state. Job IDs remain local to a running session.
+
+`get_plan` and `update_plan` manage a title and up to 50 steps with statuses
+`pending`, `in_progress`, or `completed`. At most one step can be in progress.
+Updates supply `expected_revision` from `get_plan` (0 for the first plan),
+preventing stale updates from overwriting newer progress. Plans are stored
+in a separate `plans` log under the chat directory, scoped to the project's
+canonical root, restored on restart, included in `/backup`, and supplied
+alongside memory at the start of each turn. `/plan` shows the current plan.
+The latest user instructions still take precedence over saved progress.
+Embedded users of `projectTools` can pass a `planStore`; without one, plans
+remain in memory for that tools instance.
+
+`parallel_tools` accepts `calls: [{ tool, arguments }, ...]` with 1–8
+independent reads. It runs them concurrently, retains request order, and
+reports each success or failure separately. Supported operations include
+file reads and searches, memory retrieval, Git inspection, URL fetching,
+plan reads, and authorized command status reads. Each result is capped at
+3000 UTF-8 bytes; call a tool directly when larger output is needed. Mutation,
+command execution, and nested batches are excluded before the batch starts.
+Cancellation reaches the child operations. Metrics count both the batch and
+its child calls, including `zoom` retrievals.
+
+`git_log` returns recent commits (default 20, maximum 100), `git_show` returns
+a commit message and patch, and `git_blame` shows line attribution. All accept
+a `ref`, defaulting to `HEAD`, and optional literal project paths; blame
+requires a file path and accepts paired `start_line`/`end_line` limits.
+`git_diff` also accepts `base` for comparing the current files or staged
+changes against a revision. These tools keep external diff and text conversion
+programs disabled and are available without `--allow-shell`.
 
 `glob_files` accepts a `pattern`, optional directory `path`, and `max_results`
 (default 200, maximum 1000). Patterns such as `**/*.{ts,js}` match paths relative
@@ -177,11 +237,13 @@ queued work before releasing the chat lock.
 | --- | --- |
 | `/help` | Show commands and keyboard shortcuts |
 | `/tools` | List agent tools and command execution access |
+| `/plan` | Display the saved task plan and its revision |
+| `/jobs` | List retained background commands and their status |
 | `/metrics` | Show accumulated token, timing, memory, retrieval, and evaluation metrics |
 | `/jev` | Show recent automatic summary evaluations and their status |
 | `/model [NUMBER_OR_ID]` | Show models or switch the main agent between turns |
 | `/view` | Display the current summary view |
-| `/zoom ID N` | Open a memory range; N must be a power of two |
+| `/zoom ID N [PAGE]` | Open a memory range; N must be a power of two; PAGE starts at 0 |
 | `/date ID` | Display a stored message's local date and time |
 | `/usage` | Show the last ten provider usage records |
 | `/import FILE` | Save a plain-text historical transcript as a note |
@@ -208,22 +270,26 @@ bun run smoke:jev
 The tests run offline and cover CLI lifecycle, terminal keyboard behavior,
 incremental Markdown rendering, smooth streaming and cancellation,
 file boundaries, unique edits, patch validation and rollback, glob and regex
-search, literal argument handling, foreground and background command timeout,
-cancellation and shutdown, Git inspection, the Meta adapter, memory, and evaluations. The built CLI
+search, durable plans and backups, concurrent read batches and their metrics,
+literal argument handling, interactive input and blocked pipe deadlines,
+foreground and background command timeout, cancellation and shutdown,
+Git history and attribution, the Meta adapter, memory, and evaluations. The built CLI
 needs the installed dependencies and its adjacent prompt assets.
 
 Metrics accumulate saved usage, turns, and message sizes once, and refresh audit
 totals when evaluations change. Streaming UI updates reuse those totals while
 reading current view and compactor state. The benchmark measures repeated metrics
-updates, memory replay with both a full summary tree and an unfinished backlog,
+updates, memory initialization and saved-view restoration with both a full
+summary tree and an unfinished backlog,
 and idle compactor scheduling. It makes no API requests or persistent writes. Pass a
 history size with `bun run benchmark 1000` to compare different workloads.
 
 Memory maintains view byte totals and eligible sibling merges incrementally.
 The compactor indexes unfinished work on restart, then queues nodes as their
-sources become ready. Idle scheduling avoids scanning saved history. Level and
-index priority, context readiness, most-due folding, and retry behavior retain
-the specification's rules.
+sources become ready. Idle scheduling avoids scanning saved history. Ready
+queues preserve dependency order, allow up to eight concurrent calls,
+and use the updated batch merge order. Cache blocks contain four summary lines;
+Meta manages caching automatically and reported usage measures actual hits.
 
 The Meta adapter uses a streaming event parser that preserves UTF-8 text
 and accepts LF, CRLF, and CR separators across network chunks. The adapter's

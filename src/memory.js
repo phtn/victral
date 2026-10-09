@@ -1,11 +1,10 @@
 import { EventEmitter } from 'node:events';
-import fs from 'node:fs';
-import { NODE, VIEW, JOBS, TRIES, RETRY, bytes, cutBytes } from './constants.js';
+import { NODE, VIEW, VIEW_MIN, COMPACT_VIEW, COMPACT_VIEW_MIN, JOBS, TRIES, CAP, bytes, cutBytes, splitText, capResult } from './constants.js';
+import { SummaryView, pairs, restoreParts } from './summary-view.js';
+import { systemPrompt } from './prompt.js';
+import { viewBlocks } from './view.js';
 
-const COMPACT = fs.readFileSync(new URL('./COMPACT.txt', import.meta.url), 'utf8').trimEnd();
-// A constant, realistic 512-byte scale line; not a changing timestamp or state.
-const example = 'user: Build the project agent with durable chat memory; keep original decisions and retrieve their sources before acting. echo: Read src/storage.js: daily JSONL records, fsync, and one writer per chat. talk: Storage and binary summaries are implemented; restart recovery was checked. user: Keep the original prompts and limits; do not silently replace the model. echo: A provider request succeeded; caching is not yet verified. talk: Next connect the summary view to fresh turns and test old-decision retrieval.';
-export const SCALE = cutBytes(example, NODE).padEnd(NODE, '.');
+export const SCALE = '-'.repeat(NODE);
 
 // One ordered queue per level preserves the pump's (level, index) priority,
 // including nodes whose sources finish out of order and retries of older work.
@@ -40,23 +39,35 @@ class IndexQueue {
 }
 
 export class Memory extends EventEmitter {
-  constructor(storage, model, { viewBudget = VIEW, nodeBudget = NODE, jobs = JOBS, retry = RETRY, report = console.error } = {}) {
+  constructor(storage, model, { viewBudget = VIEW, viewMinimum = viewBudget === VIEW ? VIEW_MIN : Math.floor(viewBudget / 2), compactBudget = COMPACT_VIEW, compactMinimum = compactBudget === COMPACT_VIEW ? COMPACT_VIEW_MIN : Math.floor(compactBudget / 2), nodeBudget = NODE, jobs = JOBS, report = console.error } = {}) {
     super();
-    Object.assign(this, { storage, model, viewBudget, nodeBudget, jobs, retry, report });
-    this.view = [];
-    this.viewKeys = new Set();
-    this.viewBytes = 0;
-    this.merges = new Map();
+    Object.assign(this, { storage, model, viewBudget, viewMinimum, compactBudget, compactMinimum, nodeBudget, jobs, report });
+    this.system = systemPrompt(); this.tools = [];
     this.ready = [];
     this.queued = new Set();
     this.remaining = 0;
     this.busy = new Map();
     this.failures = new Set();
     this.stopped = false;
-    // Replay with T at each append, exactly as when messages originally arrived.
-    for (let i = 0; i < storage.root.length; i++) { this.addPart({ l: 0, i }); this.fit(i + 1); }
+    this.builtThrough = 0;
+    this.builtAhead = new Set();
+    for (let i = 0; i < storage.root.length; i++) if (this.node(0, i)) this.builtAhead.add(i);
+    this.advance();
+    const saved = storage.loadView?.();
+    const parts = saved === null || saved === undefined ? [] : restoreParts(saved, this);
+    this.mainView = new SummaryView(this, viewBudget, viewMinimum, parts, storage.loadView?.('view-batch') === true);
+    // Only recover a suffix committed after the last atomic view write. Older
+    // installations have no view.json: initialize once and persist immediately.
+    const end = parts.length ? this.end(parts.at(-1)) : 0;
+    for (let i = end; i < storage.root.length; i++) this.mainView.append({ l: 0, i });
+    if (this.mainView.shrinking || this.viewBytes > viewBudget) storage.saveView?.(true, 'view-batch');
+    const merged = (saved == null || end < storage.root.length || this.mainView.shrinking || this.viewBytes > viewBudget) ? this.mainView.fit(storage.root.length) : 0;
+    const compact = storage.loadView?.('compaction-view');
+    this.compactView = compact == null ? null : new SummaryView(this, compactBudget, compactMinimum, restoreParts(compact.parts, this, { built: true }), compact.shrinking === true);
+    if (merged) this.syncCompact(true);
+    this.persistView();
     // Index unfinished work once on restart. Afterwards only appends, finished
-    // children, and retry timers introduce candidates; idle pumps read no nodes.
+    // children, and new-message retries introduce candidates; idle pumps read no nodes.
     for (let l = 0; 2 ** l <= storage.root.length; l++) {
       for (let i = 0; (i + 1) * 2 ** l <= storage.root.length; i++) {
         if (this.node(l, i)) continue;
@@ -65,60 +76,78 @@ export class Memory extends EventEmitter {
       }
     }
   }
+  get view() { return this.mainView.parts; }
+  get viewBytes() { return this.mainView.bytes; }
+  get viewKeys() { return this.mainView.keys; }
+  get merges() { return this.mainView.merges; }
+  configure(system, tools) { this.system = system; this.tools = tools; }
+  advance() {
+    while (this.builtAhead.delete(this.builtThrough)) this.builtThrough++;
+  }
   node(l, i) { return this.storage.nodes.get(`${l}:${i}`); }
   start(part) { return part.i * 2 ** part.l; }
   end(part) { return (part.i + 1) * 2 ** part.l; }
   text(part) { return this.node(part.l, part.i)?.text ?? '(not summarized yet: zoom it)'; }
-  size(part) { return this.node(part.l, part.i)?.size ?? bytes(this.text(part)); }
-  addPart(part) {
-    this.view.push(part); this.viewKeys.add(`${part.l}:${part.i}`);
-    this.viewBytes += this.size(part);
-    this.offerMerge(part.l + 1, Math.floor(part.i / 2));
-  }
-  offerMerge(l, i) {
-    if (l > 0 && this.viewKeys.has(`${l - 1}:${2 * i}`) && this.viewKeys.has(`${l - 1}:${2 * i + 1}`) && this.node(l, i)) {
-      this.merges.set(`${l}:${i}`, { l, i });
+  size(part) { return this.mainView.size(part); }
+  addPart(part) { this.mainView.append(part); }
+  persistView() {
+    if (this.persistedViewRevision !== this.mainView.revision) {
+      this.storage.saveView?.(pairs(this.view)); this.persistedViewRevision = this.mainView.revision;
+    }
+    if (this.persistedShrinking !== this.mainView.shrinking) {
+      this.storage.saveView?.(this.mainView.shrinking, 'view-batch'); this.persistedShrinking = this.mainView.shrinking;
     }
   }
   fit(T = this.storage.root.length) {
-    // Only built parents whose two children are in the view can fold. In a
-    // backlog with no summaries, this avoids repeatedly scanning every message.
-    while (this.viewBytes > this.viewBudget && this.merges.size) {
-      let parent, weight = -Infinity;
-      for (const candidate of this.merges.values()) {
-        const due = (T - this.start(candidate)) / 2 ** (candidate.l + 1);
-        if (!parent || due > weight || (due === weight && this.start(candidate) < this.start(parent))) {
-          parent = candidate; weight = due;
-        }
-      }
-      const a = { l: parent.l - 1, i: 2 * parent.i }, b = { l: a.l, i: a.i + 1 };
-      const best = this.view.findIndex(part => part.l === a.l && part.i === a.i);
-      this.viewBytes += this.size(parent) - this.size(a) - this.size(b);
-      this.viewKeys.delete(`${a.l}:${a.i}`); this.viewKeys.delete(`${b.l}:${b.i}`);
-      this.viewKeys.add(`${parent.l}:${parent.i}`);
-      this.merges.delete(`${parent.l}:${parent.i}`);
-      this.view.splice(best, 2, parent);
-      this.offerMerge(parent.l + 1, Math.floor(parent.i / 2));
+    const batching = this.mainView.shrinking || this.viewBytes > this.viewBudget;
+    // Persist intent BEFORE changing a batch, including one stalled on parents.
+    if (batching && this.persistedShrinking !== true) {
+      this.storage.saveView?.(true, 'view-batch'); this.persistedShrinking = true;
     }
+    const merged = this.mainView.fit(T);
+    this.persistView();
+    if (merged) this.syncCompact(true);
     this.emit('change');
   }
   append(kind, text) {
-    const record = this.storage.append(kind, text);
-    this.addPart({ l: 0, i: record.i });
-    const T = this.storage.root.length;
-    for (let l = 0; T % 2 ** l === 0; l++) this.remaining++;
-    this.enqueue(0, record.i);
-    this.fit(); this.pump();
+    const chunks = kind === 'echo' ? [capResult(text)] : splitText(text);
+    let record;
+    this.retryFailed();
+    for (const chunk of chunks) {
+      const next = this.storage.append(kind, chunk); record ??= next;
+      this.addPart({ l: 0, i: next.i });
+      const T = this.storage.root.length;
+      for (let l = 0; T % 2 ** l === 0; l++) this.remaining++;
+      this.enqueue(0, next.i);
+      this.fit();
+    }
+    this.pump();
     return record;
   }
   render(ids = true, end = Infinity) {
-    const lines = this.view.filter(part => this.end(part) <= end).map(part =>
-      `${ids ? `${this.start(part)}+${2 ** part.l}|` : ''}${this.text(part).replace(/\r?\n/g, ' ')}`);
-    return `<chat>\n${lines.join('\n')}\n</chat>`;
+    return this.mainView.render(this.mainView.prefix(end), ids);
   }
-  first() {
-    const part = this.view.find(part => !this.node(part.l, part.i));
-    return part ? this.start(part) : this.storage.root.length;
+  first() { return this.builtThrough; }
+  retryFailed() {
+    const failed = [...this.failures]; this.failures.clear();
+    for (const key of failed) { const [l, i] = key.split(':').map(Number); this.enqueue(l, i); }
+  }
+  syncCompact(reset = false) {
+    const end = this.first();
+    if (!this.compactView || reset) {
+      this.compactView = new SummaryView(this, this.compactBudget, this.compactMinimum, this.mainView.prefix(end));
+      this.compactView.fit(this.storage.root.length, true);
+    } else {
+      const parts = this.compactView.parts;
+      const covered = parts.length ? this.end(parts.at(-1)) : 0;
+      for (let i = covered; i < end; i++) this.compactView.append({ l: 0, i });
+      this.compactView.fit(this.storage.root.length);
+    }
+    if (this.persistedCompact !== this.compactView || this.persistedCompactRevision !== this.compactView.revision || this.persistedCompactShrinking !== this.compactView.shrinking) {
+      this.storage.saveView?.({ parts: pairs(this.compactView.parts), shrinking: this.compactView.shrinking }, 'compaction-view');
+      this.persistedCompact = this.compactView; this.persistedCompactRevision = this.compactView.revision;
+      this.persistedCompactShrinking = this.compactView.shrinking;
+    }
   }
   enqueue(l, i) {
     const key = `${l}:${i}`;
@@ -131,8 +160,9 @@ export class Memory extends EventEmitter {
     const key = `${l}:${i}`;
     const oldSize = this.viewKeys.has(key) ? this.size({ l, i }) : 0;
     this.storage.saveNode(l, i, text);
-    if (this.viewKeys.has(key)) this.viewBytes += this.size({ l, i }) - oldSize;
-    this.offerMerge(l, i);
+    if (this.viewKeys.has(key)) this.mainView.bytes += this.size({ l, i }) - oldSize;
+    this.mainView.offer(l, i); this.compactView?.offer(l, i);
+    if (l === 0) { this.builtAhead.add(i); this.advance(); }
     this.remaining--;
     if ((Math.floor(i / 2) + 1) * 2 ** (l + 1) <= this.storage.root.length) this.enqueue(l + 1, Math.floor(i / 2));
   }
@@ -144,8 +174,7 @@ export class Memory extends EventEmitter {
         if (this.busy.size >= this.jobs) return;
         const i = queue.peek();
         const key = `${l}:${i}`;
-        const end = l === 0 ? i : (i + 1) * 2 ** l;
-        if (end > this.first()) break;
+        if (l === 0 && i - this.first() - [...this.builtAhead].filter(index => index < i).length >= this.jobs) break;
         queue.pop(); this.queued.delete(key);
         const controller = new AbortController();
         this.busy.set(key, { controller });
@@ -153,9 +182,9 @@ export class Memory extends EventEmitter {
           this.busy.delete(key); this.failures.delete(key); this.fit(); this.pump();
         }).catch(error => {
           if (this.stopped) { this.busy.delete(key); return; }
-          if (!this.failures.has(key)) { this.report(`Compactor ${key}: ${error.message}; retrying in ${this.retry / 1000} seconds.`); this.failures.add(key); }
-          const timer = setTimeout(() => { this.busy.delete(key); this.enqueue(l, i); this.pump(); }, this.retry);
-          this.busy.set(key, { controller, timer });
+          this.busy.delete(key); this.failures.add(key);
+          this.report(`Compactor ${key}: ${error.message}; retrying at the next message.`);
+          this.emit('change'); this.pump();
         });
         const entry = this.busy.get(key);
         if (entry) entry.promise = promise;
@@ -173,23 +202,27 @@ export class Memory extends EventEmitter {
       return;
     }
     const contextEnd = l === 0 ? i : (i + 1) * 2 ** l;
-    const contextParts = this.view.filter(part => this.end(part) <= contextEnd).map(part => ({ ...part }));
-    const instruction = l === 0 ? 'Compress this message' : 'Merge these two lines';
+    this.syncCompact();
+    const contextParts = this.compactView.prefix(Math.min(contextEnd, this.first())).map(part => ({ ...part }));
     const stepSource = l === 0 ? source : [this.node(l - 1, 2 * i).text, this.node(l - 1, 2 * i + 1).text].map(text => text.replace(/\r?\n/g, ' ')).join('\n');
-    const step = `For scale, this line is exactly 512 bytes:\n${SCALE}\n\n${instruction} into one line, in at most ${this.nodeBudget} bytes:\n${stepSource}`;
+    const start = i * 2 ** l, n = 2 ** l;
+    const instruction = l === 0
+      ? `Compaction: compress message ${i} into one line of at most ${this.nodeBudget} bytes\n(about 70 words), the length of this ruler:\n${'-'.repeat(this.nodeBudget)}`
+      : `Compaction: merge lines ${start}+${n / 2} and ${start + n / 2}+${n / 2}, adjacent, into one line of at most\n${this.nodeBudget} bytes (about 70 words), the length of this ruler:\n${'-'.repeat(this.nodeBudget)}\n<chat> may hold their messages, ${start} to ${start + n - 1}, in more detail: take details\nof them from there too.`;
+    const step = `${instruction}\n<input>\n${stepSource}\n</input>`;
     const messages = [
-      { role: 'system', content: COMPACT },
-      { role: 'user', content: [{ type: 'text', text: this.render(false, contextEnd) }, { type: 'text', text: step }] },
+      { role: 'system', content: this.system },
+      { role: 'user', content: [...viewBlocks(this.compactView.render(contextParts)), { type: 'text', text: step }] },
     ];
     const attempts = [];
     for (let t = 0; t < TRIES; t++) {
-      const result = await this.model.chat(messages, { signal });
+      const result = await this.model.chat(messages, { tools: this.tools, signal });
       const line = result.message.content?.filter(block => block.type === 'text').map(block => block.text).join('').trim();
       if (!line) throw new Error('Empty compactor response.');
       if (result.finish_reason !== 'COMPLETE') throw new Error(`Incomplete compactor response: ${result.finish_reason}`);
       attempts.push(line);
       if (bytes(line) <= this.nodeBudget) break;
-      messages.push(result.message, { role: 'user', content: `That line is ${bytes(line)} bytes; the limit is ${this.nodeBudget}. It must end where it is cut here:\n${cutBytes(line, this.nodeBudget)}| ← LIMIT` });
+      messages.push(result.message, { role: 'user', content: `Too long: your line is ${bytes(line)} bytes, over the ${this.nodeBudget}-byte limit. Write\nthe whole line again for the same <input>, cutting just enough of the\nleast valuable items to fit before this cut:\n${cutBytes(line, this.nodeBudget)}| ← LIMIT` });
     }
     if (signal.aborted) throw signal.reason;
     const summary = attempts.reduce((a, b) => bytes(a) <= bytes(b) ? a : b);
@@ -197,12 +230,14 @@ export class Memory extends EventEmitter {
     this.emit('node', { l, i, generated: true, context_parts: contextParts, attempts: attempts.length, source_bytes: bytes(source), summary_bytes: bytes(summary), duration_ms: performance.now() - started });
   }
   settle(signal) {
+    this.retryFailed();
     this.pump();
     return new Promise(resolve => {
       const check = () => {
-        if (signal?.aborted || this.stopped || this.view.every(part => this.node(part.l, part.i))) {
+        const failed = !this.busy.size && this.failures.size && this.first() < this.storage.root.length;
+        if (signal?.aborted || this.stopped || failed || this.first() === this.storage.root.length) {
           this.off('change', check); signal?.removeEventListener('abort', check);
-          resolve(!signal?.aborted && !this.stopped);
+          resolve(!signal?.aborted && !this.stopped && !failed);
         }
       };
       this.on('change', check); signal?.addEventListener('abort', check, { once: true }); check();
@@ -212,6 +247,7 @@ export class Memory extends EventEmitter {
     while (!this.stopped && !signal?.aborted) {
       this.pump();
       if (this.remaining === 0) return true;
+      if (!this.busy.size && this.failures.size) return false;
       await new Promise(resolve => {
         const done = () => { this.off('change', done); signal?.removeEventListener('abort', done); resolve(); };
         this.once('change', done); signal?.addEventListener('abort', done, { once: true });
@@ -220,9 +256,16 @@ export class Memory extends EventEmitter {
     }
     return false;
   }
-  zoom(id, n) {
+  zoom(id, n, page = 0) {
     if (!Number.isSafeInteger(id) || id < 0 || !Number.isSafeInteger(n) || n < 1 || !Number.isInteger(Math.log2(n)) || id % n || id + n > this.storage.root.length) return `No line ${id}+${n}.`;
-    if (n === 1) { const r = this.storage.root[id]; return `${id}+0|${r.kind}: ${r.text}`; }
+    if (!Number.isSafeInteger(page) || page < 0 || (n !== 1 && page)) return 'Pages are nonnegative integers for single messages only.';
+    if (n === 1) {
+      // Leave room for the range label and paging instructions inside CAP.
+      const r = this.storage.root[id], pages = splitText(r.text, CAP - 512);
+      if (page >= pages.length) return `No page ${page} for message ${id}.`;
+      const next = page + 1 < pages.length ? `zoom(${id}, 1, page: ${page + 1}) for the next page` : 'end of message';
+      return `${id}+0|${r.kind}: ${pages[page]}${pages.length > 1 ? `\n[page ${page + 1}/${pages.length}; ${next}]` : ''}`;
+    }
     const l = Math.log2(n) - 1, i = 2 * id / n;
     const a = this.node(l, i), b = this.node(l, i + 1);
     if (!a || !b) return `No line ${id}+${n}.`;
@@ -232,7 +275,7 @@ export class Memory extends EventEmitter {
   async stop() {
     this.stopped = true;
     const promises = [];
-    for (const entry of this.busy.values()) { clearTimeout(entry.timer); entry.controller.abort(); if (entry.promise) promises.push(entry.promise); }
+    for (const entry of this.busy.values()) { entry.controller.abort(); if (entry.promise) promises.push(entry.promise); }
     this.emit('change');
     await Promise.allSettled(promises);
     this.busy.clear();

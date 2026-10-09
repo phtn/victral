@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { Storage } from './storage.js';
+import { Storage, STORAGE_STREAMS, VIEW_FILES } from './storage.js';
 import { Memory } from './memory.js';
 import { createModel, formatModelsList, resolveModelId } from './models.js';
 import { Evaluations } from './evaluations.js';
@@ -38,7 +38,9 @@ export class Session extends EventEmitter {
 
   private constructor(readonly options: SessionOptions, readonly storage: Storage, readonly memory: Memory, readonly evaluations: Evaluations, readonly metrics: Metrics, model: ModelPort) {
     super();
-    this.runner = new Runner(memory, model, projectTools(memory, options.project, { allowShell: options.allowShell }), this.instructions(), {
+    this.runner = new Runner(memory, model, projectTools(memory, options.project, { allowShell: options.allowShell,
+      planStore: { load: () => storage.load('plans'), save: plan => storage.savePlan(plan) },
+    }), this.instructions(), {
       onText: text => {
         const last = this.entries.at(-1);
         if (last?.role === 'victral') last.text += text;
@@ -128,6 +130,8 @@ export class Session extends EventEmitter {
     if (name === '/jev') return this.metrics.jevDetails();
     if (name === '/usage') return JSON.stringify(this.storage.load('usage').slice(-10), null, 2);
     if (name === '/view') return this.memory.render() || 'No saved messages yet.';
+    if (name === '/plan') return this.runner.tools.execute('get_plan', {});
+    if (name === '/jobs') return this.options.allowShell ? this.runner.tools.execute('list_commands', {}) : 'Command execution is disabled (start with --allow-shell).';
     if (name === '/model') {
       if (!arg) return `Agent: ${this.runner.model.model}\nCompactor: ${this.options.compactorModel} (fixed at startup)\nAvailable models:\n${formatModelsList()}\n\nSwitch with /model <number, short name, or ID>, e.g. /model ms1.3c. Switching is session-local and keeps saved memory.`;
       if (this.runner.active) throw new Error('Switch models between turns; /cancel ends the current turn.');
@@ -141,8 +145,8 @@ export class Session extends EventEmitter {
       const id = Number(rest[0]);
       if (!Number.isSafeInteger(id)) throw new Error('ID is too large.');
       if (name === '/date') return this.memory.date(id);
-      if (!/^\d+$/.test(rest[1] ?? '')) throw new Error('Usage: /zoom ID N');
-      return this.memory.zoom(id, Number(rest[1]));
+      if (!/^\d+$/.test(rest[1] ?? '') || (rest[2] !== undefined && !/^\d+$/.test(rest[2]))) throw new Error('Usage: /zoom ID N [PAGE]');
+      return this.memory.zoom(id, Number(rest[1]), Number(rest[2] ?? 0));
     }
     if (name === '/import') {
       if (this.runner.active) throw new Error('Import history between turns.');
@@ -159,7 +163,11 @@ export class Session extends EventEmitter {
       if (resolved === this.storage.directory || resolved.startsWith(this.storage.directory + path.sep)) throw new Error('Choose a backup path outside the live chat directory.');
       if (fs.existsSync(destination)) throw new Error('Backup destination already exists; choose a new path.');
       fs.mkdirSync(destination, { mode: 0o700 });
-      for (const sub of ['main', 'tree', 'usage', 'metrics', 'evaluations']) fs.cpSync(path.join(this.storage.directory, sub), path.join(destination, sub), { recursive: true });
+      for (const sub of STORAGE_STREAMS) fs.cpSync(path.join(this.storage.directory, sub), path.join(destination, sub), { recursive: true });
+      for (const file of VIEW_FILES) {
+        const source = path.join(this.storage.directory, file);
+        if (fs.existsSync(source)) fs.copyFileSync(source, path.join(destination, file));
+      }
       return `Backup saved to ${destination}`;
     }
     throw new Error('Unknown command. Use /help or Ctrl+P.');

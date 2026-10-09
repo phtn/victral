@@ -1,94 +1,71 @@
-# OptChat setup
+# Victral setup
 
-Implement the specification in `OPTCHAT_SPEC.md`. That file is an unchanged
-copy of the original `file.txt`. The original `file.md` is a saved HTML page.
+Follow the current [upstream specification](OPTCHAT_SPEC.md), pinned to gist
+revision `3c190e06f34aba0c69f49042c526093269604935` from October 8, 2026.
+The [alignment report](UPSTREAM_ALIGNMENT.md) records adaptations and verification.
+The previous recipe is archived in [OPTCHAT_SPEC_ORIGINAL.md](OPTCHAT_SPEC_ORIGINAL.md).
 
-## Current state
+Victral runs on Bun with a TypeScript CLI, tool layer and Beast/Octane terminal
+workspace. Meta `muse-spark-1.3-contributor` remains the default agent and compactor;
+`muse-spark-1.3` is also available. See [README](../README.md) for credentials,
+commands, instructions and model selection. Jev evaluations and metrics remain
+separate from the conversation memory.
 
-A Bun application with a strict TypeScript CLI, agent loop, tool layer,
-and Beast/Octane terminal workspace with `@octanejs/ink` implements the core
-memory loop with Meta `muse-spark-1.3-contributor` as the default agent and compactor,
-and selectable Meta `muse-spark-1.3`. Runtime
-prompts use the name Victral, with only the permitted name substitution. See
-`../README.md` for commands, verification, and Meta request behavior.
-Jev automatically evaluates generated summaries in the background when its
-key is configured. Live metrics show evaluation probabilities, token usage,
-latency, and memory progress. Observations live outside the memory algorithm;
-the standalone audit command remains available. No history import is needed
-for new conversations. No always-on service or existing-agent integration is
-installed. Install dependencies with `bun install`; run `bun run check` for
-TypeScript and offline verification, `bun run build` for the distributable
-entry point, or `bun run demo` to preview the workspace without network calls.
-File search, exact edits, and Git inspection are built in; `--allow-shell` adds
-structured CLI and shell execution with bounded output and cancellation.
+## Memory implementation
 
-## Before choosing the integration
+1. Daily `main` and `tree` JSONL logs keep permanent IDs and UTF-8 sizes.
+   Writes flush before returning; a lifetime lock permits one writer.
+   Thoughts never enter the log. Tool results retain a capped head and tail;
+   other long text is split losslessly into consecutive messages.
+2. Each tree node is written once. A source fitting 512 bytes is copied exactly;
+   longer sources use the compactor. Sibling nodes cover aligned binary ranges.
+3. The main view appends until it exceeds 128,000 rendered UTF-8 bytes, then
+   batches toward 64,000 bytes using the age of each sibling pair's last message.
+   Only built parents can merge. An unfinished batch stays active until it
+   reaches the low threshold.
+4. `view.json` stores `[level, index]` pairs. Load them directly at restart and
+   recover only an unsaved suffix. `view-batch.json` preserves pending batch
+   intent, and `compaction-view.json` saves the smaller context view.
+   These files use atomic replacement plus fsync and are included in `/backup`.
+5. Turns and compactions share one system prompt, user instructions and tool
+   definitions. Compactions use a 16,000–32,000-byte sawtooth view containing
+   only built summaries, ending before a leaf or at a merge's last message.
+6. Ready queues allow up to eight calls. Leaves can start when fewer than eight
+   earlier leaves are unbuilt; merges start when both children are built.
+   Context stops at the first unbuilt message. Failures retry on another message.
+7. Compactions use a 512-dash ruler, `<input>` tags and byte feedback, retaining
+   the shortest of at most five attempts. Tools are supplied but never executed.
+8. Every turn starts fresh, renders memory before logging new input, and waits
+   for prior summaries. Input received during work enters at a tool boundary.
+   `zoom` retrieves source ranges and paged originals; `date` retrieves timestamps.
 
-Identify the first agent interface to support and how its model calls, tools,
-and streamed events can be controlled. The specification requires control over
-the turn loop; reading a Markdown file in an existing agent is insufficient.
-Choose the model access method and compactor model after identifying this
-interface. Verify the provider-specific API fields in section 8 against the
-chosen interface before implementing them. Record any incompatibility rather
-than silently substituting different behavior.
+## Constants
 
-## Implementation order
-
-1. Storage (section 2): daily JSONL message and tree files, global message IDs,
-   UTF-8 sizes, one write plus fsync per record, torn-line handling, and a
-   lifetime single-writer lock. Keep model reasoning out of the permanent log.
-2. Tree and view (sections 3 and 5): purely binary nodes, free nodes when the
-   source fits, `id+n` addressing, incremental append and merge, the specified
-   age rule, and no splitting. Reconstruct the view by replaying append and fit
-   at startup.
-3. Compactor (section 4): use the supplied COMPACT prompt and context format,
-   build nodes in the specified dependency order, measure UTF-8 bytes, retry
-   oversized output as described, and persist nodes before exposing them.
-4. Readiness and retrieval (sections 6 and 7.1): settle before each new turn,
-   cancellation support, and tools implementing `zoom` and `date`.
-5. Agent turn loop (section 7): render prior history before logging new input,
-   start each turn fresh, inject the view and the new message separately,
-   capture messages and tool events as they happen, cap tool results using the
-   specified head-and-tail scheme, and handle input arriving during a turn.
-6. Caching (section 8): stable system prompt and tools, specified view marks,
-   provider-compatible request layout, and validation using actual usage
-   fields. Do not assume a cache hit solely because the input is similar.
-7. Persistence and imports (section 10): persist after turns, back up the log,
-   test restart recovery, and import only available historical records.
-8. Optional integrations (section 9): add subagents and computer tasks only
-   after the core loop works. Their reports enter the main memory; their own
-   tool traces stay in their separate sessions.
-
-## Reference constants
-
-Keep the initial implementation at the specification's values:
-
-| Constant | Value |
+| Setting | Value |
 | --- | --- |
-| NODE | 512 UTF-8 bytes, a target rather than a hard bound |
-| VIEW | 128,000 UTF-8 bytes |
-| JOBS | 8 |
-| TRIES | 5 |
-| RETRY | 10 seconds |
-| CAP | 30,000 characters |
-| MARKS | 50,000 / 80,000 / 100,000 characters |
+| Summary target | 512 UTF-8 bytes |
+| Main view low / high | 64,000 / 128,000 rendered UTF-8 bytes |
+| Compaction view low / high | 16,000 / 32,000 rendered UTF-8 bytes |
+| Concurrent compactions | 8 |
+| Oversize attempts | 5 |
+| Tool result cap | 30,000 Unicode characters, including the omission marker |
+| Non-tool log chunk | 30,000 UTF-8 bytes |
+| View content block | 4 summary lines |
 
-Use the supplied MASTER and VIEW_DOC prompts, with only the permitted agent
-name substitution. Keep user's instructions distinct from historical content.
+View thresholds are batching targets: a backlog without built parents can
+temporarily exceed them. Summary output slightly above the target is retained
+after five attempts and counted at its actual rendered size.
 
-## Initial acceptance checks
+Meta manages prefix caching automatically. Anthropic cache marks, cache-write
+coordination and TTLs from the gist are provider-specific; they are not claimed
+for this adapter. Keep prompts and tools stable, and use returned usage to
+measure caching. The retained Meta compactor uses medium effort.
 
-- A restart preserves all successfully written messages and tree nodes.
-- A second process cannot write to the same chat directory.
-- Torn final records are reported and subsequent appends remain readable.
-- Tree ranges and view coverage are correct; merges never split later.
-- Retrieval reaches the original stored message, including Unicode content.
-- A turn does not start with an unsummarized view entry.
-- A fresh turn receives prior history and new input in the specified order.
-- Cancellation and mid-turn input do not lose or duplicate messages.
-- A decision recorded in one turn is available after a process restart.
-- Provider usage fields establish the measured cache behavior and cost.
+## Verification
 
-Do not call the setup complete until these checks pass with the chosen runtime.
-Track future improvements separately so the initial implementation remains
-traceable to the original specification.
+Run `bun run check`, `bun run build`, and `bun run benchmark`. The offline suite
+checks the rollback merge order through t=20,000, batching, saved-view recovery,
+stalled batches, bounded compaction context, shared prompt/tool identity,
+concurrency, retries, paged retrieval, backups and existing CLI/tool behavior.
+`bun run smoke` makes real provider requests with synthetic data when requested;
+offline checks do not establish live cache hit rates or summary quality.
