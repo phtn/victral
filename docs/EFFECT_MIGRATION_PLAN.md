@@ -6,9 +6,11 @@ configuration and Schema-guide changes. This is an implementation backlog.
 ## Implementation status
 
 Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0 and 1 are complete;
-step 2 has begun with MCP configuration validation. The first production
-boundary uses the pinned published Effect 4.0.2 dependency. Task plans, tool
-registries and audio settings remain ahead of the step-2 acceptance gate.
+step 2 now includes MCP configuration and task-plan input/saved-record validation.
+Both boundaries use the pinned published Effect 4.0.2 dependency. Tool registries
+and audio settings remain ahead of the step-2 acceptance gate. The task-plan
+change passes 168 tests, typecheck and build; its legacy rendering fixture and
+the provider request/tool-schema fixtures match unchanged.
 
 See the [baseline and frozen fixtures](EFFECT_MIGRATION_BASELINE.md),
 [Schema patterns](../agent-patterns/effect-schema.md) and
@@ -122,7 +124,7 @@ have meaningful tests. No application import resolves into `repos/`.
 - [x] Replace `parseIntegrations` checks with schemas for stdio and HTTP variants,
       server names, environment-variable references, and exact tool allowlists.
       Preserve defaults, size limits, unknown-field policy, and error usefulness.
-- [ ] Migrate task-plan input and saved-plan validation. Encode the step status
+- [x] Migrate task-plan input and saved-plan validation. Encode the step status
       enum, bounded text/collections, safe revisions, and at-most-one active
       step. Preserve trimming, revision conflicts, and save-before-publish behavior.
 - [ ] Add schema-validated notification volume/mute settings before the step-3

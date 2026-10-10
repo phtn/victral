@@ -1,0 +1,51 @@
+{
+  "project": "/fixture/project",
+  "records": [
+    {
+      "project": "/fixture/other",
+      "revision": "invalid",
+      "steps": null
+    },
+    {
+      "project": "/fixture/project",
+      "title": " First saved title ",
+      "steps": [
+        {
+          "step": " Inspect 🦓 ",
+          "status": "pending",
+          "legacy_step_metadata": "discarded"
+        }
+      ],
+      "revision": 1,
+      "updated_at": "2026-01-01"
+    },
+    {
+      "legacy_metadata": {
+        "source": "offline-fixture",
+        "nested": [
+          true,
+          null,
+          3
+        ]
+      },
+      "revision": 7,
+      "updated_at": "2026-01-02",
+      "title": " Latest saved title ",
+      "project": "/fixture/project",
+      "steps": [
+        {
+          "status": "completed",
+          "step": " Keep the original title whitespace ",
+          "legacy_step_metadata": true
+        },
+        {
+          "status": "in_progress",
+          "step": "\tVerify restart 🦓\n"
+        }
+      ],
+      "legacy_flag": true
+    }
+  ],
+  "get": "{\n  \"legacy_metadata\": {\n    \"source\": \"offline-fixture\",\n    \"nested\": [\n      true,\n      null,\n      3\n    ]\n  },\n  \"revision\": 7,\n  \"updated_at\": \"2026-01-02\",\n  \"title\": \" Latest saved title \",\n  \"project\": \"/fixture/project\",\n  \"steps\": [\n    {\n      \"step\": \"Keep the original title whitespace\",\n      \"status\": \"completed\"\n    },\n    {\n      \"step\": \"Verify restart 🦓\",\n      \"status\": \"in_progress\"\n    }\n  ],\n  \"legacy_flag\": true\n}",
+  "context": "Current task plan (agent-authored state; use get_plan and update_plan):\n{\n  \"legacy_metadata\": {\n    \"source\": \"offline-fixture\",\n    \"nested\": [\n      true,\n      null,\n      3\n    ]\n  },\n  \"revision\": 7,\n  \"updated_at\": \"2026-01-02\",\n  \"title\": \" Latest saved title \",\n  \"project\": \"/fixture/project\",\n  \"steps\": [\n    {\n      \"step\": \"Keep the original title whitespace\",\n      \"status\": \"completed\"\n    },\n    {\n      \"step\": \"Verify restart 🦓\",\n      \"status\": \"in_progress\"\n    }\n  ],\n  \"legacy_flag\": true\n}"
+}

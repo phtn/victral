@@ -90,3 +90,25 @@ Production uses public Effect module imports (`effect/Schema`, `effect/Effect`,
 etc.) to limit module loading when Bun keeps packages external. A separate
 five-run `bun src/cli.ts --help` sample had a 175.996 ms median on this machine;
 this is a startup observation, not a provider latency or memory benchmark.
+
+## Task-plan migration verification
+
+The next boundary change migrates task-plan input and saved records to Schema.
+It adds `legacy-task-plans.json`, captured by running the pre-migration
+`task-plans.ts` from `3117966e2` against synthetic records. The fixture retains
+title whitespace, non-ISO date strings, revision gaps, extra saved metadata and
+the exact `get()`/`context()` rendering, including object key order.
+
+- `bun run check`: 168 tests passed across 23 files, no failures; typecheck passed.
+- `bun run build`: passed; entry point bundled 46 application modules.
+- Legacy plan rendering and all frozen prompt/tool/provider bytes matched.
+- New contracts cover raw length bounds, trimming, ignored tool/step extras,
+  extensible saved metadata, invalid records, project selection, codec round
+  trips, conflict precedence and previous-state retention on failed replacement.
+- Generated revision overflow now fails before saving. A plan at the maximum
+  safe revision can still be restored, but cannot generate an unsafe next record.
+
+The existing real-storage restart, CLI `/plan`/backup, runner plan context and
+partial-startup cleanup tests also pass. This boundary changes neither storage
+I/O nor memory scheduling; the original CPU benchmark remains the comparison
+point for their later migrations.

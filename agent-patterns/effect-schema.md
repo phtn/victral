@@ -65,6 +65,9 @@ of the contract. These distinctions matter when reading configuration files.
 Use `Finite` rather than unrestricted `Number` when JSON or the domain requires
 finite numbers. Add built-in checks with `.check(...)` or
 `.pipe(Schema.check(...))`; avoid reconstructing standard checks by hand.
+In this v4 API, `Schema.Int`/`Schema.isInt()` enforce `Number.isSafeInteger`,
+including the safe range. Also check generated revisions before durable writes;
+validating an incoming revision does not make its increment safe.
 
 Refined `Record` keys select properties: unmatched keys are ignored by default.
 Use `onExcessProperty: "error"` when every key must be valid, such as MCP server
@@ -160,6 +163,39 @@ services. Report expected validation failures through schema issues rather
 than throwing arbitrary exceptions inside a pure getter. Optional-field
 transformations require the optional getter patterns in the reference guide;
 do not substitute missing fields with unchecked defaults.
+
+The [task-plan schemas](../src/task-plan-schema.ts) adapt the vendored trim and
+`StructWithRest` examples. Keep limits on raw text before trimming when that is
+the existing boundary contract:
+
+```ts
+import { Schema, SchemaTransformation } from "effect"
+
+const StepText = Schema.String.check(
+  Schema.isMaxLength(500),
+  Schema.makeFilter((text) => !!text.trim(), { message: "Step text must not be blank." })
+).pipe(Schema.decodeTo(Schema.Trimmed, SchemaTransformation.trim()))
+
+const step = Schema.decodeUnknownSync(StepText)("  Inspect code  ") // "Inspect code"
+const encoded = Schema.encodeSync(StepText)(step) // "Inspect code"
+```
+
+Keep the source schema in the pipeline so its encoded type and required services
+remain inferred. This trim codec normalizes text; encoding cannot recover the
+original whitespace. Task-plan updates trim titles and steps, while saved-plan
+decoding trims steps and preserves saved title whitespace and date strings.
+Validate a saved date string with the established `Date.parse` rule when the
+durable contract permits it; replacing it with a Date-object codec changes the
+record shape.
+
+Use `StructWithRest(Struct(fields), [Record(String, Unknown)])` for explicitly
+extensible saved metadata. Select records belonging to the current project
+before strict validation. Tool-input and step extras are deliberately ignored.
+Schemas may rebuild object key order: `TaskPlans` overwrites raw saved fields
+with decoded values while retaining the original rendering order, verified
+against a fixture captured from the previous implementation. Revision conflicts
+and strictly increasing saved revisions remain explicit state-dependent checks;
+validation and durable save finish before publishing new state.
 
 ## Errors and domain models
 
