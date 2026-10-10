@@ -3,15 +3,18 @@ import path from 'node:path';
 import { compileBeast } from 'beast-tsrx';
 import { createOctaneCompiler } from 'octane/compiler/bundler';
 import { inkRenderers } from '@octanejs/ink/config';
+import { buildSfx } from './build-sfx.js';
 import { preserveInk8Input } from './ink-input-compat.js';
 
 const root = path.resolve(import.meta.dir, '..');
 export async function buildUi(): Promise<void> {
-  const source = path.join(root, 'src/workspace.ink.btsx');
-  const generated = path.join(root, 'src/workspace.ink.tsrx');
-  const code = compileBeast(await fs.readFile(source, 'utf8'), { filename: source, componentName: 'Workspace' });
-  // Preserve mtimes for unchanged generated source while developing.
-  if (await fs.readFile(generated, 'utf8').catch(() => '') !== code) await fs.writeFile(generated, code);
+  await buildSfx();
+  for (const [filename, componentName] of [['src/workspace.ink.btsx', 'Workspace'], ['src/sfx/lab.ink.btsx', 'SoundLab']]) {
+    const source = path.join(root, filename!);
+    const generated = source.replace(/\.btsx$/, '.tsrx');
+    const code = compileBeast(await fs.readFile(source, 'utf8'), { filename: source, componentName });
+    if (await fs.readFile(generated, 'utf8').catch(() => '') !== code) await fs.writeFile(generated, code);
+  }
 
   const compiler = createOctaneCompiler({ root, renderers: inkRenderers, hmr: false, dev: false });
   const result = await Bun.build({
@@ -34,7 +37,7 @@ export async function buildUi(): Promise<void> {
     }],
   });
   if (!result.success) throw new AggregateError(result.logs, 'Terminal UI compilation failed');
-  await fs.writeFile(path.join(root, '.generated/tui.d.ts'), "export { default as Workspace } from '../src/workspace.ink.tsrx';\nexport { render } from '@octanejs/ink';\n");
+  await fs.writeFile(path.join(root, '.generated/tui.d.ts'), "export { default as Workspace } from '../src/workspace.ink.tsrx';\nexport { default as SoundLab } from '../src/sfx/lab.ink.tsrx';\nexport { render } from '@octanejs/ink';\n");
 }
 
 if (import.meta.main) await buildUi();

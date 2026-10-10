@@ -7,3 +7,4 @@ dist/
 coverage/
 .generated/
 src/workspace.ink.tsrx
+src/sfx/lab.ink.tsrx

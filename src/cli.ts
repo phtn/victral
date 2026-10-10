@@ -26,6 +26,7 @@ Usage: victral [options]
   --plain                 Use a line-oriented terminal (automatic for pipes)
   --tui                   Require the full-screen terminal interface
   --demo                  Preview the interface without API calls or saved data
+  --sfx-test              Open the sound notification TUI lab (no API calls)
   --models                List models
   --no-jev                Disable background evaluation
   --no-metrics            Hide automatic metrics
@@ -53,6 +54,7 @@ async function main(): Promise<void> {
       plain: { type: 'boolean', default: false },
       tui: { type: 'boolean', default: false },
       demo: { type: 'boolean', default: false },
+      'sfx-test': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' }
     }
@@ -73,6 +75,12 @@ async function main(): Promise<void> {
   const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY)
   if (values.tui && !interactive)
     throw new Error('--tui requires an interactive terminal. Use --plain or --ask for pipes.')
+  if (values['sfx-test']) {
+    if (!interactive || values.plain || values.ask !== undefined || values.demo) throw new Error('--sfx-test requires an interactive TUI and cannot be combined with --demo, --plain or --ask.')
+    const { startSoundLab } = await import('./sfx/lab.js')
+    await startSoundLab()
+    return
+  }
   if (values.demo) {
     if (!interactive || values.plain || values.ask !== undefined) throw new Error('--demo requires an interactive TUI.')
     const { startDemo } = await import('./demo.js')

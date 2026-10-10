@@ -8,7 +8,7 @@ const cli = path.resolve(import.meta.dir, '../src/cli.ts');
 test('CLI help and terminal validation run without provider requests', async () => {
   const help = Bun.spawn([process.execPath, cli, '--help'], { stdout: 'pipe', stderr: 'pipe' });
   const helpText = await new Response(help.stdout).text();
-  expect(helpText).toContain('--allow-shell'); expect(helpText).toContain('--web-search'); expect(helpText).toContain('--mcp-config'); expect(await help.exited).toBe(0);
+  expect(helpText).toContain('--allow-shell'); expect(helpText).toContain('--web-search'); expect(helpText).toContain('--mcp-config'); expect(helpText).toContain('--sfx-test'); expect(await help.exited).toBe(0);
   const tui = Bun.spawn([process.execPath, cli, '--tui'], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
   expect(await new Response(tui.stderr).text()).toContain('requires an interactive terminal'); expect(await tui.exited).toBe(1);
 });
@@ -83,4 +83,12 @@ test('saved plans are visible through /plan and included in chat backups', async
     expect(JSON.parse(await fs.readFile(path.join(backup, 'view-batch.json'), 'utf8'))).toBe(false);
     expect(JSON.parse(await fs.readFile(path.join(backup, 'compaction-view.json'), 'utf8'))).toEqual({ parts: [], shrinking: false });
   } finally { await storage?.close(); await fs.rm(directory, { recursive: true, force: true }); }
+});
+
+test('sound lab requires a terminal before credentials or session storage are needed', async () => {
+  const child = Bun.spawn([process.execPath, cli, '--sfx-test'], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
+    env: { ...process.env, META_API_KEY: '', MODEL_API_KEY: '', OPENAI_API_KEY: '' },
+  });
+  const error = await new Response(child.stderr).text();
+  expect(await child.exited).toBe(1); expect(error).toContain('--sfx-test requires an interactive TUI'); expect(error).not.toContain('API_KEY');
 });

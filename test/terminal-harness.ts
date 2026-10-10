@@ -1,5 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { renderWorkspace, type WorkspaceSession } from '../src/tui.js';
+import { renderSoundLab } from '../src/sfx/lab.js';
+import type { SoundLabModel } from '../src/sfx/lab-model.js';
 import type { CopyResponse } from '../src/clipboard.js';
 
 class Output extends EventEmitter {
@@ -40,6 +42,18 @@ export function render(session: WorkspaceSession, copyResponse?: CopyResponse) {
   }, copyResponse ?? (async (text) => { copied.push(text); return 'copied'; }));
   instances.add(instance);
   return { ...instance, stdout, stderr, stdin, copied, frames: stdout.frames, lastFrame: stdout.lastFrame };
+}
+
+export function renderLab(lab: SoundLabModel) {
+  const stdout = new Output(), stderr = new Output(), stdin = new Input();
+  const instance = renderSoundLab(lab, {
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    stderr: stderr as unknown as NodeJS.WriteStream,
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    debug: true, interactive: true, exitOnCtrlC: false, patchConsole: false,
+  });
+  instances.add(instance);
+  return { ...instance, stdout, stderr, stdin, frames: stdout.frames, lastFrame: stdout.lastFrame };
 }
 
 export async function cleanup() {

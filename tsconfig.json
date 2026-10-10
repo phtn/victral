@@ -7,5 +7,6 @@
     "plugins": [{ "name": "@tsrx/typescript-plugin" }]
   },
   "include": ["src/**/*.ts", "src/**/*.tsrx", "test/**/*.ts", "scripts/**/*.ts", "octane.config.ts"],
+  "exclude": ["repos", "node_modules", "dist", "coverage", ".generated"],
   "tsrx": { "compiler": "octane/compiler/volar" }
 }

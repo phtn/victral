@@ -9,22 +9,25 @@
   },
   "scripts": {
     "start": "bun run build:ui && bun src/cli.ts",
-    "test": "bun test",
+    "test": "bun test ./test",
     "smoke": "bun scripts/smoke.js",
     "audit": "bun scripts/audit.js",
     "benchmark": "bun scripts/benchmark.js",
     "smoke:jev": "bun scripts/jev-smoke.js",
     "dev": "bun scripts/dev.ts",
     "typecheck": "bun run build:ui && tsrx-tsc --noEmit",
-    "build": "bun run build:ui && bun build src/cli.ts --target=bun --packages=external --outdir=dist && cp src/*.txt dist/",
-    "check": "bun run typecheck && bun test",
+    "build": "bun run build:ui && bun build src/cli.ts --target=bun --packages=external --outdir=dist && cp src/*.txt dist/ && mkdir -p dist/audio && cp .generated/audio/*.wav .generated/audio/manifest.json dist/audio/",
+    "check": "bun run typecheck && bun run test",
     "demo": "bun run build:ui && bun src/cli.ts --demo",
     "build:ui": "bun scripts/build-ui.ts",
-    "effect:upd:subt": "bun scripts/update-effect-subtree.sh"
+    "effect:upd:subt": "bash scripts/update-effect-subtree.sh",
+    "build:sfx": "bun scripts/build-sfx.ts",
+    "sfx": "bun run build:ui && bun src/cli.ts --sfx-test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@octanejs/ink": "0.0.21",
+    "@web-kits/audio": "^0.2.0",
     "ai": "^7.0.133",
     "entities": "^8.1.0",
     "linkedom": "^0.18.13",
@@ -36,7 +39,8 @@
     "@tsrx/typescript-plugin": "0.6.1",
     "@types/bun": "^1.4.2",
     "beast-tsrx": "0.8.0",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "web-audio-engine": "^0.13.4"
   },
   "bin": {
     "victral": "./src/cli.ts"

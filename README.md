@@ -44,6 +44,27 @@ in `.env.example` lists the available settings. Never commit your keys.
 bun run start --project /absolute/path/to/your/project
 ```
 
+## Sound notification TUI lab
+
+Preview the sound design before connecting it to agent workflows:
+
+```sh
+bun run sfx
+```
+
+This opens a standalone terminal page with 21 cues adapted from
+`src/web-kits/index.btsx`, plus processing and retry cues. It starts silently,
+uses no API credentials or saved conversation, and leaves live chat notifications
+unchanged. Select with ↑↓, preview with Enter/Space, adjust volume with ←→,
+mute with `m`, stop with `x`/Esc, and quit with `q`. Press `s` for a recovery
+and success scenario, or `f` for retry and failure.
+
+Playback uses macOS `afplay` or `ffplay` when available. Settings are local to
+this preview session. Build scripts render the patch through `@web-kits/audio`
+and an offline Web Audio implementation; runtime playback uses generated WAV
+assets rather than browser DOM hooks. See [the SFX prototype notes](docs/SFX_PROTOTYPE.md)
+and [the Effect migration plan](docs/EFFECT_MIGRATION_PLAN.md) for integration tasks.
+
 ## Select models
 
 | Short name | Model ID | Provider | Credential |
