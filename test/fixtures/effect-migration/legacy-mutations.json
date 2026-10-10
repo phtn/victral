@@ -1,0 +1,170 @@
+{
+  "source": "98ce40136",
+  "project": "/fixture/project",
+  "time": "2026-01-02T03:04:05.000Z",
+  "initial": {
+    "old.ts": "first\r\nsecond\r\nthird\r\n",
+    "obsolete.txt": "obsolete"
+  },
+  "modes": {
+    "old.ts": 493
+  },
+  "calls": [
+    {
+      "tool": "write_file",
+      "arguments": {
+        "path": "src/code.ts",
+        "content": "first\r\nsecond 🦓\r\nthird\r\n",
+        "extra": "ignored"
+      },
+      "output": "Wrote src/code.ts."
+    },
+    {
+      "tool": "edit_file",
+      "arguments": {
+        "path": "src/code.ts",
+        "old_text": "second 🦓",
+        "new_text": "changed 🦓",
+        "extra": true
+      },
+      "output": "Edited src/code.ts."
+    },
+    {
+      "tool": "write_file",
+      "arguments": {
+        "path": "src/empty.txt",
+        "content": ""
+      },
+      "output": "Wrote src/empty.txt."
+    },
+    {
+      "tool": "write_file",
+      "arguments": {
+        "path": "literal [1].txt",
+        "content": "space only  "
+      },
+      "output": "Wrote literal [1].txt."
+    },
+    {
+      "tool": "edit_file",
+      "arguments": {
+        "path": "literal [1].txt",
+        "old_text": "  ",
+        "new_text": ""
+      },
+      "output": "Edited literal [1].txt."
+    },
+    {
+      "tool": "write_file",
+      "arguments": {
+        "path": "raw.txt",
+        "content": "hello\u0000world 🦓"
+      },
+      "output": "Wrote raw.txt."
+    },
+    {
+      "tool": "edit_file",
+      "arguments": {
+        "path": "raw.txt",
+        "old_text": "\u0000world",
+        "new_text": ""
+      },
+      "output": "Edited raw.txt."
+    },
+    {
+      "tool": "apply_patch",
+      "arguments": {
+        "patch": "*** Begin Patch\n*** Add File: src/added.ts\n+export const added = true;\n*** Update File: old.ts\n*** Move to: src/moved.ts\n@@\n first\n-second\n+changed\n third\n*** End of File\n*** Delete File: obsolete.txt\n*** End Patch",
+        "extra": "ignored"
+      },
+      "output": "Added src/added.ts.\nUpdated old.ts -> src/moved.ts.\nDeleted obsolete.txt."
+    },
+    {
+      "tool": "update_plan",
+      "arguments": {
+        "expected_revision": 0,
+        "title": "  Work 🦓 ",
+        "steps": [
+          {
+            "step": " Inspect code ",
+            "status": "in_progress",
+            "extra": true
+          },
+          {
+            "step": " Verify work ",
+            "status": "pending"
+          }
+        ],
+        "extra": "ignored"
+      },
+      "output": "{\n  \"project\": \"/fixture/project\",\n  \"title\": \"Work 🦓\",\n  \"steps\": [\n    {\n      \"step\": \"Inspect code\",\n      \"status\": \"in_progress\"\n    },\n    {\n      \"step\": \"Verify work\",\n      \"status\": \"pending\"\n    }\n  ],\n  \"revision\": 1,\n  \"updated_at\": \"2026-01-02T03:04:05.000Z\"\n}"
+    },
+    {
+      "tool": "update_plan",
+      "arguments": {
+        "expected_revision": 1,
+        "title": " Work complete ",
+        "steps": [
+          {
+            "step": " Inspect code ",
+            "status": "completed"
+          },
+          {
+            "step": " Verify work ",
+            "status": "completed"
+          }
+        ]
+      },
+      "output": "{\n  \"project\": \"/fixture/project\",\n  \"title\": \"Work complete\",\n  \"steps\": [\n    {\n      \"step\": \"Inspect code\",\n      \"status\": \"completed\"\n    },\n    {\n      \"step\": \"Verify work\",\n      \"status\": \"completed\"\n    }\n  ],\n  \"revision\": 2,\n  \"updated_at\": \"2026-01-02T03:04:05.000Z\"\n}"
+    }
+  ],
+  "final": {
+    "src/code.ts": "first\r\nchanged 🦓\r\nthird\r\n",
+    "src/empty.txt": "",
+    "literal [1].txt": "space only",
+    "raw.txt": "hello 🦓",
+    "src/added.ts": "export const added = true;\n",
+    "src/moved.ts": "first\r\nchanged\r\nthird\r\n"
+  },
+  "absent": [
+    "old.ts",
+    "obsolete.txt"
+  ],
+  "finalModes": {
+    "src/moved.ts": 493
+  },
+  "plans": [
+    {
+      "project": "/fixture/project",
+      "title": "Work 🦓",
+      "steps": [
+        {
+          "step": "Inspect code",
+          "status": "in_progress"
+        },
+        {
+          "step": "Verify work",
+          "status": "pending"
+        }
+      ],
+      "revision": 1,
+      "updated_at": "2026-01-02T03:04:05.000Z"
+    },
+    {
+      "project": "/fixture/project",
+      "title": "Work complete",
+      "steps": [
+        {
+          "step": "Inspect code",
+          "status": "completed"
+        },
+        {
+          "step": "Verify work",
+          "status": "completed"
+        }
+      ],
+      "revision": 2,
+      "updated_at": "2026-01-02T03:04:05.000Z"
+    }
+  ]
+}

@@ -15,11 +15,14 @@ export interface RegisteredTool {
 // The implementation receives the inferred decoded type, never a cast record.
 export function schemaTool<S extends Schema.ConstraintDecoder<unknown>>(options: {
   name: string; schema: S; capabilities: readonly ToolCapability[];
+  // Synchronous, read-only domain checks that must precede full decoding.
+  beforeDecode?: (value: unknown) => void;
   execute: (args: S['Type'], signal?: AbortSignal) => string | Promise<string>;
 }): RegisteredTool {
   const decode = validationDecoder(options.schema, `${options.name} arguments`);
   return { name: options.name, schema: options.schema, capabilities: options.capabilities,
     prepare(value) {
+      options.beforeDecode?.(value);
       const args = decode(value);
       return async signal => { signal?.throwIfAborted(); return options.execute(args, signal); };
     },

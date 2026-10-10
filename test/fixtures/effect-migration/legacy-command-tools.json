@@ -1,0 +1,313 @@
+{
+  "source": "98ce40136",
+  "shell": "/fixture/shell",
+  "timeoutMs": 4321,
+  "output": "Fixture command output 🦓.",
+  "calls": [
+    {
+      "tool": "run_command",
+      "arguments": {
+        "program": "printf",
+        "args": [
+          "%s",
+          "🦓 $(exit 9); literal\n"
+        ],
+        "extra": true
+      },
+      "invocation": {
+        "method": "run",
+        "argv": [
+          "printf",
+          "%s",
+          "🦓 $(exit 9); literal\n"
+        ],
+        "timeoutMs": 4321,
+        "signal": true
+      },
+      "output": "Fixture command output 🦓."
+    },
+    {
+      "tool": "run_command",
+      "arguments": {
+        "program": "printf",
+        "args": [],
+        "timeout_ms": null
+      },
+      "invocation": {
+        "method": "run",
+        "argv": [
+          "printf"
+        ],
+        "timeoutMs": 4321,
+        "signal": true
+      },
+      "output": "Fixture command output 🦓."
+    },
+    {
+      "tool": "run_command",
+      "arguments": {
+        "program": "program with spaces",
+        "args": [
+          "-option",
+          "",
+          "\n"
+        ],
+        "timeout_ms": 120000
+      },
+      "invocation": {
+        "method": "run",
+        "argv": [
+          "program with spaces",
+          "-option",
+          "",
+          "\n"
+        ],
+        "timeoutMs": 120000,
+        "signal": true
+      },
+      "output": "Fixture command output 🦓."
+    },
+    {
+      "tool": "shell",
+      "arguments": {
+        "command": "printf \"%s\" \"🦓\"; exit 0",
+        "extra": true
+      },
+      "invocation": {
+        "method": "run",
+        "argv": [
+          "/fixture/shell",
+          "-c",
+          "printf \"%s\" \"🦓\"; exit 0"
+        ],
+        "timeoutMs": 4321,
+        "signal": true
+      },
+      "output": "Fixture command output 🦓."
+    },
+    {
+      "tool": "shell",
+      "arguments": {
+        "command": "",
+        "timeout_ms": null
+      },
+      "invocation": {
+        "method": "run",
+        "argv": [
+          "/fixture/shell",
+          "-c",
+          ""
+        ],
+        "timeoutMs": 4321,
+        "signal": true
+      },
+      "output": "Fixture command output 🦓."
+    },
+    {
+      "tool": "shell",
+      "arguments": {
+        "command": "literal\ntext",
+        "timeout_ms": 1
+      },
+      "invocation": {
+        "method": "run",
+        "argv": [
+          "/fixture/shell",
+          "-c",
+          "literal\ntext"
+        ],
+        "timeoutMs": 1,
+        "signal": true
+      },
+      "output": "Fixture command output 🦓."
+    },
+    {
+      "tool": "start_command",
+      "arguments": {
+        "program": "cat",
+        "args": [],
+        "extra": true
+      },
+      "invocation": {
+        "method": "start",
+        "argv": [
+          "cat"
+        ],
+        "timeoutMs": 120000,
+        "signal": true,
+        "interactive": false
+      },
+      "output": "Fixture command output 🦓."
+    },
+    {
+      "tool": "start_command",
+      "arguments": {
+        "program": "cat",
+        "args": [],
+        "timeout_ms": null,
+        "interactive": true
+      },
+      "invocation": {
+        "method": "start",
+        "argv": [
+          "cat"
+        ],
+        "timeoutMs": 120000,
+        "signal": true,
+        "interactive": true
+      },
+      "output": "Fixture command output 🦓."
+    },
+    {
+      "tool": "start_command",
+      "arguments": {
+        "program": "printf",
+        "args": [
+          "%s",
+          "🦓; literal"
+        ],
+        "timeout_ms": 600000,
+        "interactive": false
+      },
+      "invocation": {
+        "method": "start",
+        "argv": [
+          "printf",
+          "%s",
+          "🦓; literal"
+        ],
+        "timeoutMs": 600000,
+        "signal": true,
+        "interactive": false
+      },
+      "output": "Fixture command output 🦓."
+    },
+    {
+      "tool": "command_status",
+      "arguments": {
+        "command_id": "command-1",
+        "extra": true
+      },
+      "invocation": {
+        "method": "status",
+        "id": "command-1",
+        "waitMs": 0,
+        "signal": true
+      },
+      "output": "Fixture command output 🦓."
+    },
+    {
+      "tool": "command_status",
+      "arguments": {
+        "command_id": "",
+        "wait_ms": null
+      },
+      "invocation": {
+        "method": "status",
+        "id": "",
+        "waitMs": 0,
+        "signal": true
+      },
+      "output": "Fixture command output 🦓."
+    },
+    {
+      "tool": "command_status",
+      "arguments": {
+        "command_id": " command-1 ",
+        "wait_ms": 10000
+      },
+      "invocation": {
+        "method": "status",
+        "id": " command-1 ",
+        "waitMs": 10000,
+        "signal": true
+      },
+      "output": "Fixture command output 🦓."
+    },
+    {
+      "tool": "stop_command",
+      "arguments": {
+        "command_id": "command-1",
+        "extra": true
+      },
+      "invocation": {
+        "method": "stop",
+        "id": "command-1"
+      },
+      "output": "Fixture command output 🦓."
+    },
+    {
+      "tool": "list_commands",
+      "arguments": {
+        "extra": true
+      },
+      "invocation": {
+        "method": "list"
+      },
+      "output": "Fixture command output 🦓."
+    },
+    {
+      "tool": "write_command_input",
+      "arguments": {
+        "command_id": "command-1",
+        "input": "🦓 $(exit 9); hello\n\u0000",
+        "extra": true
+      },
+      "invocation": {
+        "method": "write",
+        "id": "command-1",
+        "input": "🦓 $(exit 9); hello\n\u0000",
+        "eof": false,
+        "signal": true
+      },
+      "output": "Sent 23 bytes to command-1."
+    },
+    {
+      "tool": "write_command_input",
+      "arguments": {
+        "command_id": "command-1",
+        "eof": true
+      },
+      "invocation": {
+        "method": "write",
+        "id": "command-1",
+        "input": "",
+        "eof": true,
+        "signal": true
+      },
+      "output": "Sent 0 bytes to command-1; stdin closed."
+    },
+    {
+      "tool": "write_command_input",
+      "arguments": {
+        "command_id": "command-1",
+        "input": "",
+        "eof": true
+      },
+      "invocation": {
+        "method": "write",
+        "id": "command-1",
+        "input": "",
+        "eof": true,
+        "signal": true
+      },
+      "output": "Sent 0 bytes to command-1; stdin closed."
+    },
+    {
+      "tool": "write_command_input",
+      "arguments": {
+        "command_id": "command-1",
+        "input": "\n",
+        "eof": true
+      },
+      "invocation": {
+        "method": "write",
+        "id": "command-1",
+        "input": "\n",
+        "eof": true,
+        "signal": true
+      },
+      "output": "Sent 1 bytes to command-1; stdin closed."
+    }
+  ]
+}

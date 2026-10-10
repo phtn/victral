@@ -37,6 +37,9 @@ const ExpectedRevision = Schema.Number.check(
   Schema.isInt({ message: revisionMessage }), Schema.isGreaterThanOrEqualTo(0, { message: revisionMessage }),
 ).annotate({ identifier: revisionMessage }).annotateKey({ messageMissingKey: revisionMessage });
 export const UpdatePlanSchema = Schema.Struct({ expected_revision: ExpectedRevision, title: TrimmedTitle, steps: PlanStepsSchema });
+export type PlanUpdate = typeof UpdatePlanSchema.Type;
+// Decode only the revision first to preserve conflict-before-payload precedence.
+const UpdateRevisionSchema = Schema.Struct({ expected_revision: ExpectedRevision });
 const SavedRevision = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 const UpdatedAt = Schema.String.check(Schema.makeFilter(text => Number.isFinite(Date.parse(text)),
   { message: 'updated_at must be a valid date string.' }));
@@ -48,7 +51,7 @@ export type TaskPlan = typeof TaskPlanSchema.Type;
 // Tool payload/step extras are ignored; saved top-level metadata is explicitly
 // extensible. Keep input values out of public validation messages.
 const options = { onExcessProperty: 'ignore', reportInput: false } as const;
-const decodeRevision = Schema.decodeUnknownResult(ExpectedRevision, options);
+const decodeUpdateRevision = Schema.decodeUnknownResult(UpdateRevisionSchema, options);
 const decodeUpdate = Schema.decodeUnknownResult(UpdatePlanSchema, options);
 const decodeSaved = Schema.decodeUnknownResult(TaskPlanSchema, options);
 function validated<A>(result: Result.Result<A, Schema.SchemaError>, prefix = ''): A {
@@ -56,7 +59,7 @@ function validated<A>(result: Result.Result<A, Schema.SchemaError>, prefix = '')
     message: prefix + result.failure.message, cause: result.failure });
   return result.success;
 }
-export const parseExpectedPlanRevision = (value: unknown) => validated(decodeRevision(value));
+export const parsePlanUpdateRevision = (value: unknown) => validated(decodeUpdateRevision(value)).expected_revision;
 export const parsePlanUpdate = (value: unknown) => validated(decodeUpdate(value));
 export const parseSavedTaskPlan = (value: unknown) => validated(decodeSaved(value),
   'Invalid saved task plan. Restore the plans log from backup.\n');

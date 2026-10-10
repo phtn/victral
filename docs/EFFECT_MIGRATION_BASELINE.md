@@ -63,6 +63,10 @@ and compare this benchmark when those subsystems or their orchestration migrate.
   from their pre-migration implementations, as described below.
 - `legacy-read-tools.json`: pre-migration file/discovery/memory output and Git
   argument arrays, described below.
+- `legacy-mutations.json`: pre-migration mutation output, literal file bytes,
+  moved-file modes and saved-plan records, described below.
+- `legacy-command-tools.json`: pre-migration command-service calls, defaults,
+  cancellation-signal forwarding and result bytes, described below.
 
 The messages and service setup live in `test/migration-fixtures.ts`. All keys,
 encrypted strings and records are synthetic. Providers use injected fake fetch;
@@ -189,3 +193,77 @@ cancellation behavior. Only validation/dispatch moved; mutations, commands,
 workers/MCP and the batch envelope are still pending. Memory scheduling and
 metrics are unchanged, so their original CPU benchmark remains the comparison
 point for their later migrations.
+
+## Mutation-registry migration verification
+
+`legacy-mutations.json` was captured before this change from the `tools.ts`
+handlers at `98ce40136`. It uses real temporary files, synthetic content and a
+fixed clock; only the canonical project root is normalized to `/fixture/project`.
+The fixture includes empty files/replacements, whitespace, Unicode, NUL and CRLF
+text, a multi-file add/update/move/delete patch, executable-file mode and two
+saved-plan revisions. Existing fixtures were not regenerated.
+
+- `bun run check`: 196 tests passed across 27 files; typecheck passed.
+- `bun run build`: passed; entry point bundled 57 application modules.
+- All frozen prompt/tool/provider fixtures and legacy chat/plan/browsing/read
+  fixtures match, as do the new mutation outputs, file bytes/modes and saved plans.
+- Four tools now require write capability in the registry: `write_file`,
+  `edit_file`, `apply_patch` and `update_plan`. Malformed input fails with safe
+  Schema paths before filesystem resolution or persistence. Empty content and
+  replacements remain valid; empty search text remains invalid.
+- Plan preparation checks revision conflicts before validating the rest of the
+  payload. Invocation rechecks the revision before the synchronous save/publish
+  section, preventing stale prepared or repeated calls from overwriting a plan.
+  Tests verify save-before-publish, failed-save state retention and cancellation.
+- Capability denial still precedes validation; read-only workers and parallel
+  batches reject mutations before any I/O or nested-call telemetry. File writes
+  and edits preserve containment and external-symlink checks. Cancellation during
+  path resolution leaves files and parent directories unchanged.
+- Existing patch contracts pass for stale/ambiguous context, malformed hunks,
+  escapes, symlinks, duplicate paths, no-overwrite rules, ordered/end-anchored
+  hunks, newline/mode retention, rollback after partial writes and cancellation.
+
+The patch engine and Promise filesystem I/O remain unchanged. Commands are the
+next registry group, followed by workers/MCP and the batch envelope. Memory
+scheduling and metrics are unchanged; their original CPU benchmark remains the
+comparison point for their later migrations.
+
+## Command-registry migration verification
+
+`legacy-command-tools.json` was captured before this change from the `tools.ts`
+handlers at `98ce40136`. Command-service methods were stubbed to capture argv,
+timeout/wait defaults, interactive flags, stdin/EOF, signal forwarding and result
+passthrough without spawning processes. Shell selection uses a synthetic fixed
+environment value. Existing fixtures were not regenerated; real process behavior
+remains covered by the native command contracts.
+
+- `bun run check`: 204 tests passed across 28 files; typecheck passed.
+- `bun run build`: passed; entry point bundled 59 application modules.
+- All frozen prompt/tool/provider and legacy chat/plan/browsing/read/mutation
+  fixtures match, as do the new command-service calls and result bytes.
+- Seven command tools now use Schema-backed registry entries. Run/shell timeouts
+  retain configured defaults and a 120-second maximum; background starts retain
+  their independent 120-second default and 600-second maximum. Numeric options
+  default on null/undefined, while boolean flags reject null. Wait permits zero.
+- Executables/argv retain their NUL restrictions and literal argument arrays.
+  Stdin preserves whitespace, NUL and Unicode, defaults missing/undefined input
+  for EOF-only writes, and validates the 65536-byte UTF-8 cap before service work.
+  Endpoint tests include ASCII, two/four-byte text and unpaired surrogates.
+- Malformed objects, missing fields, sparse/invalid argv, unsafe numeric values,
+  bad flags and invalid stdin fail with safe Schema paths before any service
+  operation. Preparation performs no command work; pre-aborted invocations are
+  rejected before entering the service. Shell selection remains at invocation.
+- Command status/listing require read and shell capabilities; all command tools
+  require shell authorization. Disabled tools remain undiscoverable and retain
+  their existing errors; read-only workers still reject them. Enabled command
+  reads validate during full-batch preparation before I/O/telemetry, while unknown
+  job IDs remain individual runtime failures. Writes/starts/stops remain excluded.
+- Existing native contracts pass for literal argv/output caps, credential
+  filtering, command deadlines, process-group cancellation, background limits,
+  status-wait cancellation, session/turn lifetimes, interactive stdin/EOF and
+  blocked-input cancellation/deadlines. The command service itself is unchanged.
+
+Workers/MCP and the batch envelope are next, before the step-2 gate. Process
+supervision will migrate separately at step 6. Memory scheduling and metrics
+remain unchanged; their original CPU benchmark remains the comparison point
+for their later migrations.

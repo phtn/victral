@@ -284,6 +284,77 @@ object and let the handler ignore its keys. Do not use `Struct({})` as an object
 guard: this Effect version accepts non-null primitives for that empty TypeScript
 shape. Arrays and null must fail before the tool runs.
 
+The [mutation schemas](../src/mutation-tool-schema.ts) preserve literal file
+contents and replacement text. Adapted from the vendored `isMinLength` runtime
+test and `Schema.ts` example:
+
+```ts
+import * as Schema from "effect/Schema"
+
+const EditArguments = Schema.Struct({
+  path: Schema.String,
+  old_text: Schema.String.check(Schema.isMinLength(1)),
+  new_text: Schema.String
+})
+type EditArgumentsType = typeof EditArguments.Type
+
+Schema.decodeUnknownSync(EditArguments)({
+  path: "file.txt", old_text: "  ", new_text: ""
+}) // whitespace is searchable; an empty replacement deletes it
+```
+
+Do not trim these strings, use nonblank filters, or reject NUL/Unicode text.
+`write_file` accepts empty content; `edit_file` rejects only empty search text.
+Path containment and symlinks remain the resolver's responsibility. Patch Schema
+validates the string envelope; the existing pure parser checks grammar before
+filesystem access, and the patch engine retains context matching, preflight,
+file modes, newline handling and rollback. These are different boundaries.
+
+Plan updates require a state-dependent revision check before full payload
+validation to preserve conflict precedence. The registry's synchronous,
+read-only `beforeDecode` hook decodes the revision envelope and checks current
+state after capability authorization. It must not start I/O or return a Promise.
+The handler receives the complete decoded `UpdatePlanSchema.Type` and calls
+`TaskPlans.replace`, which checks the revision again when a prepared invocation
+runs. Preparation cannot authorize overwriting a later revision. Keep save and
+publish synchronous in the existing commit section: a failed save leaves the
+previous plan visible. The legacy `update(unknown)` adapter uses the same typed
+replacement method without decoding again inside that implementation.
+
+The [command schemas](../src/command-tool-schema.ts) keep executable/argv rules
+distinct from stdin rules. Executables reject empty text, an initial dash and
+NUL; argument arrays reject NUL but preserve empty, whitespace and option-like
+strings. Stdin preserves NUL, whitespace, Unicode and shell-looking text. Never
+trim, interpolate or join argv into a shell command during decoding.
+
+Measure stdin with the same UTF-8 byte rule as the command service. The custom
+filter adapts the vendored `makeFilter` examples; a string length check would
+apply a different limit to multibyte text:
+
+```ts
+const Input = Schema.String.check(Schema.makeFilter(
+  text => Buffer.byteLength(text, "utf8") <= 65_536,
+  { message: "Command input is limited to 65536 bytes per write." }
+))
+```
+
+Missing/undefined stdin defaults to `""` and is valid only with `eof: true`.
+Attach the missing-input/EOF failure to `["input"]` using a struct filter.
+Boolean flags reject null; timeout/wait options use nullish numeric defaults.
+Run/shell timeout defaults honor the configured value, while background start
+keeps its independent 120-second default. Wait permits zero; its default is zero.
+Command IDs remain strings with session-state lookup after decoding. Job
+existence, pipe state and concurrent writes belong to `CommandTools`; retain its
+size/EOF guards for direct callers without parsing a registered payload twice.
+
+The [command registry](../src/command-tool-registry.ts) requires both read and
+shell capabilities for command status and listing. All seven command entries require
+shell authorization and are installed only when enabled, preserving discovery
+and disabled-tool errors. Enabled command-read arguments prepare with the other
+parallel reads before I/O; unknown job IDs remain individual runtime failures.
+Keep native process supervision and background lifetimes in the existing
+service until their separate Effect migration.
+
 ## Errors and domain models
 
 Prefer typed failures inside Effect workflows. Adapted from `10_schema-basics.ts`:

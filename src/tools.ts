@@ -1,13 +1,14 @@
 import fs from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
-import { applyProjectPatch } from './apply-patch.js';
 import { CommandTools } from './command-tools.js';
+import { commandTools } from './command-tool-registry.js';
 import { TaskPlans, type PlanStore } from './task-plans.js';
 import { GitTools } from './git-tools.js';
 import { WebBrowser } from './web-browser.js';
 import { browsingTools } from './browsing-tools.js';
 import { readTools } from './read-tools.js';
+import { mutationTools } from './mutation-tools.js';
 import { ToolRegistry } from './tool-registry.js';
 import type { Integrations } from './integrations.js';
 import type { Subagents } from './subagents.js';
@@ -19,27 +20,6 @@ const tool = (name: string, description: string, properties: ToolDefinition['fun
   type: 'function', function: { name, description, parameters: { type: 'object', properties, required } },
 });
 export interface ToolOptions { allowShell?: boolean; timeoutMs?: number; fetchImpl?: typeof fetch; planStore?: PlanStore; integrations?: Integrations; subagents?: Subagents }
-function text(args: Record<string, unknown>, key: string): string {
-  if (typeof args[key] !== 'string') throw new Error(`Expected ${key} to be text.`);
-  return args[key];
-}
-function integerArg(args: Record<string, unknown>, key: string, fallback: number, max: number): number {
-  const value = args[key] ?? fallback;
-  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > max) throw new Error(`${key} must be an integer between 1 and ${max}.`);
-  return value as number;
-}
-function booleanArg(args: Record<string, unknown>, key: string, fallback: boolean): boolean {
-  if (args[key] === undefined) return fallback;
-  if (typeof args[key] !== 'boolean') throw new Error(`${key} must be boolean.`);
-  return args[key];
-}
-function programArgs(args: Record<string, unknown>): string[] {
-  const program = text(args, 'program');
-  if (!program || program.startsWith('-') || program.includes('\0')) throw new Error('Expected a CLI program name.');
-  if (!Array.isArray(args.args) || !args.args.every(arg => typeof arg === 'string' && !arg.includes('\0'))) throw new Error('args must be an array of strings.');
-  return [program, ...args.args];
-}
-
 export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project: string, { allowShell = false, timeoutMs = 30_000, fetchImpl = fetch, planStore, integrations, subagents }: ToolOptions = {}): AgentTools {
   project = realpathSync(project);
   const definitions = [
@@ -112,7 +92,11 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
   const git = new GitTools(commands, resolveFile, timeoutMs);
   const registry = new ToolRegistry([
     ...browsingTools(browser, fetchImpl, timeoutMs), ...readTools(memory, { project, resolveFile, plans, git }),
-  ], ['read']);
+    ...mutationTools({ resolveFile, plans }),
+    // Keep disabled command names undiscoverable and their public rejection
+    // unchanged. Enabled entries still enforce capabilities before decoding.
+    ...(allowShell ? commandTools(commands, timeoutMs) : []),
+  ], allowShell ? ['read', 'write', 'shell'] : ['read', 'write']);
   async function execute(name: string, args: Record<string, unknown>, signal?: AbortSignal, onNestedCall?: (name: string) => void): Promise<string> {
     signal?.throwIfAborted();
     if (registry.has(name)) return registry.execute(name, args, signal);
@@ -121,44 +105,10 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
     if (subagents && name === 'list_subagents') return subagents.list();
     if (subagents && name === 'subagent_status') return subagents.status(args);
     if (subagents && name === 'stop_subagent') return subagents.stop(args);
-    if (name === 'update_plan') return plans.update(args);
     if (name === 'parallel_tools') return parallelReads(args.calls, (nested, values) => {
       const invoke = registry.has(nested) ? registry.prepare(nested, values) : (nestedSignal?: AbortSignal) => execute(nested, values, nestedSignal);
       return nestedSignal => { onNestedCall?.(nested); return invoke(nestedSignal); };
     }, signal);
-    if (name === 'write_file' || name === 'edit_file') {
-      const filename = await resolveFile(text(args, 'path'));
-      let content: string;
-      if (name === 'write_file') content = text(args, 'content');
-      else {
-        const old = text(args, 'old_text'), replacement = text(args, 'new_text');
-        if (!old) throw new Error('old_text must not be empty.');
-        const current = await fs.readFile(filename, 'utf8');
-        const first = current.indexOf(old);
-        if (first < 0) throw new Error('old_text was not found; read the file again.');
-        if (current.indexOf(old, first + 1) >= 0) throw new Error('old_text is ambiguous; include more context.');
-        content = current.slice(0, first) + replacement + current.slice(first + old.length);
-      }
-      signal?.throwIfAborted();
-      await fs.mkdir(path.dirname(filename), { recursive: true });
-      await fs.writeFile(filename, content, 'utf8');
-      return `${name === 'edit_file' ? 'Edited' : 'Wrote'} ${args.path}.`;
-    }
-    if (name === 'apply_patch') return applyProjectPatch(text(args, 'patch'), resolveFile, signal);
-    if (allowShell && (name === 'shell' || name === 'run_command')) {
-      const ms = integerArg(args, 'timeout_ms', timeoutMs, 120_000);
-      if (name === 'shell') return commands.run([process.env.SHELL ?? '/bin/sh', '-c', text(args, 'command')], ms, signal);
-      return commands.run(programArgs(args), ms, signal);
-    }
-    if (allowShell && name === 'start_command') return commands.start(programArgs(args), integerArg(args, 'timeout_ms', 120_000, 600_000), signal, booleanArg(args, 'interactive', false));
-    if (allowShell && name === 'list_commands') return commands.list();
-    if (allowShell && name === 'write_command_input') return commands.write(text(args, 'command_id'), args.input === undefined ? '' : text(args, 'input'), booleanArg(args, 'eof', false), signal);
-    if (allowShell && name === 'command_status') {
-      const wait = args.wait_ms ?? 0;
-      if (!Number.isSafeInteger(wait) || (wait as number) < 0 || (wait as number) > 10_000) throw new Error('wait_ms must be an integer between 0 and 10000.');
-      return commands.status(text(args, 'command_id'), wait as number, signal);
-    }
-    if (allowShell && name === 'stop_command') return commands.stop(text(args, 'command_id'));
     throw new Error(`Unknown or disabled tool: ${name}`);
   }
   return { definitions, execute, close: async () => { await Promise.all([commands.close(), integrations?.close(), subagents?.close()]); }, context: () => plans.context() };
