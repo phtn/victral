@@ -4,8 +4,9 @@ import { CUES, SUCCESS_SCENARIO, FAILURE_SCENARIO } from './catalog.js';
 import type { SoundName } from './patch.js';
 import { NativeSoundPlayer, type SoundPlayer } from './player.js';
 import { errorMessage } from '../types.js';
-export interface LabState {
-  selected: number; volume: number; muted: boolean; active: boolean;
+import { parseAudioSettings, parseVolumeAdjustment, type AudioSettings } from './settings.js';
+export interface LabState extends AudioSettings {
+  selected: number; active: boolean;
   error: boolean; status: string; backend: string; available: boolean; log: readonly string[];
 }
 export class SoundLabModel extends EventEmitter {
@@ -13,16 +14,23 @@ export class SoundLabModel extends EventEmitter {
   private controller?: AbortController;
   private work?: Promise<void>;
   private closed = false;
-  constructor(private player: SoundPlayer = new NativeSoundPlayer()) {
+  constructor(private player: SoundPlayer = new NativeSoundPlayer(), settings: unknown = {}) {
     super();
-    this.state = { selected: 0, volume: 0.5, muted: false, active: false,
+    this.state = { selected: 0, ...parseAudioSettings(settings), active: false,
       error: false, status: 'Ready · choose a cue and press Enter', backend: player.backend, available: player.available, log: [] };
   }
   snapshot(): LabState { return { ...this.state, log: [...this.state.log] }; }
   private update(): void { if (!this.closed) this.emit('update'); }
   select(delta: number): void { this.state.selected = (this.state.selected + delta + CUES.length) % CUES.length; this.update(); }
-  volume(delta: number): void { this.state.volume = Math.round(Math.max(0, Math.min(1, this.state.volume + delta)) * 100) / 100; this.stop(); }
-  mute(): void { this.state.muted = !this.state.muted; this.stop(); }
+  configure(settings: unknown): void {
+    const validated = parseAudioSettings(settings);
+    this.state = { ...this.state, ...validated }; this.stop();
+  }
+  volume(delta: number): void {
+    const volume = Math.round(Math.max(0, Math.min(1, this.state.volume + parseVolumeAdjustment(delta))) * 100) / 100;
+    this.configure({ volume, muted: this.state.muted });
+  }
+  mute(): void { this.configure({ volume: this.state.volume, muted: !this.state.muted }); }
   stop(): void {
     this.controller?.abort(); this.controller = undefined;
     this.state.active = false; this.state.error = false; this.state.status = this.state.muted ? 'Muted' : this.state.volume === 0 ? 'Volume is zero' : 'Stopped · ready'; this.update();

@@ -1,13 +1,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { SoundName } from './patch.js';
+import { parseAudioVolume } from './settings.js';
 export interface SoundPlayer {
   readonly backend: string; readonly available: boolean;
   play(sound: SoundName, volume: number, signal: AbortSignal): Promise<void>;
   close(): Promise<void>;
 }
 export function playbackCommand(player: string, filename: string, volume: number): string[] {
-  if (!Number.isFinite(volume) || volume < 0 || volume > 1) throw new Error('Volume must be between 0 and 1.');
+  volume = parseAudioVolume(volume);
   if (path.basename(player) === 'afplay') return [player, '-v', String(volume), filename];
   if (path.basename(player).replace(/\.exe$/i, '') === 'ffplay') return [player, '-nodisp', '-autoexit', '-loglevel', 'error', '-volume', String(Math.round(volume * 100)), filename];
   throw new Error('Unsupported audio player.');
@@ -26,6 +27,7 @@ export class NativeSoundPlayer implements SoundPlayer {
   async play(sound: SoundName, volume: number, signal: AbortSignal): Promise<void> {
     if (this.closed) throw new Error('Audio player is closed.');
     signal.throwIfAborted();
+    volume = parseAudioVolume(volume);
     if (!this.player) throw new Error(this.backend);
     if (volume === 0) return;
     // First path is used by the distribution bundle; second by the source CLI.

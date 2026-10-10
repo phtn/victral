@@ -59,6 +59,8 @@ and compare this benchmark when those subsystems or their orchestration migrate.
   result and steering input. OpenAI includes an assistant phase item.
 - `legacy-chat.json`: historical main/tree records without newer size metadata,
   a saved view and the expected rendered memory after restart.
+- `legacy-task-plans.json` and `legacy-browsing.json`: boundary fixtures captured
+  from their pre-migration implementations, as described below.
 
 The messages and service setup live in `test/migration-fixtures.ts`. All keys,
 encrypted strings and records are synthetic. Providers use injected fake fetch;
@@ -112,3 +114,43 @@ The existing real-storage restart, CLI `/plan`/backup, runner plan context and
 partial-startup cleanup tests also pass. This boundary changes neither storage
 I/O nor memory scheduling; the original CPU benchmark remains the comparison
 point for their later migrations.
+
+## Audio-settings migration verification
+
+- `bun run check`: 171 tests passed across 24 files; typecheck passed.
+- `bun run build`: passed; entry point bundled 48 application modules.
+- Frozen prompt, tool definitions, provider requests and legacy rendering match.
+- Settings codec tests cover defaults, mute, volume endpoints, non-finite and
+  malformed input, unknown setting keys, and encoding/decoding round trips.
+- Silent fake-player tests verify invalid settings do not change lab state or
+  cancel active playback, while valid settings stop playback before the next
+  preview. Existing UI clamping, serialization, stop and native-process cleanup
+  tests pass. No live notification service is enabled by this boundary change.
+
+## Browsing-registry migration verification
+
+`legacy-browsing.json` was captured by running `web-browser.ts` and the raw-fetch
+handler from `762c52c26` with synthetic URLs and response bodies. Its exact output
+strings cover HTML extraction, Unicode, relative links, nullish/default line
+options, literal queries, URL normalization, text metadata and omitted binary
+content. Existing frozen fixtures were not regenerated.
+
+- `bun run check`: 180 tests passed across 25 files; typecheck passed.
+- `bun run build`: passed; entry point bundled 52 application modules.
+- All prompt/tool/provider fixtures, legacy plans/chat and browsing output match.
+- Browsing schemas preserve safe integer bounds, nullish defaults, unknown-field
+  policy, custom raw-fetch timeout, URL normalization and the distinct credential
+  policies of browsing and raw fetch. Errors retain internal Schema causes and
+  useful field paths without displaying rejected input values.
+- Registry contracts verify capability denial before decoding, typed transformed
+  handler arguments, preparation without execution, duplicate registration and
+  pre-aborted invocation. Browsing contracts cover request cancellation, page
+  retention, line/UTF-8 caps and unchanged read-only worker access.
+- Malformed registered arguments now reject a parallel batch during preparation,
+  before any I/O or nested-call telemetry. Runtime errors remain individual
+  results in input order. Unregistered tool groups still use legacy validation.
+
+The registry owns argument dispatch only; Promise I/O, resource ownership and
+permission policy remain at their existing boundaries. File/Git reads are the
+next group. Memory and metrics scheduling are unchanged, so their original CPU
+benchmark remains the comparison point for later subsystem migrations.

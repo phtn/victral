@@ -24,6 +24,16 @@ are serialized rather than overlapping. Scenario events are illustrative, not
 real workflow results. The status and recent-cue display stay visible even
 when sound is unavailable or a player fails.
 
+`AudioSettingsSchema` validates finite volume in 0–1 and boolean mute settings,
+with the same defaults. Missing or undefined settings use those defaults; null,
+numeric strings, out-of-range values and unknown setting keys fail. The lab's
+`configure()` replaces settings only after decoding succeeds, then stops the
+current preview. Invalid settings leave playback and state untouched. Keyboard
+volume adjustments still clamp and round to whole percentages. Native playback
+also validates volume before locating assets or spawning the player. These
+settings are reusable by the future notification service; live chat audio still
+requires the audition and opt-in service described below.
+
 ## Conversion from the browser component
 
 `src/web-kits/index.btsx` provides the original 19 sound definitions. The lab
@@ -58,6 +68,7 @@ playback is separate from the agent's optional command-execution tools.
 - `src/sfx/catalog.ts`: audition labels and illustrative scenarios.
 - `scripts/build-sfx.ts`: offline rendering and asset cache.
 - `src/sfx/player.ts`: native playback and cancellation.
+- `src/sfx/settings.ts`: Schema-backed settings and volume validation.
 - `src/sfx/lab-model.ts`: testable selection, volume, mute and scenario state.
 - `src/sfx/lab.ink.btsx`: terminal audition page.
 - `src/sfx/lab.ts`: render/start adapter.

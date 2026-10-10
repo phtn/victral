@@ -6,11 +6,11 @@ configuration and Schema-guide changes. This is an implementation backlog.
 ## Implementation status
 
 Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0 and 1 are complete;
-step 2 now includes MCP configuration and task-plan input/saved-record validation.
-Both boundaries use the pinned published Effect 4.0.2 dependency. Tool registries
-and audio settings remain ahead of the step-2 acceptance gate. The task-plan
-change passes 168 tests, typecheck and build; its legacy rendering fixture and
-the provider request/tool-schema fixtures match unchanged.
+step 2 now includes MCP configuration, task plans, audio settings and the browsing
+tool registry. These boundaries use the pinned published Effect 4.0.2 dependency.
+The latest change passes 180 tests, typecheck and build; legacy rendering,
+browsing output and provider request/tool fixtures match unchanged. File/Git
+reads, mutations, commands and workers/MCP remain ahead of the step-2 gate.
 
 See the [baseline and frozen fixtures](EFFECT_MIGRATION_BASELINE.md),
 [Schema patterns](../agent-patterns/effect-schema.md) and
@@ -127,15 +127,19 @@ have meaningful tests. No application import resolves into `repos/`.
 - [x] Migrate task-plan input and saved-plan validation. Encode the step status
       enum, bounded text/collections, safe revisions, and at-most-one active
       step. Preserve trimming, revision conflicts, and save-before-publish behavior.
-- [ ] Add schema-validated notification volume/mute settings before the step-3
+- [x] Add schema-validated notification volume/mute settings before the step-3
       audio service. Keep live playback opt-in after the prototype audition.
 - [ ] Introduce a tool registry that associates each tool name with its argument
       schema, capability requirements, and implementation. Migrate tool groups
       in sequence: browsing, file/Git reads, mutations, commands, workers/MCP.
+      Browsing is complete: `browse_url`, `read_web_page`, `find_in_page` and
+      `fetch_url` use schemas and the registry. Registered batch inputs validate
+      before any call starts; runtime failures remain individual results. Next:
+      file/Git reads. Other tool groups retain their legacy validation for now.
 - [ ] Remove duplicate argument interfaces only after schemas can derive their
       types. Treat refinement rules such as project containment and tool
       permission as explicit domain checks, not type assertions.
-- [ ] Preserve provider-facing tool definitions exactly at first. Generating
+- [x] Preserve provider-facing tool definitions exactly at first. Generating
       their JSON Schemas from Effect is a separate change requiring request
       fixture comparisons; otherwise schema conversion can disrupt cache prefixes.
 

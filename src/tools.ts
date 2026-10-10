@@ -8,6 +8,8 @@ import { CommandTools } from './command-tools.js';
 import { TaskPlans, type PlanStore } from './task-plans.js';
 import { GitTools, gitRef } from './git-tools.js';
 import { WebBrowser } from './web-browser.js';
+import { browsingTools } from './browsing-tools.js';
+import { ToolRegistry } from './tool-registry.js';
 import type { Integrations } from './integrations.js';
 import type { Subagents } from './subagents.js';
 import { PARALLEL_READ_TOOLS, parallelReads } from './parallel-tools.js';
@@ -87,6 +89,7 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
     tool('write_command_input', 'Write input to a running command started with interactive: true. Input is literal UTF-8, at most 65536 bytes; include any needed newline. Set eof: true to close stdin after sending (input may be omitted for EOF). A blocked write times out after 2s and stops the command; canceling a write also stops it.', { command_id: string, input: string, eof: { type: 'boolean' } }, ['command_id']),
   );
   const browser = new WebBrowser(fetchImpl);
+  const registry = new ToolRegistry(browsingTools(browser, fetchImpl, timeoutMs), ['read']);
   const commands = new CommandTools(project);
   const plans = new TaskPlans(project, planStore);
   const contained = (filename: string) => filename === project || filename.startsWith(project + path.sep);
@@ -111,9 +114,7 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
   const git = new GitTools(commands, resolveFile, timeoutMs);
   async function execute(name: string, args: Record<string, unknown>, signal?: AbortSignal, onNestedCall?: (name: string) => void): Promise<string> {
     signal?.throwIfAborted();
-    if (name === 'browse_url') return browser.open(args, signal);
-    if (name === 'read_web_page') return browser.read(args);
-    if (name === 'find_in_page') return browser.find(args);
+    if (registry.has(name)) return registry.execute(name, args, signal);
     if (integrations && ['list_integrations', 'list_integration_tools', 'call_integration_tool'].includes(name)) return integrations.execute(name, args, signal);
     if (subagents && name === 'spawn_subagent') return subagents.spawn(args, signal);
     if (subagents && name === 'list_subagents') return subagents.list();
@@ -121,9 +122,9 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
     if (subagents && name === 'stop_subagent') return subagents.stop(args);
     if (name === 'get_plan') return plans.get();
     if (name === 'update_plan') return plans.update(args);
-    if (name === 'parallel_tools') return parallelReads(args.calls, (nested, values, nestedSignal) => {
-      onNestedCall?.(nested);
-      return execute(nested, values, nestedSignal);
+    if (name === 'parallel_tools') return parallelReads(args.calls, (nested, values) => {
+      const invoke = registry.has(nested) ? registry.prepare(nested, values) : (nestedSignal?: AbortSignal) => execute(nested, values, nestedSignal);
+      return nestedSignal => { onNestedCall?.(nested); return invoke(nestedSignal); };
     }, signal);
     if (name === 'git_log' || name === 'git_show' || name === 'git_blame') return git.execute(name, args, signal);
     if (name === 'zoom' || name === 'date') {
@@ -180,21 +181,6 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
       argv.push('--');
       if (args.path !== undefined) { await resolveFile(text(args, 'path')); argv.push(`:(literal)${text(args, 'path')}`); }
       return commands.run(argv, timeoutMs, signal);
-    }
-    if (name === 'fetch_url') {
-      let target: URL;
-      try { target = new URL(text(args, 'url')); } catch { throw new Error('Expected an absolute http(s) URL.'); }
-      if ((target.protocol !== 'http:' && target.protocol !== 'https:') || !target.hostname) throw new Error('Expected an absolute http(s) URL.');
-      const ms = integerArg(args, 'timeout_ms', timeoutMs, 120_000);
-      const timeout = AbortSignal.timeout(ms);
-      const response = await fetchImpl(target.toString(), { signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: 'follow' });
-      signal?.throwIfAborted();
-      const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? '';
-      const data = new Uint8Array(await response.arrayBuffer());
-      const head = `[status: ${response.status}${contentType ? `; content-type: ${contentType}` : ''}; size: ${data.length} bytes]`;
-      const textual = !contentType || contentType.startsWith('text/') || /^application\/(json|javascript|x-www-form-urlencoded|.*\+xml|.*xml)$/.test(contentType);
-      if (!textual) return `${head}\nNon-text response omitted.`;
-      return `${head}\n${capResult(new TextDecoder().decode(data))}`;
     }
     if (allowShell && (name === 'shell' || name === 'run_command')) {
       const ms = integerArg(args, 'timeout_ms', timeoutMs, 120_000);

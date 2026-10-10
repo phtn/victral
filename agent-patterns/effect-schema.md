@@ -197,6 +197,55 @@ against a fixture captured from the previous implementation. Revision conflicts
 and strictly increasing saved revisions remain explicit state-dependent checks;
 validation and durable save finish before publishing new state.
 
+The [audio settings](../src/sfx/settings.ts) use decoding defaults for missing
+or undefined volume/mute values, reject null and unknown setting keys, and check
+finite volume before changing state or starting playback. Validate UI deltas
+before clamping; clamping alone can turn infinity into an apparently valid
+setting or let NaN reach the player.
+
+The [browsing schemas](../src/web-tool-schema.ts) preserve a different null
+contract: numeric tool options historically use `??`, so they accept null as a
+request for the default. Adapted from the custom-default and transformation
+patterns in `SCHEMA.md` and `SchemaTransformation.ts`:
+
+```ts
+import { Effect, Schema, SchemaTransformation } from "effect"
+
+const Timeout = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 120_000 }))
+const DefaultTimeout = Schema.NullOr(Timeout).pipe(
+  Schema.decodeTo(Timeout, SchemaTransformation.transform({
+    decode: (value) => value ?? 30_000,
+    encode: (value) => value
+  })),
+  Schema.withDecodingDefault(Effect.succeed(30_000))
+)
+
+const Args = Schema.Struct({ timeout_ms: DefaultTimeout })
+Schema.decodeUnknownSync(Args)({ timeout_ms: null }) // { timeout_ms: 30000 }
+```
+
+URL arguments adapt `SchemaTransformation.urlFromString`: validate the existing
+protocol/credential policy on the source string, then decode to `Schema.URL`.
+Encoding returns the canonical URL string. Do not silently tighten the input
+contract during migration: browsing rejects embedded credentials, whereas the
+legacy raw-fetch tool accepts them. Page IDs still require a session-state
+lookup after decoding, and search queries preserve whitespace after rejecting
+blank text.
+
+Use [schemaTool and ToolRegistry](../src/tool-registry.ts) to bind a schema to a
+handler accepting its inferred decoded type. Registry capability checks run
+before decoding; schema decoding runs before invoking the handler. `prepare()`
+validates and captures arguments without starting work, so parallel batches can
+prepare all registered inputs before I/O. Schema errors reject the batch during
+preflight; runtime errors such as missing pages/files remain individual results.
+During the incremental migration, tools outside the registry retain their
+legacy validation. Keep provider-facing definitions in `tools.ts` unchanged;
+they are frozen request fixtures and are not generated from these codecs.
+
+Legacy `WebBrowser.open/read/find` calls decode unknown values and delegate to
+the same typed implementations used by the registry. Registry handlers must
+call those implementations with decoded arguments to avoid parsing twice.
+
 ## Errors and domain models
 
 Prefer typed failures inside Effect workflows. Adapted from `10_schema-basics.ts`:
