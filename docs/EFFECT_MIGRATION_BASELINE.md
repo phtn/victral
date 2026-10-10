@@ -67,6 +67,8 @@ and compare this benchmark when those subsystems or their orchestration migrate.
   moved-file modes and saved-plan records, described below.
 - `legacy-command-tools.json`: pre-migration command-service calls, defaults,
   cancellation-signal forwarding and result bytes, described below.
+- `legacy-extension-tools.json`: pre-migration MCP requests/redacted output and
+  worker output, prompts and automatic reports, described below.
 
 The messages and service setup live in `test/migration-fixtures.ts`. All keys,
 encrypted strings and records are synthetic. Providers use injected fake fetch;
@@ -267,3 +269,47 @@ Workers/MCP and the batch envelope are next, before the step-2 gate. Process
 supervision will migrate separately at step 6. Memory scheduling and metrics
 remain unchanged; their original CPU benchmark remains the comparison point
 for their later migrations.
+
+## Worker/MCP registry migration verification
+
+`legacy-extension-tools.json` was captured before this change from the
+`integrations.ts` and `subagents.ts` implementations at `a85765cd3`. The SDK
+methods use deterministic stubs with synthetic configuration and credential
+references; no process or remote request is started. Workers use a fake model,
+empty tools and fixed clock. The fixture records exact SDK request shapes and
+deadlines, paginated native schemas, connected/discovery state, redacted text,
+non-text omission, structured output and tool failures. It also freezes worker
+start/list/status/stop rendering, raw prompts, selected model and automatic
+report bytes. Existing fixtures were not regenerated.
+
+- `bun run check`: 214 tests passed across 29 files; typecheck passed.
+- `bun run build`: passed; entry point bundled 63 application modules.
+- All frozen prompt/tool/provider and prior legacy fixtures match, as do the new
+  worker output/prompt/report bytes and MCP SDK requests/redacted output.
+- Four worker and three MCP tools now use Schema-backed registry entries with
+  subagent/integration capabilities; listing/status/discovery also require read.
+  Disabled tools, read-only workers and parallel-read exclusions remain unchanged.
+- Worker schemas preserve the original identifier pattern and raw 12000-code-unit
+  task bound, nonblank check, whitespace and literal Unicode/NUL. Bad inputs fail
+  before model/tool/context factories. Prepared starts recheck capacity and closure
+  at invocation; stopping frees a slot without changing the selected model.
+- MCP call preparation retains configured-server and exact-allowlist denial
+  precedence. Full payload validation now finishes before credential references
+  or client acquisition. Invalid arguments cannot connect. Typed invocation
+  rechecks the allowlist, including literal `*`, before acquisition.
+- Remote arguments use an opaque object schema: JSON keys, nested values and
+  own `__proto__`/`constructor` keys survive encoding and exact request comparison.
+  Native discovered schemas and SDK response handling retain their existing form.
+- Tests cover useful redacted Schema paths, malformed envelopes, unknown state
+  IDs, prototype-named servers, pre-aborted calls, prepared-call revocation and
+  closure, repeated-cursor/500-tool guards, output caps and visible report-delivery
+  failure with exactly one delivery attempt.
+- Existing real stdio discovery/redaction, canceled HTTP acquisition/recovery,
+  worker concurrency/stop, originating-turn cancellation and late-report/session
+  usage contracts pass. Client cleanup, worker timers, model-step limits and
+  report delivery logic remain at their existing resource boundaries.
+
+The batch envelope and final registry integration are next before the step-2
+gate. Resource ownership and supervision will migrate in their later steps.
+Memory scheduling and metrics are unchanged; their original CPU benchmark
+remains the comparison point for those migrations.

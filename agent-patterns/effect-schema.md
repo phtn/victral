@@ -355,6 +355,42 @@ parallel reads before I/O; unknown job IDs remain individual runtime failures.
 Keep native process supervision and background lifetimes in the existing
 service until their separate Effect migration.
 
+The [worker schemas](../src/subagent-tool-schema.ts) adapt the vendored
+`isPattern`, `isMaxLength` and custom-filter examples. Keep the original name
+regex and measure the 12,000-character task bound on raw UTF-16 text. Check
+nonblank text with `trim()` without transforming the task: decoding preserves
+its whitespace, Unicode and literal NUL. Encoding also retains that raw text.
+Worker IDs are string inputs followed by a session-state lookup, not synthetic
+IDs fabricated by a default. Capacity, closure and model/tool acquisition stay
+in the typed `spawnTask` method so a prepared invocation checks current state.
+The legacy `spawn/status/stop` adapters decode unknown input and call typed
+methods; registry handlers use those methods without parsing the payload twice.
+
+The [MCP tool schemas](../src/integration-tool-schema.ts) validate only the local
+envelope. Use `Record(String, Unknown)` for the remote `arguments` object and
+retain every JSON key and nested value, including `constructor` and an own
+`__proto__` key. Do not substitute `Struct({})`, strip undocumented remote fields,
+or translate discovered native JSON Schemas during this boundary migration.
+The codec and frozen SDK-request tests cover payload preservation independently
+of remote discovery and execution.
+
+The MCP call's `beforeDecode` hook checks the configured server and exact tool
+allowlist before decoding the remaining payload. Partial field decoders must
+report the calling operation's boundary and omit rejected input. Server lookup
+uses own keys; `"*"` grants only that literal tool name. This hook is synchronous
+and never resolves credentials or acquires a client. Full envelope validation
+also finishes before acquisition. The typed `callTool` method rechecks permission
+when a prepared invocation runs. Retain SDK request shapes, pagination, caps,
+redaction and connect/call deadlines in the existing service.
+
+The [worker registry](../src/subagent-tool-registry.ts) and
+[MCP registry](../src/integration-tool-registry.ts) require their corresponding
+capability; listing/status/discovery also require read capability. Install these
+groups only when their services are enabled. Keep worker restrictions and the
+parallel-read allowlist explicit: registration does not authorize external
+actions or delegation, and these groups do not become batch-readable merely
+because some operations inspect state.
+
 ## Errors and domain models
 
 Prefer typed failures inside Effect workflows. Adapted from `10_schema-basics.ts`:

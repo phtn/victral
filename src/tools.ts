@@ -9,7 +9,9 @@ import { WebBrowser } from './web-browser.js';
 import { browsingTools } from './browsing-tools.js';
 import { readTools } from './read-tools.js';
 import { mutationTools } from './mutation-tools.js';
-import { ToolRegistry } from './tool-registry.js';
+import { integrationTools } from './integration-tool-registry.js';
+import { subagentTools } from './subagent-tool-registry.js';
+import { ToolRegistry, type ToolCapability } from './tool-registry.js';
 import type { Integrations } from './integrations.js';
 import type { Subagents } from './subagents.js';
 import { PARALLEL_READ_TOOLS, parallelReads } from './parallel-tools.js';
@@ -90,21 +92,21 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
     return filename;
   }
   const git = new GitTools(commands, resolveFile, timeoutMs);
+  const capabilities: ToolCapability[] = ['read', 'write'];
+  if (allowShell) capabilities.push('shell');
+  if (integrations) capabilities.push('integrations');
+  if (subagents) capabilities.push('subagents');
   const registry = new ToolRegistry([
     ...browsingTools(browser, fetchImpl, timeoutMs), ...readTools(memory, { project, resolveFile, plans, git }),
     ...mutationTools({ resolveFile, plans }),
     // Keep disabled command names undiscoverable and their public rejection
     // unchanged. Enabled entries still enforce capabilities before decoding.
     ...(allowShell ? commandTools(commands, timeoutMs) : []),
-  ], allowShell ? ['read', 'write', 'shell'] : ['read', 'write']);
+    ...(integrations ? integrationTools(integrations) : []), ...(subagents ? subagentTools(subagents) : []),
+  ], capabilities);
   async function execute(name: string, args: Record<string, unknown>, signal?: AbortSignal, onNestedCall?: (name: string) => void): Promise<string> {
     signal?.throwIfAborted();
     if (registry.has(name)) return registry.execute(name, args, signal);
-    if (integrations && ['list_integrations', 'list_integration_tools', 'call_integration_tool'].includes(name)) return integrations.execute(name, args, signal);
-    if (subagents && name === 'spawn_subagent') return subagents.spawn(args, signal);
-    if (subagents && name === 'list_subagents') return subagents.list();
-    if (subagents && name === 'subagent_status') return subagents.status(args);
-    if (subagents && name === 'stop_subagent') return subagents.stop(args);
     if (name === 'parallel_tools') return parallelReads(args.calls, (nested, values) => {
       const invoke = registry.has(nested) ? registry.prepare(nested, values) : (nestedSignal?: AbortSignal) => execute(nested, values, nestedSignal);
       return nestedSignal => { onNestedCall?.(nested); return invoke(nestedSignal); };

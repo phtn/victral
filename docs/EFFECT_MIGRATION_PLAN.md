@@ -6,12 +6,14 @@ configuration and Schema-guide changes. This is an implementation backlog.
 ## Implementation status
 
 Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0 and 1 are complete;
-step 2 now includes MCP configuration, task plans, audio settings, browsing,
-file/Git reads, mutations and command-tool registries. These boundaries use the
-pinned published Effect 4.0.2 dependency. The latest change passes 204 tests, typecheck
-and build; legacy rendering, browsing/read/mutation output, file bytes/modes,
-Git/command arguments and provider request/tool fixtures match unchanged.
-Workers/MCP and the batch envelope remain ahead of the step-2 gate.
+step 2 now includes MCP configuration, task plans, audio settings and tool
+registries for browsing, file/Git reads, mutations, commands and workers/MCP.
+These boundaries use the pinned published Effect 4.0.2 dependency. The latest
+change passes 214 tests, typecheck and build; legacy rendering,
+browsing/read/mutation output, file bytes/modes, Git/command arguments and
+provider request/tool fixtures match unchanged.
+Worker prompts/reports and MCP requests/redaction match their legacy fixtures.
+The batch envelope and final registry integration remain ahead of the step-2 gate.
 
 See the [baseline and frozen fixtures](EFFECT_MIGRATION_BASELINE.md),
 [Schema patterns](../agent-patterns/effect-schema.md) and
@@ -133,7 +135,7 @@ have meaningful tests. No application import resolves into `repos/`.
 - [ ] Introduce a tool registry that associates each tool name with its argument
       schema, capability requirements, and implementation. Migrate tool groups
       in sequence: browsing, file/Git reads, mutations, commands, workers/MCP.
-      Browsing, file/Git reads, mutations and commands are complete, including `zoom`,
+      All five groups are complete, including `zoom`,
       `date`, `get_plan`, `write_file`, `edit_file`, `apply_patch` and `update_plan`.
       Registered batch inputs validate before any call starts;
       runtime failures remain individual results. File line options preserve
@@ -145,8 +147,12 @@ have meaningful tests. No application import resolves into `repos/`.
       literal argv, nullish timeouts/waits, flag defaults and UTF-8 stdin limits.
       Enabled command reads validate during batch preparation; job/pipe state
       remains in the existing command service. Shell permission still gates all
-      command tools, including status/listing. Next: workers/MCP. Those groups
-      and the batch envelope retain their legacy validation for now.
+      command tools, including status/listing. Worker schemas preserve raw tasks,
+      identifier rules and execution-time capacity checks. MCP envelope validation
+      finishes before acquisition, with configured-server/exact-allowlist checks
+      before payload validation and again at invocation. Native remote schemas
+      and payload keys remain unchanged. Next: the batch envelope and final
+      registry integration; the envelope retains legacy validation for now.
 - [ ] Remove duplicate argument interfaces only after schemas can derive their
       types. Treat refinement rules such as project containment and tool
       permission as explicit domain checks, not type assertions.

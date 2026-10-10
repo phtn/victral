@@ -6,10 +6,11 @@ import { capResult } from './constants.js';
 import { errorMessage } from './types.js';
 import { httpURL } from './web-browser.js';
 import { parseIntegrations, type IntegrationConfigs } from './integration-config.js';
+import { parseListIntegrations, parseListIntegrationTools, parseCallIntegrationTool, parseIntegrationCallServer, parseIntegrationToolName,
+  type ListIntegrationToolsArgs, type CallIntegrationToolArgs } from './integration-tool-schema.js';
 export { parseIntegrations } from './integration-config.js';
 export type { IntegrationConfig, IntegrationConfigs } from './integration-config.js';
 
-const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 export async function loadIntegrations(filename: string, project: string): Promise<Integrations> {
   const config = parseIntegrations(JSON.parse(await fs.readFile(filename, 'utf8')));
   return new Integrations(config, project);
@@ -66,38 +67,59 @@ export class Integrations {
     this.pending.set(name, work);
     return work;
   }
-  async execute(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
-    if (name === 'list_integrations') return this.list();
-    if (typeof args.server !== 'string') throw new Error('server must be a configured integration name.');
-    const config = this.config[args.server];
-    if (!Object.hasOwn(this.config, args.server)) throw new Error(`Unknown integration: ${args.server}.`);
-    if (name === 'call_integration_tool' && (typeof args.tool !== 'string' || !config.allowTools.includes(args.tool))) throw new Error('This integration tool is not enabled. Add its exact name to allowTools in your MCP config.');
+  private serverConfig(server: string) {
+    if (!Object.hasOwn(this.config, server)) throw new Error(`Unknown integration: ${server}.`);
+    return this.config[server]!;
+  }
+  private checkToolAccess(server: string, tool: string): void {
+    if (!this.serverConfig(server).allowTools.includes(tool)) throw new Error('This integration tool is not enabled. Add its exact name to allowTools in your MCP config.');
+  }
+  checkCallAccess(value: unknown): void {
+    const { server } = parseIntegrationCallServer(value);
+    this.serverConfig(server);
+    this.checkToolAccess(server, parseIntegrationToolName(value).tool);
+  }
+  async execute(name: string, value: unknown, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
+    if (name === 'list_integrations') { parseListIntegrations(value); return this.list(); }
+    if (name === 'list_integration_tools') return this.discoverTools(parseListIntegrationTools(value), signal);
+    if (name === 'call_integration_tool') {
+      this.checkCallAccess(value);
+      return this.callTool(parseCallIntegrationTool(value), signal);
+    }
+    throw new Error(`Unknown integration operation: ${name}.`);
+  }
+  async discoverTools(args: ListIntegrationToolsArgs, signal?: AbortSignal): Promise<string> {
+    const config = this.serverConfig(args.server);
     const client = await this.client(args.server, signal);
     const options = { timeout: 30_000, signal: signal ? AbortSignal.any([signal, this.lifetime.signal]) : this.lifetime.signal };
     try {
-      if (name === 'list_integration_tools') {
-        const tools = [];
-        let cursor: string | undefined;
-        const cursors = new Set<string>();
-        do {
-          const page = await client.listTools(cursor ? { cursor } : {}, options);
-          tools.push(...page.tools.map(tool => ({ ...tool, enabled: config.allowTools.includes(tool.name) })));
-          cursor = page.nextCursor;
-          if (cursor && cursors.has(cursor)) throw new Error('MCP server repeated its tool-list cursor.');
-          if (cursor) cursors.add(cursor);
-          if (tools.length > 500) throw new Error('MCP tool list exceeds 500 tools.');
-        } while (cursor);
-        return this.redact(JSON.stringify({ server: args.server, tools }, null, 2));
-      }
-      if (name === 'call_integration_tool') {
-        if (!object(args.arguments)) throw new Error('arguments must be an object.');
-        const result = await client.callTool({ name: args.tool as string, arguments: args.arguments }, undefined, options);
-        const content = (Array.isArray(result.content) ? result.content : []).map((block: Record<string, unknown>) => block.type === 'text' && typeof block.text === 'string' ? block.text : JSON.stringify({ type: block.type, note: 'Non-text content omitted; use a specialized client to view it.' })).join('\n');
-        const output = this.redact(content || JSON.stringify(result.structuredContent ?? {}));
-        if (result.isError) throw new Error(`Integration tool failed: ${output}`);
-        return output;
-      }
-      throw new Error(`Unknown integration operation: ${name}.`);
+      const tools = [];
+      let cursor: string | undefined;
+      const cursors = new Set<string>();
+      do {
+        const page = await client.listTools(cursor ? { cursor } : {}, options);
+        tools.push(...page.tools.map(tool => ({ ...tool, enabled: config.allowTools.includes(tool.name) })));
+        cursor = page.nextCursor;
+        if (cursor && cursors.has(cursor)) throw new Error('MCP server repeated its tool-list cursor.');
+        if (cursor) cursors.add(cursor);
+        if (tools.length > 500) throw new Error('MCP tool list exceeds 500 tools.');
+      } while (cursor);
+      return this.redact(JSON.stringify({ server: args.server, tools }, null, 2));
+    } catch (error) { throw new Error(this.redact(errorMessage(error))); }
+  }
+  async callTool(args: CallIntegrationToolArgs, signal?: AbortSignal): Promise<string> {
+    // Prepared calls may outlive a permission change. Recheck the exact name
+    // immediately before acquisition; never treat '*' as a wildcard.
+    this.checkToolAccess(args.server, args.tool);
+    const client = await this.client(args.server, signal);
+    const options = { timeout: 30_000, signal: signal ? AbortSignal.any([signal, this.lifetime.signal]) : this.lifetime.signal };
+    try {
+      const result = await client.callTool({ name: args.tool, arguments: args.arguments }, undefined, options);
+      const content = (Array.isArray(result.content) ? result.content : []).map((block: Record<string, unknown>) => block.type === 'text' && typeof block.text === 'string' ? block.text : JSON.stringify({ type: block.type, note: 'Non-text content omitted; use a specialized client to view it.' })).join('\n');
+      const output = this.redact(content || JSON.stringify(result.structuredContent ?? {}));
+      if (result.isError) throw new Error(`Integration tool failed: ${output}`);
+      return output;
     } catch (error) { throw new Error(this.redact(errorMessage(error))); }
   }
   async close(): Promise<void> {
