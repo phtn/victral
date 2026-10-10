@@ -1,0 +1,429 @@
+{
+  "source": "a08ab9663",
+  "files": {
+    "src/a.ts": "const First = 1;\nsecond zebra 🦓\nliteral [ bracket\nspace   here\n",
+    "src/b.js": "const second = 2;\n",
+    "src/data.bin": "binary\u0000data",
+    "empty.txt": "",
+    "literal[1].txt": "literal\n",
+    ".env": "secret fixture",
+    "node_modules/dependency.js": "const ignored = 3;",
+    ".git/config": "fixture"
+  },
+  "symlinks": {
+    "link": "src"
+  },
+  "reads": [
+    {
+      "tool": "zoom",
+      "arguments": {
+        "id": 8,
+        "n": 4,
+        "page": 2
+      },
+      "output": "{\"id\":8,\"n\":4,\"page\":2}"
+    },
+    {
+      "tool": "zoom",
+      "arguments": {
+        "id": 0,
+        "n": null
+      },
+      "output": "{\"id\":0,\"n\":1}"
+    },
+    {
+      "tool": "date",
+      "arguments": {
+        "id": 5,
+        "n": "ignored",
+        "page": 1
+      },
+      "output": "Date of message 5."
+    },
+    {
+      "tool": "get_plan",
+      "arguments": {
+        "metadata": "ignored"
+      },
+      "output": "No task plan. Use update_plan with expected_revision: 0 to create one."
+    },
+    {
+      "tool": "list_files",
+      "arguments": {
+        "path": ""
+      },
+      "output": ".env\n.git/\nempty.txt\nlink\nliteral[1].txt\nnode_modules/\nsrc/"
+    },
+    {
+      "tool": "list_files",
+      "arguments": {
+        "path": "src"
+      },
+      "output": "a.ts\nb.js\ndata.bin"
+    },
+    {
+      "tool": "read_file",
+      "arguments": {
+        "path": "src/a.ts"
+      },
+      "output": "const First = 1;\nsecond zebra 🦓\nliteral [ bracket\nspace   here\n"
+    },
+    {
+      "tool": "read_file",
+      "arguments": {
+        "path": "src/a.ts",
+        "start_line": null
+      },
+      "output": "1: const First = 1;\n2: second zebra 🦓\n3: literal [ bracket\n4: space   here\n5: "
+    },
+    {
+      "tool": "read_file",
+      "arguments": {
+        "path": "src/a.ts",
+        "end_line": null
+      },
+      "output": "1: const First = 1;\n2: second zebra 🦓\n3: literal [ bracket\n4: space   here\n5: "
+    },
+    {
+      "tool": "read_file",
+      "arguments": {
+        "path": "src/a.ts",
+        "start_line": 2,
+        "end_line": 3
+      },
+      "output": "2: second zebra 🦓\n3: literal [ bracket"
+    },
+    {
+      "tool": "read_file",
+      "arguments": {
+        "path": "src/a.ts",
+        "start_line": 20
+      },
+      "output": ""
+    },
+    {
+      "tool": "read_file",
+      "arguments": {
+        "path": "empty.txt",
+        "start_line": null,
+        "end_line": null
+      },
+      "output": "1: "
+    },
+    {
+      "tool": "glob_files",
+      "arguments": {
+        "pattern": "**/*.{ts,js}",
+        "path": "src"
+      },
+      "output": "src/a.ts\nsrc/b.js\n[3 files scanned]"
+    },
+    {
+      "tool": "glob_files",
+      "arguments": {
+        "pattern": "**/*",
+        "max_results": 1
+      },
+      "output": "empty.txt\n[1 files scanned; search limit reached]"
+    },
+    {
+      "tool": "search_files",
+      "arguments": {
+        "query": "const",
+        "max_results": null
+      },
+      "output": "src/a.ts:1: const First = 1;\nsrc/b.js:1: const second = 2;\n[5 files scanned]"
+    },
+    {
+      "tool": "search_files",
+      "arguments": {
+        "query": "["
+      },
+      "output": "src/a.ts:3: literal [ bracket\n[5 files scanned]"
+    },
+    {
+      "tool": "search_files",
+      "arguments": {
+        "query": "^const first",
+        "regex": true,
+        "case_sensitive": false,
+        "glob": "**/*.ts"
+      },
+      "output": "src/a.ts:1: const First = 1;\n[5 files scanned]"
+    },
+    {
+      "tool": "search_files",
+      "arguments": {
+        "query": " ",
+        "path": "src"
+      },
+      "output": "src/a.ts:1: const First = 1;\nsrc/a.ts:2: second zebra 🦓\nsrc/a.ts:3: literal [ bracket\nsrc/a.ts:4: space   here\nsrc/b.js:1: const second = 2;\n[3 files scanned]"
+    }
+  ],
+  "git": [
+    {
+      "tool": "git_status",
+      "arguments": {},
+      "argv": [
+        "git",
+        "--no-pager",
+        "-c",
+        "core.fsmonitor=false",
+        "status",
+        "--short",
+        "--branch"
+      ],
+      "timeoutMs": 4321,
+      "output": "Fixture Git output 🦓."
+    },
+    {
+      "tool": "git_diff",
+      "arguments": {},
+      "argv": [
+        "git",
+        "--no-pager",
+        "-c",
+        "core.fsmonitor=false",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--"
+      ],
+      "timeoutMs": 4321,
+      "output": "Fixture Git output 🦓."
+    },
+    {
+      "tool": "git_diff",
+      "arguments": {
+        "staged": true,
+        "base": "HEAD~1",
+        "path": "literal[1].txt"
+      },
+      "argv": [
+        "git",
+        "--no-pager",
+        "-c",
+        "core.fsmonitor=false",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--cached",
+        "HEAD~1",
+        "--",
+        ":(literal)literal[1].txt"
+      ],
+      "timeoutMs": 4321,
+      "output": "Fixture Git output 🦓."
+    },
+    {
+      "tool": "git_diff",
+      "arguments": {
+        "path": ""
+      },
+      "argv": [
+        "git",
+        "--no-pager",
+        "-c",
+        "core.fsmonitor=false",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--",
+        ":(literal)"
+      ],
+      "timeoutMs": 4321,
+      "output": "Fixture Git output 🦓."
+    },
+    {
+      "tool": "git_log",
+      "arguments": {},
+      "argv": [
+        "git",
+        "--no-pager",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "log.showSignature=false",
+        "-c",
+        "color.ui=false",
+        "log",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-decorate",
+        "--date=iso-strict",
+        "--format=%h%x09%ad%x09%an%x09%s",
+        "-n",
+        "20",
+        "HEAD",
+        "--"
+      ],
+      "timeoutMs": 4321,
+      "output": "Fixture Git output 🦓."
+    },
+    {
+      "tool": "git_log",
+      "arguments": {
+        "ref": "HEAD~1",
+        "max_count": null,
+        "path": "literal[1].txt"
+      },
+      "argv": [
+        "git",
+        "--no-pager",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "log.showSignature=false",
+        "-c",
+        "color.ui=false",
+        "log",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-decorate",
+        "--date=iso-strict",
+        "--format=%h%x09%ad%x09%an%x09%s",
+        "-n",
+        "20",
+        "HEAD~1",
+        "--",
+        ":(literal)literal[1].txt"
+      ],
+      "timeoutMs": 4321,
+      "output": "Fixture Git output 🦓."
+    },
+    {
+      "tool": "git_log",
+      "arguments": {
+        "max_count": 1
+      },
+      "argv": [
+        "git",
+        "--no-pager",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "log.showSignature=false",
+        "-c",
+        "color.ui=false",
+        "log",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-decorate",
+        "--date=iso-strict",
+        "--format=%h%x09%ad%x09%an%x09%s",
+        "-n",
+        "1",
+        "HEAD",
+        "--"
+      ],
+      "timeoutMs": 4321,
+      "output": "Fixture Git output 🦓."
+    },
+    {
+      "tool": "git_show",
+      "arguments": {
+        "path": "literal[1].txt"
+      },
+      "argv": [
+        "git",
+        "--no-pager",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "log.showSignature=false",
+        "-c",
+        "color.ui=false",
+        "show",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--format=fuller",
+        "--stat",
+        "--patch",
+        "HEAD",
+        "--",
+        ":(literal)literal[1].txt"
+      ],
+      "timeoutMs": 4321,
+      "output": "Fixture Git output 🦓."
+    },
+    {
+      "tool": "git_show",
+      "arguments": {
+        "ref": "HEAD~2"
+      },
+      "argv": [
+        "git",
+        "--no-pager",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "log.showSignature=false",
+        "-c",
+        "color.ui=false",
+        "show",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--format=fuller",
+        "--stat",
+        "--patch",
+        "HEAD~2",
+        "--"
+      ],
+      "timeoutMs": 4321,
+      "output": "Fixture Git output 🦓."
+    },
+    {
+      "tool": "git_blame",
+      "arguments": {
+        "path": "src/a.ts"
+      },
+      "argv": [
+        "git",
+        "--no-pager",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "log.showSignature=false",
+        "-c",
+        "color.ui=false",
+        "blame",
+        "--no-textconv",
+        "--date=iso-strict",
+        "HEAD",
+        "--",
+        "src/a.ts"
+      ],
+      "timeoutMs": 4321,
+      "output": "Fixture Git output 🦓."
+    },
+    {
+      "tool": "git_blame",
+      "arguments": {
+        "path": "src/a.ts",
+        "ref": "HEAD~1",
+        "start_line": 2,
+        "end_line": 3
+      },
+      "argv": [
+        "git",
+        "--no-pager",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "log.showSignature=false",
+        "-c",
+        "color.ui=false",
+        "blame",
+        "--no-textconv",
+        "--date=iso-strict",
+        "-L",
+        "2,3",
+        "HEAD~1",
+        "--",
+        "src/a.ts"
+      ],
+      "timeoutMs": 4321,
+      "output": "Fixture Git output 🦓."
+    }
+  ]
+}

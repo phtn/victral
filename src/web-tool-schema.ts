@@ -1,8 +1,8 @@
-import * as Effect from 'effect/Effect';
 import * as Schema from 'effect/Schema';
 import * as SchemaTransformation from 'effect/SchemaTransformation';
 import { validationDecoder } from './core/schema.js';
 import { httpURL } from './http-url.js';
+import { defaultIntegerArgument } from './tool-argument-schema.js';
 
 function urlSchema(browsing: boolean) {
   const message = browsing ? 'Expected an absolute HTTP(S) URL without embedded credentials.' : 'Expected an absolute http(s) URL.';
@@ -18,15 +18,7 @@ function urlSchema(browsing: boolean) {
 
 function defaultInteger(name: string, fallback: number, maximum: number, fetching = false) {
   const message = fetching ? `${name} must be an integer between 1 and ${maximum}.` : `${name} must be between 1 and ${maximum}.`;
-  const integer = Schema.Number.check(Schema.isInt({ message }),
-    Schema.isBetween({ minimum: 1, maximum }, { message }),
-  ).annotate({ identifier: message });
-  // Legacy numeric options use ?? defaults: preserve null as well as absence
-  // and undefined, without accepting numeric strings or unsafe integers.
-  return Schema.NullOr(integer).pipe(
-    Schema.decodeTo(integer, SchemaTransformation.transform({ decode: value => value ?? fallback, encode: value => value })),
-    Schema.withDecodingDefault(Effect.succeed(fallback)),
-  );
+  return defaultIntegerArgument(name, fallback, maximum, message);
 }
 
 const PageId = Schema.String.annotate({ identifier: 'Expected page_id to be text.' })

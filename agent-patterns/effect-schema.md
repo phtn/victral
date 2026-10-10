@@ -246,6 +246,44 @@ Legacy `WebBrowser.open/read/find` calls decode unknown values and delegate to
 the same typed implementations used by the registry. Registry handlers must
 call those implementations with decoded arguments to avoid parsing twice.
 
+The [file/Git read schemas](../src/read-tool-schema.ts) reuse
+[argument combinators](../src/tool-argument-schema.ts) for safe integer bounds,
+nullish numeric defaults, missing/undefined-only boolean defaults, and useful
+field messages. Derive Git handler types from those schemas. `GitTools.execute`
+adapts unknown inputs to typed methods; the registry calls the typed methods
+directly. Preserve the distinction between structural and state-dependent rules:
+filesystem containment and symlink checks still run through `resolveFile`, and
+memory alignment/history checks still return `Memory.zoom`'s domain results.
+
+For `read_file`, retain `optional(NullOr(Line))` on each line option. Absent or
+undefined options request raw text, while explicit null requests numbered text
+with defaults. The end default depends on file length and stays in the handler;
+normalizing all absent/null options during decoding would change output. Git
+blame differs: line options reject null and must be supplied together.
+
+Attach cross-field failures to the relevant field using `makeFilter`'s pointer
+form, adapted from the nested-path examples in `Schema.ts` and its runtime tests:
+
+```ts
+const Range = Schema.Struct({ start_line: Schema.Int, end_line: Schema.Int }).check(
+  Schema.makeFilter((args) => args.end_line < args.start_line
+    ? { path: ["end_line"], issue: "end_line must not precede start_line." }
+    : undefined)
+)
+```
+
+Validate regex syntax only when regex mode is enabled. Keep literal queries and
+whitespace intact; compiling a literal query would reject valid searches. Regex
+execution remains in the existing worker with its deadline and cancellation.
+Keep Git references as strings with the existing option/NUL/newline exclusions;
+actual revision existence belongs to Git. Preserve literal pathspecs, native
+argument arrays and Git flags rather than constructing shell strings.
+
+For a no-argument tool, use `Record(String, Unknown)` to require an arguments
+object and let the handler ignore its keys. Do not use `Struct({})` as an object
+guard: this Effect version accepts non-null primitives for that empty TypeScript
+shape. Arrays and null must fail before the tool runs.
+
 ## Errors and domain models
 
 Prefer typed failures inside Effect workflows. Adapted from `10_schema-basics.ts`:

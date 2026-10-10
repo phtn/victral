@@ -6,11 +6,12 @@ configuration and Schema-guide changes. This is an implementation backlog.
 ## Implementation status
 
 Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0 and 1 are complete;
-step 2 now includes MCP configuration, task plans, audio settings and the browsing
-tool registry. These boundaries use the pinned published Effect 4.0.2 dependency.
-The latest change passes 180 tests, typecheck and build; legacy rendering,
-browsing output and provider request/tool fixtures match unchanged. File/Git
-reads, mutations, commands and workers/MCP remain ahead of the step-2 gate.
+step 2 now includes MCP configuration, task plans, audio settings, browsing and
+file/Git read-tool registries. These boundaries use the pinned published Effect
+4.0.2 dependency. The latest change passes 188 tests, typecheck and build; legacy
+rendering, browsing/read output, Git arguments and provider request/tool fixtures
+match unchanged. Mutations, commands and workers/MCP remain ahead of the step-2
+gate.
 
 See the [baseline and frozen fixtures](EFFECT_MIGRATION_BASELINE.md),
 [Schema patterns](../agent-patterns/effect-schema.md) and
@@ -132,10 +133,12 @@ have meaningful tests. No application import resolves into `repos/`.
 - [ ] Introduce a tool registry that associates each tool name with its argument
       schema, capability requirements, and implementation. Migrate tool groups
       in sequence: browsing, file/Git reads, mutations, commands, workers/MCP.
-      Browsing is complete: `browse_url`, `read_web_page`, `find_in_page` and
-      `fetch_url` use schemas and the registry. Registered batch inputs validate
-      before any call starts; runtime failures remain individual results. Next:
-      file/Git reads. Other tool groups retain their legacy validation for now.
+      Browsing and file/Git reads are complete, including `zoom`, `date` and
+      `get_plan`. Registered batch inputs validate before any call starts;
+      runtime failures remain individual results. File line options preserve
+      null/undefined behavior; blame requires paired endpoints, and containment
+      stays in the shared filesystem resolver. Next: mutations. Other tool groups
+      and the batch envelope retain their legacy validation for now.
 - [ ] Remove duplicate argument interfaces only after schemas can derive their
       types. Treat refinement rules such as project containment and tool
       permission as explicit domain checks, not type assertions.

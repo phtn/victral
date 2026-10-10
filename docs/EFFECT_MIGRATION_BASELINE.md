@@ -61,6 +61,8 @@ and compare this benchmark when those subsystems or their orchestration migrate.
   a saved view and the expected rendered memory after restart.
 - `legacy-task-plans.json` and `legacy-browsing.json`: boundary fixtures captured
   from their pre-migration implementations, as described below.
+- `legacy-read-tools.json`: pre-migration file/discovery/memory output and Git
+  argument arrays, described below.
 
 The messages and service setup live in `test/migration-fixtures.ts`. All keys,
 encrypted strings and records are synthetic. Providers use injected fake fetch;
@@ -154,3 +156,36 @@ The registry owns argument dispatch only; Promise I/O, resource ownership and
 permission policy remain at their existing boundaries. File/Git reads are the
 next group. Memory and metrics scheduling are unchanged, so their original CPU
 benchmark remains the comparison point for later subsystem migrations.
+
+## File/Git read-registry migration verification
+
+`legacy-read-tools.json` was captured before this change from the `tools.ts`
+handlers at `a08ab9663`. File/discovery output uses real temporary files and a
+symlink with synthetic content; memory lookups use a deterministic fake port.
+Git argument arrays, configured timeout and output passthrough were captured
+with a fake `CommandTools.run`, without starting a process. Existing fixtures
+were not regenerated. Real Git history, staged/unstaged diffs, literal paths and
+blame remain covered by the existing temporary-repository contracts.
+
+- `bun run check`: 188 tests passed across 26 files; typecheck passed.
+- `bun run build`: passed; entry point bundled 55 application modules.
+- All prompt/tool/provider fixtures, legacy plans/chat/browsing and the new read
+  output/Git argument fixtures match.
+- Twelve tools now join browsing in the registry: memory `zoom`/`date`, plan
+  reads, directory/file reads, glob/search, and all five Git inspections. Their
+  implementations consume inferred schema types and require read capability.
+- New tests cover nullish numeric defaults, optional boolean/ref distinctions,
+  file numbering, paired/ordered blame ranges, safe bounds, literal query text,
+  codec shapes, malformed argument objects and safe field-path errors.
+- Invalid registered arguments and regex syntax reject a parallel batch before
+  any I/O or nested-call telemetry. Missing files still yield individual runtime
+  failures. Filesystem containment, external symlink rejection, allowed internal
+  symlinks, worker permissions and pre-aborted reads are preserved. Cancellation
+  during Git path resolution prevents starting the subprocess.
+
+File-length defaults and memory reference/history rules remain in their domain
+implementations. Regex execution retains its existing worker, deadline and
+cancellation behavior. Only validation/dispatch moved; mutations, commands,
+workers/MCP and the batch envelope are still pending. Memory scheduling and
+metrics are unchanged, so their original CPU benchmark remains the comparison
+point for their later migrations.

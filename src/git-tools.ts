@@ -1,43 +1,60 @@
-import { CommandTools } from './command-tools.js';
+import type { CommandTools } from './command-tools.js';
+import { parseGitRef, parseGitStatus, parseGitDiff, parseGitLog, parseGitShow, parseGitBlame,
+  type GitDiffArgs, type GitLogArgs, type GitShowArgs, type GitBlameArgs } from './read-tool-schema.js';
 
 export function gitRef(value: unknown, fallback = 'HEAD'): string {
-  const ref = value === undefined ? fallback : value;
-  if (typeof ref !== 'string' || !ref || ref.startsWith('-') || /[\0\r\n]/.test(ref)) throw new Error('ref must be a nonempty Git revision and cannot start with -.');
-  return ref;
-}
-function lineNumber(value: unknown, name: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 1) throw new Error(`${name} must be a positive integer.`);
-  return value as number;
+  return parseGitRef(value === undefined ? fallback : value);
 }
 
 export class GitTools {
-  constructor(private commands: CommandTools, private resolve: (relative: string) => Promise<string>, private timeoutMs: number) {}
-  async execute(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
-    const argv = ['git', '--no-pager', '-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false', '-c', 'color.ui=false'];
-    const ref = gitRef(args.ref);
-    if (name === 'git_log') {
-      const count = args.max_count ?? 20;
-      if (!Number.isSafeInteger(count) || (count as number) < 1 || (count as number) > 100) throw new Error('max_count must be an integer between 1 and 100.');
-      argv.push('log', '--no-ext-diff', '--no-textconv', '--no-decorate', '--date=iso-strict', '--format=%h%x09%ad%x09%an%x09%s', '-n', String(count), ref);
-    } else if (name === 'git_show') {
-      argv.push('show', '--no-ext-diff', '--no-textconv', '--format=fuller', '--stat', '--patch', ref);
-    } else if (name === 'git_blame') {
-      argv.push('blame', '--no-textconv', '--date=iso-strict');
-      if (args.start_line !== undefined || args.end_line !== undefined) {
-        const start = lineNumber(args.start_line, 'start_line'), end = lineNumber(args.end_line, 'end_line');
-        if (end < start) throw new Error('end_line must not precede start_line.');
-        argv.push('-L', `${start},${end}`);
-      }
-      if (typeof args.path !== 'string' || !args.path) throw new Error('git_blame requires a project-relative file path.');
-      argv.push(ref);
-    } else throw new Error(`Unknown Git inspection tool: ${name}.`);
+  constructor(private commands: Pick<CommandTools, 'run'>, private resolve: (relative: string) => Promise<string>, private timeoutMs: number) {}
+  async execute(name: string, args: unknown, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
+    if (name === 'git_status') { parseGitStatus(args); return this.status(signal); }
+    if (name === 'git_diff') return this.diff(parseGitDiff(args), signal);
+    if (name === 'git_log') return this.log(parseGitLog(args), signal);
+    if (name === 'git_show') return this.show(parseGitShow(args), signal);
+    if (name === 'git_blame') return this.blame(parseGitBlame(args), signal);
+    throw new Error(`Unknown Git inspection tool: ${name}.`);
+  }
+  status(signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
+    return this.commands.run(['git', '--no-pager', '-c', 'core.fsmonitor=false', 'status', '--short', '--branch'], this.timeoutMs, signal);
+  }
+  diff(args: GitDiffArgs, signal?: AbortSignal): Promise<string> {
+    const argv = ['git', '--no-pager', '-c', 'core.fsmonitor=false', 'diff', '--no-ext-diff', '--no-textconv', ...(args.staged ? ['--cached'] : [])];
+    if (args.base !== undefined) argv.push(args.base);
+    return this.run(argv, args.path, true, signal);
+  }
+  log(args: GitLogArgs, signal?: AbortSignal): Promise<string> {
+    const argv = this.historyArgs();
+    argv.push('log', '--no-ext-diff', '--no-textconv', '--no-decorate', '--date=iso-strict', '--format=%h%x09%ad%x09%an%x09%s', '-n', String(args.max_count), args.ref);
+    return this.run(argv, args.path, true, signal);
+  }
+  show(args: GitShowArgs, signal?: AbortSignal): Promise<string> {
+    const argv = this.historyArgs();
+    argv.push('show', '--no-ext-diff', '--no-textconv', '--format=fuller', '--stat', '--patch', args.ref);
+    return this.run(argv, args.path, true, signal);
+  }
+  blame(args: GitBlameArgs, signal?: AbortSignal): Promise<string> {
+    const argv = this.historyArgs();
+    argv.push('blame', '--no-textconv', '--date=iso-strict');
+    if (args.start_line !== undefined && args.end_line !== undefined) argv.push('-L', `${args.start_line},${args.end_line}`);
+    argv.push(args.ref);
+    return this.run(argv, args.path, false, signal);
+  }
+  private historyArgs(): string[] {
+    return ['git', '--no-pager', '-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false', '-c', 'color.ui=false'];
+  }
+  private async run(argv: string[], relative: string | undefined, literal: boolean, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
     argv.push('--');
-    if (args.path !== undefined) {
-      if (typeof args.path !== 'string' || !args.path) throw new Error('Expected a project-relative path.');
-      await this.resolve(args.path);
+    if (relative !== undefined) {
+      await this.resolve(relative);
       // Literal pathspecs prevent leading : or glob characters from changing scope.
-      argv.push(name === 'git_blame' ? args.path : `:(literal)${args.path}`);
+      argv.push(literal ? `:(literal)${relative}` : relative);
     }
+    signal?.throwIfAborted();
     return this.commands.run(argv, this.timeoutMs, signal);
   }
 }

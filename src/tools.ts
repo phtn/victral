@@ -1,14 +1,13 @@
 import fs from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
-import { capResult } from './constants.js';
-import { discoverFiles } from './file-discovery.js';
 import { applyProjectPatch } from './apply-patch.js';
 import { CommandTools } from './command-tools.js';
 import { TaskPlans, type PlanStore } from './task-plans.js';
-import { GitTools, gitRef } from './git-tools.js';
+import { GitTools } from './git-tools.js';
 import { WebBrowser } from './web-browser.js';
 import { browsingTools } from './browsing-tools.js';
+import { readTools } from './read-tools.js';
 import { ToolRegistry } from './tool-registry.js';
 import type { Integrations } from './integrations.js';
 import type { Subagents } from './subagents.js';
@@ -89,7 +88,6 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
     tool('write_command_input', 'Write input to a running command started with interactive: true. Input is literal UTF-8, at most 65536 bytes; include any needed newline. Set eof: true to close stdin after sending (input may be omitted for EOF). A blocked write times out after 2s and stops the command; canceling a write also stops it.', { command_id: string, input: string, eof: { type: 'boolean' } }, ['command_id']),
   );
   const browser = new WebBrowser(fetchImpl);
-  const registry = new ToolRegistry(browsingTools(browser, fetchImpl, timeoutMs), ['read']);
   const commands = new CommandTools(project);
   const plans = new TaskPlans(project, planStore);
   const contained = (filename: string) => filename === project || filename.startsWith(project + path.sep);
@@ -112,6 +110,9 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
     return filename;
   }
   const git = new GitTools(commands, resolveFile, timeoutMs);
+  const registry = new ToolRegistry([
+    ...browsingTools(browser, fetchImpl, timeoutMs), ...readTools(memory, { project, resolveFile, plans, git }),
+  ], ['read']);
   async function execute(name: string, args: Record<string, unknown>, signal?: AbortSignal, onNestedCall?: (name: string) => void): Promise<string> {
     signal?.throwIfAborted();
     if (registry.has(name)) return registry.execute(name, args, signal);
@@ -120,31 +121,11 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
     if (subagents && name === 'list_subagents') return subagents.list();
     if (subagents && name === 'subagent_status') return subagents.status(args);
     if (subagents && name === 'stop_subagent') return subagents.stop(args);
-    if (name === 'get_plan') return plans.get();
     if (name === 'update_plan') return plans.update(args);
     if (name === 'parallel_tools') return parallelReads(args.calls, (nested, values) => {
       const invoke = registry.has(nested) ? registry.prepare(nested, values) : (nestedSignal?: AbortSignal) => execute(nested, values, nestedSignal);
       return nestedSignal => { onNestedCall?.(nested); return invoke(nestedSignal); };
     }, signal);
-    if (name === 'git_log' || name === 'git_show' || name === 'git_blame') return git.execute(name, args, signal);
-    if (name === 'zoom' || name === 'date') {
-      if (!Number.isSafeInteger(args.id) || (args.id as number) < 0) throw new Error('id must be a nonnegative integer.');
-      if (args.page !== undefined && (!Number.isSafeInteger(args.page) || (args.page as number) < 0)) throw new Error('page must be a nonnegative integer.');
-      return name === 'date' ? memory.date(args.id as number) : memory.zoom(args.id as number, integerArg(args, 'n', 1, 2 ** 30), args.page as number | undefined);
-    }
-    if (name === 'list_files') {
-      const entries = await fs.readdir(await resolveFile(text(args, 'path')), { withFileTypes: true });
-      return capResult(entries.sort((a, b) => a.name.localeCompare(b.name)).map(e => e.name + (e.isDirectory() ? '/' : '')).join('\n'));
-    }
-    if (name === 'read_file') {
-      const contents = await fs.readFile(await resolveFile(text(args, 'path')), 'utf8');
-      if (args.start_line === undefined && args.end_line === undefined) return capResult(contents);
-      const lines = contents.split('\n');
-      const start = integerArg(args, 'start_line', 1, Number.MAX_SAFE_INTEGER);
-      const end = integerArg(args, 'end_line', Math.max(start, lines.length), Number.MAX_SAFE_INTEGER);
-      if (end < start) throw new Error('end_line must not precede start_line.');
-      return capResult(lines.slice(start - 1, end).map((line, i) => `${start + i}: ${line}`).join('\n'));
-    }
     if (name === 'write_file' || name === 'edit_file') {
       const filename = await resolveFile(text(args, 'path'));
       let content: string;
@@ -164,24 +145,6 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
       return `${name === 'edit_file' ? 'Edited' : 'Wrote'} ${args.path}.`;
     }
     if (name === 'apply_patch') return applyProjectPatch(text(args, 'patch'), resolveFile, signal);
-    if (name === 'search_files' || name === 'glob_files') {
-      const query = name === 'search_files' ? text(args, 'query') : undefined;
-      if (query !== undefined && (!query || /[\r\n\0]/.test(query))) throw new Error('query must be nonempty, single-line text.');
-      const pattern = name === 'glob_files' ? text(args, 'pattern') : args.glob === undefined ? undefined : text(args, 'glob');
-      if (pattern !== undefined && (!pattern || pattern.includes('\0') || path.isAbsolute(pattern) || pattern.split('/').includes('..'))) throw new Error('Expected a nonempty project-relative glob without .. segments.');
-      return discoverFiles({ root: await resolveFile(args.path === undefined ? '.' : text(args, 'path')), project, signal, query, pattern,
-        regex: booleanArg(args, 'regex', false), caseSensitive: booleanArg(args, 'case_sensitive', true),
-        maxResults: integerArg(args, 'max_results', name === 'glob_files' ? 200 : 100, 1000) });
-    }
-    if (name === 'git_status') return commands.run(['git', '--no-pager', '-c', 'core.fsmonitor=false', 'status', '--short', '--branch'], timeoutMs, signal);
-    if (name === 'git_diff') {
-      if (args.staged !== undefined && typeof args.staged !== 'boolean') throw new Error('staged must be boolean.');
-      const argv = ['git', '--no-pager', '-c', 'core.fsmonitor=false', 'diff', '--no-ext-diff', '--no-textconv', ...(args.staged ? ['--cached'] : [])];
-      if (args.base !== undefined) argv.push(gitRef(args.base));
-      argv.push('--');
-      if (args.path !== undefined) { await resolveFile(text(args, 'path')); argv.push(`:(literal)${text(args, 'path')}`); }
-      return commands.run(argv, timeoutMs, signal);
-    }
     if (allowShell && (name === 'shell' || name === 'run_command')) {
       const ms = integerArg(args, 'timeout_ms', timeoutMs, 120_000);
       if (name === 'shell') return commands.run([process.env.SHELL ?? '/bin/sh', '-c', text(args, 'command')], ms, signal);
