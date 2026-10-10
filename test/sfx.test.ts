@@ -87,6 +87,8 @@ test('sound lab TUI previews, navigates, changes volume, mutes, and releases lis
   expect(view.lastFrame()).toContain('Success'); expect(view.lastFrame()).toContain('Retry'); expect(played).toHaveLength(0);
   view.stdin.write('\r'); await flush(); expect(played[0]).toEqual({ sound: 'success', volume: 0.5 });
   view.stdin.write('\x1b[B'); await flush(); expect(view.lastFrame()).toContain('patch: processing');
+  view.stdin.write('j'); await flush(); expect(view.lastFrame()).toContain('patch: error');
+  view.stdin.write('k'); await flush(); expect(view.lastFrame()).toContain('patch: processing');
   view.stdin.write('\x1b[C'); await flush(); expect(view.lastFrame()).toContain('55%');
   view.stdin.write('m'); await flush(); expect(view.lastFrame()).toContain('MUTED');
   view.stdin.write('\r'); await flush(); expect(played).toHaveLength(1);

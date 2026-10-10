@@ -18,8 +18,8 @@ setup
   }, [lab])
   useInput((key, event) => {
     if (key === 'q' || (event.ctrl && key === 'c')) { void lab.close(); return }
-    if (event.upArrow) lab.select(-1)
-    else if (event.downArrow || event.tab) lab.select(1)
+    if (event.upArrow || key === 'k') lab.select(-1)
+    else if (event.downArrow || event.tab || key === 'j') lab.select(1)
     else if (event.leftArrow || key === '-') lab.volume(-0.05)
     else if (event.rightArrow || key === '+' || key === '=') lab.volume(0.05)
     else if (event.return || key === ' ') void lab.playSelected()
@@ -49,7 +49,7 @@ else
     Box(height={1} marginTop={1} flexShrink={0})
       Text(color={state.muted ? '#ffcb6b' : '#98c379'} wrap="truncate-end") #{`${state.muted ? 'MUTED' : 'SOUND ON'}  ·  ${volume}  ·  ${state.backend}`}
     Box(height={1} flexShrink={0})
-      Text(color="#8b949e" wrap="truncate-end") #{`${top + 1}–${top + visible.length} / ${CUES.length} cues  ·  ↑↓ select  ·  Enter / Space preview`}
+      Text(color="#8b949e" wrap="truncate-end") #{`${top + 1}–${top + visible.length} / ${CUES.length} cues  ·  ↑↓ / j/k select  ·  Enter / Space preview`}
     each cue, index in visible key cue.sound
       Box(height={1} flexShrink={0})
         Text(color={top + index === state.selected ? '#5aa9ff' : '#e6edf3'} wrap="truncate-end")

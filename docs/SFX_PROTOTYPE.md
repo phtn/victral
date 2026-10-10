@@ -9,7 +9,7 @@ add audio to the main chat.
 
 | Key | Action |
 | --- | --- |
-| ↑ / ↓ / Tab | Select a cue; the list scrolls to keep it visible |
+| ↑ / k · ↓ / j / Tab | Select a cue; the list scrolls to keep it visible |
 | Enter / Space | Play the selected cue |
 | ← / → or − / + | Change volume in 5% steps, bounded to 0–100% |
 | m | Mute/unmute; muting stops current playback |

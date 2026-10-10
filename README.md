@@ -55,7 +55,7 @@ bun run sfx
 This opens a standalone terminal page with 21 cues adapted from
 `src/web-kits/index.btsx`, plus processing and retry cues. It starts silently,
 uses no API credentials or saved conversation, and leaves live chat notifications
-unchanged. Select with ↑↓, preview with Enter/Space, adjust volume with ←→,
+unchanged. Select with ↑↓ or j/k, preview with Enter/Space, adjust volume with ←→,
 mute with `m`, stop with `x`/Esc, and quit with `q`. Press `s` for a recovery
 and success scenario, or `f` for retry and failure.
 
