@@ -1,7 +1,7 @@
 # Victral
 
 A persistent coding workspace with a TypeScript CLI and a full-screen terminal
-interface, implementing the latest OptChat / UniiChat memory design with Meta models.
+interface, implementing the latest OptChat / UniiChat memory design with Meta and OpenAI models.
 The default is Meta `muse-spark-1.3-contributor` for both the agent and the compactor.
 The [upstream specification](docs/OPTCHAT_SPEC.md) is pinned to gist revision
 `3c190e06f34aba0c69f49042c526093269604935` (October 8, 2026).
@@ -35,7 +35,8 @@ application, scripts, and test suite and loads local `.env` files automatically.
 bun install
 ```
 
-Set `META_API_KEY` (or `MODEL_API_KEY`) for the default model in your environment
+Set `META_API_KEY` (or `MODEL_API_KEY`) for the default model, or `OPENAI_API_KEY`
+for an OpenAI model, in your environment
 or in a local `.env` file. The example
 in `.env.example` lists the available settings. Never commit your keys.
 
@@ -49,9 +50,12 @@ bun run start --project /absolute/path/to/your/project
 | --- | --- | --- | --- |
 | `ms1.3` | `muse-spark-1.3` | Meta | `META_API_KEY` or `MODEL_API_KEY` |
 | `ms1.3c` | `muse-spark-1.3-contributor` | Meta | `META_API_KEY` or `MODEL_API_KEY` |
+| `luna6` | `gpt-6-luna` | OpenAI | `OPENAI_API_KEY` |
+| `sol6.1` | `gpt-6.1-sol` | OpenAI | `OPENAI_API_KEY` |
 
 ```sh
 bun run start --project /absolute/path/to/your/project --model ms1.3
+bun run start --project /absolute/path/to/your/project --model luna6
 ```
 
 Choose the compactor separately if desired:
@@ -64,15 +68,35 @@ bun run start --model ms1.3 --compactor-model ms1.3c
 credentials, without making API requests. Models can be named by list number,
 short name, or full ID: `--model ms1.3` and `--model 1` work like
 `--model muse-spark-1.3`. During an interactive session, `/model` shows the
-current agent, the compactor, and the numbered choices; `/model ms1.3` switches
-the main agent between turns while retaining saved memory. The compactor stays
+current agent, the compactor, and the numbered choices; `/model meta ms1.3` or
+`/model openai sol6.1` switches the main agent between turns while retaining saved
+memory. `/model openai` lists only OpenAI models. Model-only shortcuts such as
+`/model ms1.3` and `/model luna6` also work. The compactor stays
 on its startup selection. Model switches are session-local;
 set `VICTRAL_MODEL` and `VICTRAL_COMPACTOR_MODEL` for defaults. Explicit CLI
 flags take precedence. The numbered choices are 1 for `muse-spark-1.3` and
-2 for `muse-spark-1.3-contributor`. Short names also work in the environment
+2 for `muse-spark-1.3-contributor`, 3 for `gpt-6-luna`, and 4 for `gpt-6.1-sol`.
+Short names also work in the environment
 settings and smoke scripts, and are case-insensitive. API requests and saved
 usage retain the full model IDs. The status bar shows the selected model's short
 name and updates when switching with `/model`.
+
+The status bar suggests matching command words as you type. `/m` shows `/metrics`
+and `/model`; `/mo` narrows to `/model`. Tab completes the selected word and adds
+a space, revealing the next choices: `meta` and `openai`, followed by that
+provider's models. For example, type `/mo`, Tab, `o`, Tab, `s`, Tab to compose
+`/model openai sol6.1 `. Up/Down or Shift+Tab changes the selected suggestion;
+Enter runs the completed command. Suggestions occupy the status bar while
+completing, then the usual model, project, and evaluation status returns.
+
+OpenAI supports only [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna)
+and [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol) in this
+app. Requests use the [Responses API](https://developers.openai.com/api/docs/guides/reasoning)
+with medium reasoning effort and `store: false`. Native output items, including
+encrypted reasoning and assistant phase, are replayed during tool steps within
+a turn; permanent memory stores visible text and tool activity. Both the agent
+and compactor can use either supported OpenAI model. Cached input and reasoning
+tokens are measured from provider usage without adding them twice to totals.
 
 Meta requests go directly to `https://api.meta.ai/v1/messages`, using the
 documented Anthropic-compatible Messages surface to preserve reasoning across
@@ -214,6 +238,8 @@ panel. Input supports pasting, cursor movement, Ctrl+A/Ctrl+E, and Ctrl+U.
 | Key | Action |
 | --- | --- |
 | Ctrl+P | Open the command menu; arrows select, Enter inserts a command |
+| Tab | Complete the selected command, provider, or model word and add a space |
+| Up / Down / Shift+Tab with suggestions | Select a suggestion |
 | Ctrl+O | Toggle the detailed metrics panel |
 | Page Up / Page Down | Scroll conversation or metrics |
 | Mouse wheel / Shift+Up / Shift+Down | Scroll three lines at a time |
@@ -250,7 +276,7 @@ queued work before releasing the chat lock.
 | `/jobs` | List retained background commands and their status |
 | `/metrics` | Show accumulated token, timing, memory, retrieval, and evaluation metrics |
 | `/jev` | Show recent automatic summary evaluations and their status |
-| `/model [NUMBER_OR_ID]` | Show models or switch the main agent between turns |
+| `/model [PROVIDER] [NUMBER_OR_SHORT_NAME_OR_ID]` | Show models or switch the main agent between turns |
 | `/view` | Display the current summary view |
 | `/zoom ID N [PAGE]` | Open a memory range; N must be a power of two; PAGE starts at 0 |
 | `/date ID` | Display a stored message's local date and time |
@@ -282,7 +308,8 @@ file boundaries, unique edits, patch validation and rollback, glob and regex
 search, durable plans and backups, concurrent read batches and their metrics,
 literal argument handling, interactive input and blocked pipe deadlines,
 foreground and background command timeout, cancellation and shutdown,
-Git history and attribution, the Meta adapter, memory, and evaluations. The built CLI
+Git history and attribution, the Meta and OpenAI adapters, staged command completion,
+memory, and evaluations. The built CLI
 needs the installed dependencies and its adjacent prompt assets.
 
 Metrics accumulate saved usage, turns, and message sizes once, and refresh audit
@@ -339,7 +366,7 @@ and recognition of application-keypad Enter. Tests cover those cases alongside
 editing, bracketed paste, Unicode, resizing, and subscription/raw-mode cleanup.
 The TSRX checker uses TypeScript 5.9.3, supported by this pinned toolchain.
 
-The Meta adapter, storage, compaction, and evaluation modules remain JavaScript
+The Meta and OpenAI adapters, storage, compaction, and evaluation modules remain JavaScript
 behind typed application interfaces; they are covered by the existing tests.
 Compatibility `.js` entry points keep current scripts and imports working.
 
@@ -348,11 +375,13 @@ synthetic example. It tests compaction, closing and reopening storage, and
 model-driven retrieval through `zoom`. Its artifacts remain in a temporary
 directory, separate from your real chat.
 
-Run the same smoke test for either Meta model:
+Run the same smoke test for a supported model:
 
 ```sh
 bun run smoke --model muse-spark-1.3
 bun run smoke --model muse-spark-1.3-contributor
+bun run smoke --model luna6
+bun run smoke --model sol6.1
 ```
 
 ## Memory implementation
@@ -376,7 +405,9 @@ New chat messages are stored and summarized automatically; no history import
 is needed. A compact metrics footer appears after each turn. Completed Jev
 evaluations arrive as status lines while idle, and are held until the turn
 ends while a reply is streaming. `/metrics` shows detailed totals; `/jev`
-shows the five most recently updated evaluations.
+shows the five most recently updated evaluations. `/metrics` and the Ctrl+O
+panel group activity, usage, agent/compactor totals, memory, and evaluations into
+tables, with comma-separated counts and separate rows for each measurement.
 
 The display includes:
 
@@ -417,6 +448,63 @@ context are never silently truncated. See [TypeSafe models](https://docs.typesaf
 `--no-jev` disables background API evaluations, preserving their queue for a
 future enabled launch. `--no-metrics` suppresses automatic footers while keeping
 saved measurements and the explicit `/metrics` and `/jev` commands available.
+
+## Browsing, integrations and research subagents
+
+Start with provider web search enabled when you need search results and citations:
+
+```sh
+bun run start --model sol6.1 --web-search
+```
+
+Search is opt-in for the main agent and its research workers. Compaction never
+uses web search. Search may incur additional provider charges. Returned source
+URLs appear in the answer. The selected model and its effort remain unchanged;
+there is no automatic fallback to a cheaper model.
+
+The `browse_url`, `read_web_page` and `find_in_page` tools are always available.
+They extract readable HTML or text, retain numbered lines and links, and support
+follow-up reads. Each page is limited to 2 MB; the latest 16 snapshots stay in
+this session. They do not execute JavaScript, log in, click buttons, or inspect
+PDFs. A browser or document MCP server can provide those capabilities.
+
+Load integrations explicitly:
+
+```sh
+bun run start --mcp-config /absolute/path/to/mcp.json
+```
+
+See [the MCP configuration example](docs/mcp.example.json). Replace its example
+server paths and endpoints with your own servers. Local servers use stdio;
+remote servers use Streamable HTTP. Servers connect lazily when inspected or
+called. `/integrations` lists servers; `/integrations SERVER` discovers their
+tool schemas. `allowTools` lists exact callable tool names and defaults to an
+empty list, so initial discovery does not grant tool execution. The agent uses
+`list_integrations`, `list_integration_tools`, and `call_integration_tool`.
+
+`env` and `headers` map target names to existing environment variable names,
+not literal credentials. For example, `Authorization: MCP_AUTHORIZATION`
+reads the full header value from that environment variable. Referenced secrets
+are redacted from tool output. Explicitly selecting a stdio server permits
+starting that program even without `--allow-shell`. Only configure servers you
+intend to run. Integration access is separate from authorization to send,
+publish, or perform other external actions.
+
+Ask Victral to use subagents for independent research. Workers run in the
+background and automatically deliver findings to the parent agent. Each worker
+uses the model selected when it starts, with the same effort as the main agent,
+and a snapshot of its memory and task plan. Workers may read project files,
+inspect Git, browse pages and use enabled provider search. They cannot edit
+files, run commands, invoke MCP integrations, or spawn further workers.
+
+Use `/subagents` to list workers, `/subagents ID` for findings, and
+`/subagents stop ID` to cancel one. There are at most three concurrent workers;
+each is limited to 20 model steps and five minutes. Canceling the originating
+turn cancels its running workers; closing Victral stops all workers and MCP
+connections. `--ask` and normal piped-input completion wait for research reports
+and the parent's response before exiting. `/metrics` shows subagent token usage
+separately. Worker IDs and live jobs do not survive a restart; delivered reports
+remain in saved memory.
 
 ## Standalone Jev evaluation
 

@@ -10,6 +10,46 @@ import { copyMarkdown } from '../src/clipboard.js';
 
 afterEach(cleanup);
 const flush = () => new Promise(resolve => setTimeout(resolve, 60));
+test('status bar filters commands and Tab completes command, provider, and model in stages', async () => {
+  const submitted: string[] = [];
+  const session: WorkspaceSession & EventEmitter = Object.assign(new EventEmitter(), {
+    options: { project: '/tmp/completion', allowShell: false }, metrics: { detailed: () => 'Usage' },
+    snapshot: () => ({ entries: [], model: 'muse-spark-1.3', active: false, phase: 'Ready', metrics: '', jev: { state: 'disabled', completed: 0, pending: 0, errors: 0, skipped: 0 } }),
+    submit: async (input: string) => { submitted.push(input); }, cancel: () => {}, close: async () => {},
+  });
+  const view = render(session); await flush();
+  const footer = () => view.lastFrame()!.split('\n').at(-1)!;
+  view.stdin.write('/m'); await flush();
+  expect(footer()).toContain('/metrics'); expect(footer()).toContain('/model');
+  expect(footer()).not.toContain('Jev');
+  view.stdin.write('o'); await flush();
+  expect(footer()).toContain('[/model]'); expect(footer()).not.toContain('/metrics');
+  view.stdin.write('\t'); await flush();
+  expect(footer()).toContain('[meta] | openai');
+  view.stdin.write('o'); await flush();
+  expect(footer()).toContain('[openai]'); expect(footer()).not.toContain('meta');
+  view.stdin.write('\t'); await flush();
+  expect(footer()).toContain('[luna6] | sol6.1');
+  view.stdin.write('s'); await flush();
+  expect(footer()).toContain('[sol6.1]'); expect(footer()).not.toContain('luna6');
+  view.stdin.write('\t'); await flush();
+  expect(footer()).toContain('ms1.3'); expect(footer()).toContain('Jev');
+  expect(submitted).toEqual([]);
+  view.stdin.write('\r'); await flush();
+  expect(submitted).toEqual(['/model openai sol6.1 ']);
+  view.stdin.write('/m'); await flush(); view.stdin.write('\x1b[B'); await flush();
+  expect(footer()).toContain('/metrics | [/model]');
+  view.stdin.write('\t'); await flush();
+  expect(footer()).toContain('[meta] | openai');
+  view.stdin.write('\x1b[Z'); await flush();
+  expect(footer()).toContain('meta | [openai]');
+  view.stdin.write('\t'); await flush();
+  expect(footer()).toContain('[luna6] | sol6.1');
+  view.stdin.write('\x1b[B'); await flush(); view.stdin.write('\t'); await flush();
+  view.stdin.write('\r'); await flush();
+  expect(submitted).toEqual(['/model openai sol6.1 ', '/model openai sol6.1 ']);
+});
+
 test('terminal output removes control sequences and wraps Unicode by display width', () => {
   expect(safeText('\x1b[31mhello\x1b[0m\x1b]52;c;hidden\x07')).toBe('hello');
   expect(wrapLines('abcd🦓文e', 5).every(line => stringWidth(line) <= 5)).toBe(true);

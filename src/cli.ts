@@ -8,6 +8,7 @@ import { MODEL } from './constants.js'
 import { formatModelsList, resolveModelId } from './models.js'
 import { Session } from './session.js'
 import { errorMessage } from './types.js'
+import { commandCompletion, completeCommand } from './command-completion.js'
 
 const HELP = `Victral · a persistent coding workspace
 
@@ -19,6 +20,8 @@ Usage: victral [options]
   --compactor-model ID    Background memory model (same format; defaults to --model)
   --instructions FILE     Load custom instructions instead of AGENTS.md
   --allow-shell           Enable CLI, shell and background command tools
+  --web-search            Enable provider web search (additional provider charges)
+  --mcp-config FILE       Load explicitly configured MCP integrations
   --ask TEXT              Run one turn, then exit
   --plain                 Use a line-oriented terminal (automatic for pipes)
   --tui                   Require the full-screen terminal interface
@@ -29,8 +32,8 @@ Usage: victral [options]
   --help, -h              Show this help
   --version, -v           Show version
 
-In the workspace: Ctrl+P commands · Ctrl+O metrics · Esc cancel
-Agent tools: files, patches, glob/regex search, parallel reads, task plans, URL fetching, Git history/blame/diffs, optional interactive CLI execution.
+In the workspace: Type / for suggestions · Tab completes · Ctrl+P commands · Ctrl+O metrics · Esc cancel
+Agent tools: files, patches, glob/regex search, parallel reads, task plans, readable web pages, research subagents, MCP integrations, Git inspection, optional CLI execution.
 `
 async function main(): Promise<void> {
   const { values } = parseArgs({
@@ -39,6 +42,8 @@ async function main(): Promise<void> {
       'chat-dir': { type: 'string', default: path.join(os.homedir(), '.local/share/victral/chat') },
       instructions: { type: 'string' },
       ask: { type: 'string' },
+      'web-search': { type: 'boolean', default: false },
+      'mcp-config': { type: 'string' },
       'allow-shell': { type: 'boolean', default: false },
       model: { type: 'string' },
       'compactor-model': { type: 'string' },
@@ -85,6 +90,8 @@ async function main(): Promise<void> {
       values['compactor-model'] ?? process.env.VICTRAL_COMPACTOR_MODEL ?? model),
     instructions: values.instructions,
     allowShell: values['allow-shell'],
+    webSearch: values['web-search'],
+    mcpConfig: values['mcp-config'],
     jev: !values['no-jev'],
     metrics: !values['no-metrics']
   })
@@ -122,6 +129,10 @@ async function main(): Promise<void> {
         input: process.stdin,
         output: process.stdout,
         terminal: interactive,
+        completer: (line: string) => {
+          const completion = commandCompletion(line)
+          return [completion.suggestions.map((_, index) => completeCommand(line, completion, index)!.input), line]
+        },
         prompt: 'victral ⟢ '
       })
       const prompt = () => {
@@ -168,6 +179,7 @@ async function main(): Promise<void> {
       })
       // EOF is normal input completion: finish queued requests before closing.
       await Promise.allSettled([...pending])
+      await session.settle(new AbortController().signal)
     }
   } finally {
     process.off('SIGTERM', terminate)

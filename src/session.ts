@@ -3,23 +3,25 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { Storage, STORAGE_STREAMS, VIEW_FILES } from './storage.js';
 import { Memory } from './memory.js';
-import { createModel, formatModelsList, resolveModelId } from './models.js';
+import { createModel, formatModelsList, resolveModelId, PROVIDERS } from './models.js';
 import { Evaluations } from './evaluations.js';
 import { Metrics } from './metrics.js';
 import { Runner } from './runner.js';
-import { projectTools } from './tools.js';
+import { Integrations, loadIntegrations } from './integrations.js';
+import { Subagents } from './subagents.js';
+import { projectTools, readOnlyProjectTools } from './tools.js';
 import { errorMessage, type ModelPort, type ToolActivity, type TurnRecord } from './types.js';
 import type { JevStatus } from './jev-status.js';
 import { COMMANDS } from './session-commands.js';
 export { COMMANDS } from './session-commands.js';
 
 // Provider/storage implementations retain their existing JS API during migration.
-const modelFactory = createModel as unknown as (id: string, options: { purpose?: string; usage: (record: unknown) => void }) => ModelPort;
+const modelFactory = createModel as unknown as (id: string, options: { purpose?: string; webSearch?: boolean; usage: (record: unknown) => void }) => ModelPort;
 export interface SessionOptions {
   project: string; chatDir: string; model: string; compactorModel: string;
-  instructions?: string; allowShell: boolean; jev: boolean; metrics: boolean;
+  instructions?: string; webSearch?: boolean; mcpConfig?: string; allowShell: boolean; jev: boolean; metrics: boolean;
 }
-export interface TranscriptEntry { id: number; role: 'you' | 'victral' | 'system' | 'error' | 'tool'; text: string }
+export interface TranscriptEntry { id: number; role: 'you' | 'victral' | 'system' | 'error' | 'tool'; text: string; format?: 'markdown' }
 export interface SessionState {
   entries: readonly TranscriptEntry[]; model: string; active: boolean;
   phase: string; tool?: ToolActivity; turn?: TurnRecord; metrics: string; jev?: JevStatus;
@@ -34,12 +36,26 @@ export class Session extends EventEmitter {
   private closing?: Promise<void>;
   private updateTimer?: ReturnType<typeof setTimeout>;
   private runner: Runner;
+  private subagents: Subagents;
   private evaluationListener: () => void;
 
-  private constructor(readonly options: SessionOptions, readonly storage: Storage, readonly memory: Memory, readonly evaluations: Evaluations, readonly metrics: Metrics, model: ModelPort) {
+  private constructor(readonly options: SessionOptions, readonly storage: Storage, readonly memory: Memory, readonly evaluations: Evaluations, readonly metrics: Metrics, model: ModelPort, integrations: Integrations) {
     super();
+    const planStore = { load: () => storage.load('plans'), save: (plan: Parameters<Storage['savePlan']>[0]) => storage.savePlan(plan) };
+    this.subagents = new Subagents({
+      model: () => modelFactory(this.runner.model.model, { purpose: 'subagent', webSearch: options.webSearch, usage: record => metrics.usage(record) }),
+      tools: () => readOnlyProjectTools(memory, options.project, { planStore }),
+      context: () => memory.render(), instructions: () => this.instructions(),
+      report: text => {
+        if (this.closed || this.closing) return;
+        this.add('system', text);
+        void this.runner.submit(text, 'work')?.then(() => {
+          if (!this.closed) { this.phase = 'Ready'; this.update(); this.emit('idle'); }
+        }).catch(error => this.add('error', errorMessage(error)));
+      },
+    });
     this.runner = new Runner(memory, model, projectTools(memory, options.project, { allowShell: options.allowShell,
-      planStore: { load: () => storage.load('plans'), save: plan => storage.savePlan(plan) },
+      planStore, integrations, subagents: this.subagents,
     }), this.instructions(), {
       onText: text => {
         const last = this.entries.at(-1);
@@ -71,7 +87,8 @@ export class Session extends EventEmitter {
     if (options.instructions && !fs.existsSync(instructionFile)) throw new Error('The instructions file does not exist.');
     let metrics: Metrics | undefined;
     const usage = (record: unknown) => metrics?.usage(record);
-    const model = modelFactory(options.model, { usage });
+    const model = modelFactory(options.model, { usage, webSearch: options.webSearch });
+    const integrations = options.mcpConfig ? await loadIntegrations(path.resolve(options.mcpConfig), options.project) : new Integrations({}, options.project);
     const compactor = modelFactory(options.compactorModel, { purpose: 'compactor', usage });
     const storage = await Storage.open(options.chatDir);
     let memory: Memory | undefined, evaluations: Evaluations | undefined;
@@ -79,7 +96,7 @@ export class Session extends EventEmitter {
       memory = new Memory(storage, compactor);
       evaluations = new Evaluations(memory, { enabled: options.jev });
       metrics = new Metrics(storage, memory, evaluations);
-      return new Session(options, storage, memory, evaluations, metrics, model);
+      return new Session(options, storage, memory, evaluations, metrics, model, integrations);
     } catch (error) {
       metrics?.close(); await evaluations?.close(); await memory?.stop(); await storage.close(); throw error;
     }
@@ -88,8 +105,8 @@ export class Session extends EventEmitter {
     const filename = this.options.instructions ?? path.join(this.options.project, 'AGENTS.md');
     return fs.existsSync(filename) ? fs.readFileSync(filename, 'utf8') : '';
   }
-  private add(role: TranscriptEntry['role'], text: string, emit = true): void {
-    this.entries.push({ id: this.id++, role, text });
+  private add(role: TranscriptEntry['role'], text: string, emit = true, format?: 'markdown'): void {
+    this.entries.push({ id: this.id++, role, text, ...(format ? { format } : {}) });
     if (this.entries.length > 200) this.entries.splice(0, this.entries.length - 200);
     if (emit) this.update();
   }
@@ -110,7 +127,7 @@ export class Session extends EventEmitter {
     if (line.startsWith('/')) {
       try {
         const output = await this.command(line);
-        if (output) { this.add('system', output); this.emit('notice', output); }
+        if (output) { this.add('system', output, true, line.split(/\s+/)[0] === '/metrics' ? 'markdown' : undefined); this.emit('notice', output); }
       } catch (error) { this.add('error', errorMessage(error)); this.emit('errorText', errorMessage(error)); }
       return;
     }
@@ -124,8 +141,15 @@ export class Session extends EventEmitter {
     const [name, ...rest] = line.split(/\s+/); const arg = rest.join(' ');
     if (name === '/exit') { await this.close(); return; }
     if (name === '/cancel') { this.cancel(); return; }
-    if (name === '/help') return COMMANDS.map(([cmd, description]) => `${cmd.padEnd(10)} ${description}`).join('\n') + '\n\nEsc cancels · Ctrl+P commands · Ctrl+O metrics · Wheel / Shift+↑↓ / PgUp/PgDn scroll · Home/End jump · Ctrl+C cancel / close';
+    if (name === '/help') return COMMANDS.map(([cmd, description]) => `${cmd.padEnd(10)} ${description}`).join('\n') + '\n\nType / for suggestions · Tab completes a word · ↑↓ selects suggestions · Esc cancels · Ctrl+P commands · Ctrl+O metrics · Wheel / Shift+↑↓ / PgUp/PgDn scroll · Home/End jump · Ctrl+C cancel / close';
     if (name === '/tools') return this.runner.tools.definitions.map(t => `${t.function.name.padEnd(14)} ${t.function.description}`).join('\n') + `\n\nCommand execution: ${this.options.allowShell ? 'enabled' : 'disabled (start with --allow-shell)'}`;
+    if (name === '/integrations') return this.runner.tools.execute(arg ? 'list_integration_tools' : 'list_integrations', arg ? { server: arg } : {});
+    if (name === '/subagents') {
+      if (!arg) return this.subagents.list();
+      if (rest[0] === 'stop' && rest.length === 2) return this.subagents.stop({ subagent_id: rest[1] });
+      if (rest.length === 1) return this.subagents.status({ subagent_id: arg });
+      throw new Error('Usage: /subagents [ID | stop ID]');
+    }
     if (name === '/metrics') return this.metrics.detailed();
     if (name === '/jev') return this.metrics.jevDetails();
     if (name === '/usage') return JSON.stringify(this.storage.load('usage').slice(-10), null, 2);
@@ -133,11 +157,11 @@ export class Session extends EventEmitter {
     if (name === '/plan') return this.runner.tools.execute('get_plan', {});
     if (name === '/jobs') return this.options.allowShell ? this.runner.tools.execute('list_commands', {}) : 'Command execution is disabled (start with --allow-shell).';
     if (name === '/model') {
-      if (!arg) return `Agent: ${this.runner.model.model}\nCompactor: ${this.options.compactorModel} (fixed at startup)\nAvailable models:\n${formatModelsList()}\n\nSwitch with /model <number, short name, or ID>, e.g. /model ms1.3c. Switching is session-local and keeps saved memory.`;
+      if (!arg || PROVIDERS.includes(arg.toLowerCase())) return `Agent: ${this.runner.model.model}\nCompactor: ${this.options.compactorModel} (fixed at startup)\nAvailable models:\n${formatModelsList(arg || undefined)}\n\nSwitch with /model <provider> <short name or ID>, e.g. /model openai luna6. Numbers and model-only shortcuts also work. Switching is session-local and keeps saved memory.`;
       if (this.runner.active) throw new Error('Switch models between turns; /cancel ends the current turn.');
       const selected = resolveModelId(arg);
       if (selected === this.runner.model.model) return `Already using ${selected}.`;
-      this.runner.model = modelFactory(selected, { usage: record => this.metrics.usage(record) }); this.update();
+      this.runner.model = modelFactory(selected, { webSearch: this.options.webSearch, usage: record => this.metrics.usage(record) }); this.update();
       return `Switched agent to ${selected}. Session-local; saved memory kept. Compactor unchanged (${this.options.compactorModel}).`;
     }
     if (name === '/zoom' || name === '/date') {
@@ -173,6 +197,12 @@ export class Session extends EventEmitter {
     throw new Error('Unknown command. Use /help or Ctrl+P.');
   }
   async settle(signal: AbortSignal): Promise<void> {
+    if (this.closed || this.closing) return;
+    do {
+      await this.subagents.drain(signal);
+      await this.runner.running;
+    } while (this.subagents.active || this.runner.active);
+    signal.throwIfAborted();
     await this.memory.settle(signal);
     await this.evaluations.drain(AbortSignal.any([signal, AbortSignal.timeout(60_000)]));
   }

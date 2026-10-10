@@ -7,7 +7,8 @@ import { projectTools } from '../src/tools.js';
 const cli = path.resolve(import.meta.dir, '../src/cli.ts');
 test('CLI help and terminal validation run without provider requests', async () => {
   const help = Bun.spawn([process.execPath, cli, '--help'], { stdout: 'pipe', stderr: 'pipe' });
-  expect(await new Response(help.stdout).text()).toContain('--allow-shell'); expect(await help.exited).toBe(0);
+  const helpText = await new Response(help.stdout).text();
+  expect(helpText).toContain('--allow-shell'); expect(helpText).toContain('--web-search'); expect(helpText).toContain('--mcp-config'); expect(await help.exited).toBe(0);
   const tui = Bun.spawn([process.execPath, cli, '--tui'], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
   expect(await new Response(tui.stderr).text()).toContain('requires an interactive terminal'); expect(await tui.exited).toBe(1);
 });
@@ -17,8 +18,28 @@ test('model listing names providers, credentials, and selection format', async (
   expect(await models.exited).toBe(0);
   expect(output).toContain('1. muse-spark-1.3 (Meta; alias ms1.3; needs META_API_KEY or MODEL_API_KEY)');
   expect(output).toContain('2. muse-spark-1.3-contributor (Meta; alias ms1.3c; needs META_API_KEY or MODEL_API_KEY)');
-  expect(output.match(/^  \d+\./gm)).toHaveLength(2);
+  expect(output).toContain('3. gpt-6-luna (OpenAI; alias luna6; needs OPENAI_API_KEY)');
+  expect(output).toContain('4. gpt-6.1-sol (OpenAI; alias sol6.1; needs OPENAI_API_KEY)');
+  expect(output.match(/^  \d+\./gm)).toHaveLength(4);
   expect(output).toContain('--model <number, short name, or ID>');
+});
+
+test('provider-qualified commands switch OpenAI models and preserve the startup compactor', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'victral-openai-cli-'));
+  try {
+    const child = Bun.spawn([process.execPath, cli, '--plain', '--model', 'luna6', '--project', directory, '--chat-dir', path.join(directory, 'chat'), '--no-jev'], {
+      cwd: directory, env: { ...process.env, OPENAI_API_KEY: 'offline-test', VICTRAL_COMPACTOR_MODEL: 'luna6', TYPESAFE_API_KEY: '' },
+      stdin: new TextEncoder().encode('/model openai\n/model openai sol6.1\n/model\n/model meta luna6\n/model\n/exit\n'), stdout: 'pipe', stderr: 'pipe',
+    });
+    const [output, error, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    expect(code).toBe(1); // The intentionally invalid provider/model pair sets the piped CLI's exit status.
+    expect(output).toContain('Switched agent to gpt-6.1-sol');
+    expect(output).toContain('Agent: gpt-6.1-sol\nCompactor: gpt-6-luna (fixed at startup)');
+    const providerList = output.split('Available models:\n')[1]!.split('\n\n')[0]!;
+    expect(providerList).toContain('gpt-6-luna'); expect(providerList).not.toContain('muse-spark');
+    expect(error).toContain('Unknown model "luna6" for meta');
+    expect(output.match(/Agent: gpt-6.1-sol/g)).toHaveLength(2);
+  } finally { await fs.rm(directory, { recursive: true, force: true }); }
 });
 test('plain piped commands close cleanly and release chat storage', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'victral-cli-'));

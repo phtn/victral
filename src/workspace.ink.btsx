@@ -7,6 +7,7 @@ import { markdownLines, type MarkdownLine } from './markdown.js';
 import { safeText, shortProject, wrapLines, type WorkspaceSession } from './tui-model.js';
 import { formatJevStatus } from './jev-status.js';
 import { shortModelName } from './models.js';
+import { commandCompletion, completeCommand, completionStatus } from './command-completion.js';
 import { copyMarkdown, type CopyResponse } from './clipboard.js';
 module
   const VERSION = '0.2.0'
@@ -41,6 +42,9 @@ setup
     [history, setHistory] = useState<string[]>([]),
     [historyIndex, setHistoryIndex] = useState(-1)
   const [tick, setTick] = useState(0)
+  const [completionSelection, setCompletionSelection] = useState({ key: '', index: 0 })
+  const completion = commandCompletion(input, cursor)
+  const completionIndex = completionSelection.key === completion.key ? Math.min(completionSelection.index, Math.max(0, completion.suggestions.length - 1)) : 0
   const [copyFeedback, setCopyFeedback] = useState<{ id: number; text: string; label: string } | null>(null)
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mounted = useRef(true)
@@ -76,7 +80,7 @@ setup
   }, [state.active])
   const project = shortProject(safeText(session.options.project))
   const lines = useMemo<DisplayLine[]>(() => {
-    if (panel === 'metrics') return wrapLines(session.metrics.detailed(), width).map((text) => ({ text, color: muted }))
+    if (panel === 'metrics') return markdownLines(session.metrics.detailed(), width).map(line => ({ ...line, color: muted }))
     if (!state.entries.length) return []
     const ids = new Set(state.entries.map(entry => entry.id))
     for (const id of markdownCache.current.keys()) if (!ids.has(id)) markdownCache.current.delete(id)
@@ -89,12 +93,12 @@ setup
           { text: '', color: muted }
         ]
       }
-      if (entry.role === 'victral') {
+      if (entry.role === 'victral' || entry.format === 'markdown') {
         const cached = markdownCache.current.get(entry.id)
         if (cached?.text === entry.text && cached.width === width) return cached.lines
         const rendered = [
-          ...markdownLines(entry.text, width).map(line => ({ ...line, color: bright })),
-          { text: '[Copy Markdown]', color: codexBlue, copyId: entry.id },
+          ...markdownLines(entry.text, width).map(line => ({ ...line, color: entry.role === 'victral' ? bright : muted })),
+          ...(entry.role === 'victral' ? [{ text: '[Copy Markdown]', color: codexBlue, copyId: entry.id }] : []),
           { text: '', color: muted }
         ]
         markdownCache.current.set(entry.id, { text: entry.text, width, lines: rendered })
@@ -149,8 +153,8 @@ setup
     if (!value.trim()) return
     setInput('')
     setCursor(0)
-    setScroll(null)
-    setPanel('chat')
+    setScroll(value.trim() === '/metrics' ? 0 : null)
+    setPanel(value.trim() === '/metrics' ? 'metrics' : 'chat')
     setHistoryIndex(-1)
     setHistory((prev) => [...prev.slice(-99), value])
     void session.submit(value).catch((error) => {
@@ -189,7 +193,7 @@ setup
     }
     if (event.ctrl && key === 'o') {
       setPanel((prev) => (prev === 'metrics' ? 'chat' : 'metrics'))
-      setScroll(null)
+      setScroll(panel === 'metrics' ? null : 0)
       return
     }
     if (panel !== 'commands' && (event.pageUp || (event.shift && event.upArrow))) {
@@ -212,6 +216,19 @@ setup
         setInput(value)
         setCursor(value.length)
         setPanel('chat')
+      }
+      return
+    }
+    if (completion.suggestions.length && (event.upArrow || event.downArrow || (event.tab && event.shift))) {
+      const direction = event.upArrow || event.shift ? -1 : 1
+      setCompletionSelection({ key: completion.key, index: (completionIndex + direction + completion.suggestions.length) % completion.suggestions.length })
+      return
+    }
+    if (event.tab) {
+      const completed = completeCommand(input, completion, completionIndex)
+      if (completed) {
+        setInput(completed.input)
+        setCursor(completed.cursor)
       }
       return
     }
@@ -327,14 +344,18 @@ else
             Text(inverse={panel !== 'commands'}) #{' '}
             Text(color={composerDim}) #{state.active ? 'Steer the agent while it works…' : panel === 'commands' ? 'Type a command…' : panel === 'metrics' ? 'Metrics open · Esc to return…' : 'Ask anything about your project…'}
     Box(height={1} paddingX={1} flexShrink={0})
-      Box(flexGrow={1} flexShrink={1} minWidth={0})
-        Text(wrap="truncate-end")
-          Text(color={statusModel}) #{safeText(shortModelName(state.model))}
-          Text(color={statusDot}) #{' · '}
-          Text(color={statusPath}) #{project}
-      if statusRight
-        Box(marginLeft={1} flexShrink={0} minWidth={0})
-          Text(color={muted} wrap="truncate-end") #{statusRight}
-      if jevStatus
-        Box(marginLeft={1} width={stringWidth(jevStatus)} flexShrink={0})
-          Text(color={state.jev?.errors ? errorRed : muted} wrap="truncate-end") #{jevStatus}
+      if panel !== 'commands' && completion.suggestions.length
+        Text(color={codexBlue} wrap="truncate-end") #{completionStatus(completion, completionIndex, width)}
+      else
+        fragment
+          Box(flexGrow={1} flexShrink={1} minWidth={0})
+            Text(wrap="truncate-end")
+              Text(color={statusModel}) #{safeText(shortModelName(state.model))}
+              Text(color={statusDot}) #{' · '}
+              Text(color={statusPath}) #{project}
+          if statusRight
+            Box(marginLeft={1} flexShrink={0} minWidth={0})
+              Text(color={muted} wrap="truncate-end") #{statusRight}
+          if jevStatus
+            Box(marginLeft={1} width={stringWidth(jevStatus)} flexShrink={0})
+              Text(color={state.jev?.errors ? errorRed : muted} wrap="truncate-end") #{jevStatus}

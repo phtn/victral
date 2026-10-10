@@ -1,0 +1,15 @@
+{
+  "servers": {
+    "localDocs": {
+      "command": "node",
+      "args": ["/absolute/path/to/your-mcp-server.mjs"],
+      "env": { "API_TOKEN": "DOCS_API_TOKEN" },
+      "allowTools": ["search", "fetch"]
+    },
+    "remoteDocs": {
+      "url": "https://your-mcp-server.example/mcp",
+      "headers": { "Authorization": "MCP_AUTHORIZATION" },
+      "allowTools": []
+    }
+  }
+}

@@ -22,7 +22,7 @@ export class DemoSession extends EventEmitter implements WorkspaceSession {
       { id: 3, role: 'victral', text: 'The project has durable conversation memory and a provider-neutral agent loop.\n\nA useful next step is to add focused CLI tools for search, precise edits, and test execution, then surface their progress in the terminal workspace.\n\nThis is a local interface preview. No models or tools have been called.' },
     ],
   };
-  metrics = { detailed: () => 'DEMO METRICS · illustrative values\n\nSession     2,408 input / 516 output tokens\nCache       1,024 tokens\nMemory      28 messages / 41 nodes\nRetrieval   2 zoom calls\n\nThe real workspace shows measured provider and memory counters.' };
+  metrics = { detailed: () => '## DEMO METRICS · illustrative values\n\n| Metric | Value |\n| --- | --- |\n| Input tokens | 2,408 |\n| Output tokens | 516 |\n| Cached tokens | 1,024 |\n| Messages | 28 |\n| Saved nodes | 41 |\n| Zoom retrievals | 2 |\n\nThe real workspace shows measured provider and memory counters.' };
   snapshot(): SessionState { return { ...this.state, entries: [...this.state.entries] }; }
   cancel(): void { this.controller?.abort(); this.state = { ...this.state, active: false, phase: 'Canceled · demo' }; this.emit('update'); }
   async submit(input: string): Promise<void> {
@@ -30,7 +30,7 @@ export class DemoSession extends EventEmitter implements WorkspaceSession {
     if (input.trim() === '/cancel') { this.cancel(); return; }
     if (input.startsWith('/')) {
       const text = input.trim() === '/metrics' ? this.metrics.detailed() : COMMANDS.map(([command, description]) => `${command}  ${description}`).join('\n');
-      this.state.entries = [...this.state.entries, { id: this.counter++, role: 'system', text }]; this.emit('update'); return;
+      this.state.entries = [...this.state.entries, { id: this.counter++, role: 'system', text, ...(input.trim() === '/metrics' ? { format: 'markdown' as const } : {}) }]; this.emit('update'); return;
     }
     if (this.closed) return;
     this.controller?.abort();

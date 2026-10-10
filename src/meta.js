@@ -1,5 +1,6 @@
 import { sseData } from './sse.js';
 import { MODEL } from './constants.js';
+import { citationFooter } from './web-citations.js';
 
 const finishReason = reason => reason === 'tool_use' ? 'TOOL_CALL' : reason === 'max_tokens' ? 'MAX_TOKENS' : reason === 'end_turn' ? 'COMPLETE' : reason?.toUpperCase();
 
@@ -29,20 +30,24 @@ export function metaRequest(messages, tools, model, maxTokens = 16_384, purpose 
 }
 function normalize(content, reason, usage) {
   const message = { role: 'assistant', content: content.filter(b => b.type !== 'tool_use'), _metaContent: content };
+  const citations = citationFooter(content);
+  if (citations) message.content = [...message.content, { type: 'text', text: citations }];
   const calls = content.filter(b => b.type === 'tool_use').map(b => ({ id: b.id, type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input) } }));
   if (calls.length) message.tool_calls = calls;
   return { message, finish_reason: finishReason(reason), usage };
 }
 export class Meta {
-  constructor({ apiKey = process.env.META_API_KEY || process.env.MODEL_API_KEY, model = MODEL, usage = () => {}, fetchImpl = fetch, purpose = 'agent' } = {}) {
+  constructor({ apiKey = process.env.META_API_KEY || process.env.MODEL_API_KEY, model = MODEL, usage = () => {}, fetchImpl = fetch, purpose = 'agent', webSearch = false } = {}) {
     if (!apiKey) throw new Error('Set META_API_KEY (or MODEL_API_KEY) in your environment before selecting Meta.');
-    Object.assign(this, { apiKey, model, usage, fetchImpl, purpose });
+    Object.assign(this, { apiKey, model, usage, fetchImpl, purpose, webSearch });
   }
   async request(messages, { tools, signal, stream = false, maxTokens } = {}) {
+    const body = metaRequest(messages, tools, this.model, maxTokens, this.purpose);
+    if (this.webSearch && this.purpose !== 'compactor') body.tools = [...(body.tools ?? []), { type: 'web_search' }];
     const response = await this.fetchImpl('https://api.meta.ai/v1/messages', {
       method: 'POST', signal,
       headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ ...metaRequest(messages, tools, this.model, maxTokens, this.purpose), stream }),
+      body: JSON.stringify({ ...body, stream }),
     });
     if (!response.ok) throw new Error(`Meta HTTP ${response.status}: ${(await response.text()).replaceAll(this.apiKey, '[redacted]').slice(0, 1500)}`);
     return response;
@@ -66,19 +71,20 @@ export class Meta {
       if (e.type === 'message_start') usage = { ...e.message.usage };
       if (e.type === 'content_block_start') {
         content.set(e.index, structuredClone(e.content_block));
-        if (e.content_block.type === 'tool_use') argumentsByIndex.set(e.index, '');
+        if (['tool_use', 'server_tool_use'].includes(e.content_block.type)) argumentsByIndex.set(e.index, '');
       }
       if (e.type === 'content_block_delta') {
         const block = content.get(e.index);
         if (!block) throw new Error('Meta delta arrived without a content block.');
         if (e.delta.type === 'text_delta') { block.text += e.delta.text; onText(e.delta.text); }
         if (e.delta.type === 'thinking_delta') { block.thinking += e.delta.thinking; onThought(e.delta.thinking); }
+        if (e.delta.type === 'citations_delta' && e.delta.citation) (block.citations ??= []).push(e.delta.citation);
         if (e.delta.type === 'signature_delta') block.signature = (block.signature ?? '') + e.delta.signature;
         if (e.delta.type === 'input_json_delta') argumentsByIndex.set(e.index, (argumentsByIndex.get(e.index) ?? '') + e.delta.partial_json);
       }
       if (e.type === 'content_block_stop') {
         const block = content.get(e.index);
-        if (block?.type === 'tool_use') {
+        if (['tool_use', 'server_tool_use'].includes(block?.type)) {
           const argumentsText = argumentsByIndex.get(e.index);
           if (argumentsText) block.input = JSON.parse(argumentsText);
           await onEntry('tool', `${block.name} ${JSON.stringify(block.input)}`);
@@ -95,6 +101,8 @@ export class Meta {
     }
     if (!ended) throw new Error('Meta stream ended before message_stop.');
     const result = normalize([...content.values()], reason, usage);
+    const citations = citationFooter([...content.values()]);
+    if (citations) { onText(citations); await onEntry('talk', citations); }
     this.recordUsage(result);
     return result;
   }

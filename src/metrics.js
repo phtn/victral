@@ -3,6 +3,23 @@ import { bytes } from './constants.js';
 const number = value => typeof value === 'number' && Number.isFinite(value) ? value : 0;
 const percent = value => typeof value === 'number' ? `${(value * 100).toFixed(1)}%` : 'n/a';
 const seconds = ms => `${(ms / 1000).toFixed(2)}s`;
+const count = value => number(value).toLocaleString('en-US');
+const table = (headers, rows) => {
+  const cells = [headers, ...rows].map(row => row.map(value => String(value).replaceAll('|', '\\|').replace(/[\r\n]/g, ' ')));
+  const widths = headers.map((_, index) => Math.max(...cells.map(row => row[index].length)));
+  const row = values => `| ${values.map((value, index) => value.padEnd(widths[index])).join(' | ')} |`;
+  return [row(cells[0]), row(widths.map(width => '-'.repeat(width))), ...cells.slice(1).map(row)].join('\n');
+};
+const usageRows = columns => [
+  ['API calls', ...columns.map(u => count(u.calls))],
+  ['Failed / canceled', ...columns.map(u => count(u.errors))],
+  ['Input tokens', ...columns.map(u => count(u.input))],
+  ['Output tokens', ...columns.map(u => count(u.output))],
+  ['Reasoning tokens', ...columns.map(u => count(u.reasoning))],
+  ['Cached input tokens', ...columns.map(u => u.cacheKnown ? count(u.cached) : 'n/a')],
+  ['Avg API latency', ...columns.map(u => u.timed ? seconds(u.latency / u.timed) : 'n/a')],
+  ['Avg first text', ...columns.map(u => u.textCalls ? seconds(u.ttft / u.textCalls) : 'n/a')],
+];
 export function usageTotals(records) {
   const result = { calls: 0, errors: 0, input: 0, output: 0, reasoning: 0, cached: 0, cacheKnown: 0, latency: 0, timed: 0, ttft: 0, textCalls: 0 };
   for (const record of records) {
@@ -12,12 +29,12 @@ export function usageTotals(records) {
     // Separate cache-read counts are excluded from input_tokens. Older saved
     // usage formats include reads in their input counter; retain their totals.
     const meta = typeof u.cache_read_input_tokens === 'number';
-    const cached = meta ? u.cache_read_input_tokens : u.cached_tokens;
+    const cached = meta ? u.cache_read_input_tokens : u.input_tokens_details?.cached_tokens ?? u.cached_tokens;
     result.cached += number(cached);
     if (typeof cached === 'number') result.cacheKnown++;
     result.input += meta ? number(u.input_tokens) + number(cached) : number(u.tokens?.input_tokens ?? u.input_tokens);
     result.output += number(u.tokens?.output_tokens ?? u.output_tokens);
-    result.reasoning += number(u.tokens?.reasoning_tokens ?? u.output_tokens_details?.thinking_tokens);
+    result.reasoning += number(u.tokens?.reasoning_tokens ?? u.output_tokens_details?.reasoning_tokens ?? u.output_tokens_details?.thinking_tokens);
     if (typeof record.latency_ms === 'number') { result.latency += record.latency_ms; result.timed++; }
     if (typeof record.ttft_ms === 'number') { result.ttft += record.ttft_ms; result.textCalls++; }
   }
@@ -33,7 +50,7 @@ export class Metrics {
     this.rawBytes = 0; this.generated = 0; this.free = 0;
     this.turns = 0; this.toolCalls = 0; this.retrievals = 0;
     this.totals = usageTotals([]); this.sessionTotals = usageTotals([]);
-    this.purposeTotals = Object.fromEntries(['agent', 'compactor'].map(p => [p, usageTotals([])]));
+    this.purposeTotals = Object.fromEntries(['agent', 'compactor', 'subagent'].map(p => [p, usageTotals([])]));
     this.auditDirty = true;
     this.evaluationListener = () => { this.auditDirty = true; };
     evaluations.on('update', this.evaluationListener);
@@ -121,13 +138,42 @@ export class Metrics {
     ].join('\n');
   }
   detailed() {
-    const s = this.snapshot();
-    const lines = [this.compact(), 'Totals across saved sessions:'];
-    for (const [purpose, u] of Object.entries(s.by_purpose)) lines.push(`  ${purpose}: ${u.calls} calls (${u.errors} failed/canceled) · ${u.input} input / ${u.output} output / ${u.reasoning} reasoning tokens · ${u.cacheKnown ? u.cached : 'n/a'} cached · avg latency ${u.timed ? seconds(u.latency / u.timed) : 'n/a'} · avg first text ${u.textCalls ? seconds(u.ttft / u.textCalls) : 'n/a'}`);
-    lines.push(`  compaction: ${s.generated} generated, ${s.free} exact-copy nodes observed · ${s.compactor_running} active / ${s.compactor_retries} waiting to retry`);
-    lines.push(`  Jev: ${s.jev.input_tokens} input tokens · avg latency ${s.jev.completed ? seconds(s.jev.latency_ms / s.jev.completed) : 'n/a'} · mean risk probabilities: unsupported ${percent(s.jev.averages.unsupported_claim)}, omitted ${percent(s.jev.averages.user_decision_omitted)}, inflated ${percent(s.jev.averages.progress_inflated)}`);
-    lines.push('Jev probabilities are model judgments, not accuracy scores. Reasoning tokens are included in output tokens. Raw/view compares stored message text with summary text, not API tokens.');
-    return lines.join('\n');
+    const s = this.snapshot(), lastTurn = this.lastTurn, audit = s.jev, last = audit.latest;
+    return [
+      '## Activity',
+      table(['Metric', 'Value'], [
+        ['Last turn', lastTurn ? `${lastTurn.status ?? 'completed'} · ${seconds(lastTurn.duration_ms)}` : 'n/a'],
+        ['Memory wait', lastTurn ? seconds(lastTurn.settle_ms) : 'n/a'],
+        ['Saved turns', count(s.turns)], ['Tool calls', count(s.tool_calls)], ['Zoom retrievals', count(s.retrievals)],
+      ]),
+      '## Usage',
+      table(['Metric', 'This session', 'All saved'], usageRows([s.session, s.usage])),
+      '## Usage by role · all saved',
+      table(['Metric', 'Agent', 'Compactor', 'Subagents'], usageRows([s.by_purpose.agent, s.by_purpose.compactor, s.by_purpose.subagent])),
+      '## Memory',
+      table(['Metric', 'Value'], [
+        ['Messages', count(s.messages)], ['Saved nodes', count(s.nodes)],
+        ['Raw text', `${count(s.raw_bytes)} B`], ['View size', `${count(s.view_bytes)} B`],
+        ['View budget', `${count(s.view_budget)} B`], ['Raw / view', `${s.compression.toFixed(2)}x`],
+        ['Pending summaries', count(s.pending_summaries)], ['Generated summaries', count(s.generated)],
+        ['Exact-copy nodes', count(s.free)], ['Active compactors', count(s.compactor_running)],
+        ['Waiting to retry', count(s.compactor_retries)],
+      ]),
+      '## Jev evaluations',
+      table(['Metric', 'Value'], [
+        ['State', audit.state], ['Completed', count(audit.completed)], ['Pending', count(audit.pending)],
+        ['Errors', count(audit.errors)], ['Skipped', count(audit.skipped)],
+        ['Input tokens', count(audit.input_tokens)],
+        ['Avg latency', audit.completed ? seconds(audit.latency_ms / audit.completed) : 'n/a'],
+      ]),
+      table(['Risk', 'Latest', 'Average'], [
+        ['Unsupported claims', percent(last?.answers.unsupported_claim.noul), percent(audit.averages.unsupported_claim)],
+        ['Omitted decisions', percent(last?.answers.user_decision_omitted.noul), percent(audit.averages.user_decision_omitted)],
+        ['Inflated progress', percent(last?.answers.progress_inflated.noul), percent(audit.averages.progress_inflated)],
+      ]),
+      'Reasoning tokens are included in output. Cached input is included in total input. n/a means no measurement is available.',
+      'Raw / view compares text bytes, not tokens. Jev probabilities are model judgments, not accuracy scores.',
+    ].join('\n\n');
   }
   jevDetails() {
     const records = [...this.evaluations.latest.values()].sort((a, b) => (a.date ?? '').localeCompare(b.date ?? '')).slice(-5);

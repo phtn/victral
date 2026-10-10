@@ -4,7 +4,7 @@ import { errorMessage } from './types.js';
 export const PARALLEL_READ_TOOLS = new Set([
   'zoom', 'date', 'list_files', 'read_file', 'glob_files', 'search_files',
   'git_status', 'git_diff', 'git_log', 'git_show', 'git_blame', 'fetch_url',
-  'get_plan', 'command_status', 'list_commands',
+  'browse_url', 'read_web_page', 'find_in_page', 'get_plan', 'command_status', 'list_commands',
 ]);
 interface ReadCall { tool: string; arguments: Record<string, unknown> }
 

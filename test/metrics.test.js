@@ -17,6 +17,12 @@ function fixture() {
   return { metrics: new Metrics(storage, memory, evaluations), storage, memory, evaluations };
 }
 
+test('OpenAI usage counts cached input once and includes reasoning within output', () => {
+  const totals = usageTotals([{ usage: { input_tokens: 100, input_tokens_details: { cached_tokens: 60 }, output_tokens: 30, output_tokens_details: { reasoning_tokens: 20 } } }]);
+  expect(totals.input).toBe(100); expect(totals.cached).toBe(60); expect(totals.cacheKnown).toBe(1);
+  expect(totals.output).toBe(30); expect(totals.reasoning).toBe(20);
+});
+
 test('incremental metrics match full totals across saved history and appended records', () => {
   const { metrics, storage, memory } = fixture();
   try {
@@ -28,6 +34,7 @@ test('incremental metrics match full totals across saved history and appended re
     const appended = [
       { purpose: 'agent', usage: { input_tokens: 50, output_tokens: 4, cache_read_input_tokens: 20 }, latency_ms: 100 },
       { purpose: 'compactor', status: 'canceled' },
+      { purpose: 'subagent', usage: { input_tokens: 30, output_tokens: 8 } },
       { purpose: 'compactor', usage: { input_tokens: 12, output_tokens: 3 } },
     ];
     for (const record of appended) { metrics.usage(record); metrics.snapshot(); }
@@ -37,14 +44,14 @@ test('incremental metrics match full totals across saved history and appended re
     const updated = metrics.snapshot();
     expect(updated.usage).toEqual(usageTotals(metrics.requests));
     expect(updated.session).toEqual(usageTotals(appended));
-    for (const purpose of ['agent', 'compactor']) expect(updated.by_purpose[purpose]).toEqual(usageTotals(metrics.requests.filter(r => r.purpose === purpose)));
+    for (const purpose of ['agent', 'compactor', 'subagent']) expect(updated.by_purpose[purpose]).toEqual(usageTotals(metrics.requests.filter(r => r.purpose === purpose)));
     expect(updated.raw_bytes).toBe(storage.root.reduce((sum, r) => sum + bytes(`${r.kind}: ${r.text}`), 0));
     expect(updated.generated).toBe(2); expect(updated.free).toBe(1);
     expect(updated.turns).toBe(2); expect(updated.tool_calls).toBe(5); expect(updated.retrievals).toBe(3);
     expect(metrics.snapshot()).toEqual(updated);
     expect(initial.usage).not.toEqual(updated.usage);
     updated.usage.calls = -1; updated.by_purpose.agent.calls = -1;
-    expect(metrics.snapshot().usage.calls).toBe(6);
+    expect(metrics.snapshot().usage.calls).toBe(7);
     expect(metrics.snapshot().by_purpose.agent.calls).toBe(3);
     expect(metrics.compact()).toContain('turn 2.00s');
   } finally { metrics.close(); }

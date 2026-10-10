@@ -1,2 +1,2 @@
 // Compatibility entry point for existing integrations.
-export { projectTools } from './tools.ts';
+export { projectTools, readOnlyProjectTools } from './tools.ts';

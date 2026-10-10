@@ -22,9 +22,11 @@
     "build:ui": "bun scripts/build-ui.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@octanejs/ink": "0.0.21",
     "ai": "^7.0.133",
     "entities": "^8.1.0",
+    "linkedom": "^0.18.13",
     "marked": "^18.1.0",
     "octane": "0.8.0",
     "string-width": "^8.3.0"

@@ -1,4 +1,4 @@
-import type { MemoryPort, ModelPort, AgentTools, Message, TurnRecord, ToolActivity } from './types.js';
+import type { MemoryPort, ModelPort, AgentTools, Message, TurnRecord, ToolActivity, MessageKind } from './types.js';
 import { errorMessage } from './types.js';
 import { viewBlocks } from './view.js';
 import { systemPrompt } from './prompt.js';
@@ -6,6 +6,7 @@ import { capResult } from './constants.js';
 import { smoothResponse } from './smooth-response.js';
 
 interface RunnerOptions {
+  maxModelSteps?: number;
   onText?: (text: string) => void; onThought?: (text: string) => void;
   onError?: (text: string) => void; onTurn?: (record: TurnRecord) => void;
   onTool?: (activity: ToolActivity) => void;
@@ -13,7 +14,8 @@ interface RunnerOptions {
 }
 export class Runner {
   system: string;
-  queue: { text: string; logged: boolean }[];
+  queue: { text: string; logged: boolean; kind: MessageKind }[];
+  maxModelSteps: number;
   active: boolean;
   inCall: boolean;
   controller: AbortController | null;
@@ -25,7 +27,8 @@ export class Runner {
   onTurn: (record: TurnRecord) => void;
   onTool: (activity: ToolActivity) => void;
   onPhase: (phase: string) => void;
-  constructor(public memory: MemoryPort, public model: ModelPort, public tools: AgentTools, instructions = '', { onText = () => {}, onThought = () => {}, onError = console.error, onTurn = () => {}, onTool = () => {}, onPhase = () => {} }: RunnerOptions = {}) {
+  constructor(public memory: MemoryPort, public model: ModelPort, public tools: AgentTools, instructions = '', { onText = () => {}, onThought = () => {}, onError = console.error, onTurn = () => {}, onTool = () => {}, onPhase = () => {}, maxModelSteps = Infinity }: RunnerOptions = {}) {
+    this.maxModelSteps = maxModelSteps;
     this.onText = onText; this.onThought = onThought; this.onError = onError; this.onTurn = onTurn; this.onTool = onTool;
     this.onPhase = onPhase;
     this.system = systemPrompt(instructions);
@@ -36,9 +39,9 @@ export class Runner {
     this.controller = null;
     this.closed = false;
   }
-  submit(text: string) {
-    const entry = { text, logged: false };
-    if (this.inCall) { this.memory.append('user', text); entry.logged = true; }
+  submit(text: string, kind: MessageKind = 'user') {
+    const entry = { text, logged: false, kind };
+    if (this.inCall) { this.memory.append(kind, text); entry.logged = true; }
     this.queue.push(entry);
     if (!this.active) this.running = this.run();
     return this.running;
@@ -46,7 +49,7 @@ export class Runner {
   cancel() { this.controller?.abort(); }
   take() {
     const entries = this.queue.splice(0);
-    for (const entry of entries) if (!entry.logged) { this.memory.append('user', entry.text); entry.logged = true; }
+    for (const entry of entries) if (!entry.logged) { this.memory.append(entry.kind, entry.text); entry.logged = true; }
     return entries;
   }
   async run() {
@@ -74,7 +77,9 @@ export class Runner {
         ];
         this.inCall = true;
         try {
+          let modelSteps = 0;
           for (;;) {
+            if (modelSteps++ >= this.maxModelSteps) throw new Error(`Model step limit (${this.maxModelSteps}) reached; task is incomplete.`);
             this.onPhase('Waiting for response');
             const result = await smoothResponse(this.model, messages, {
               tools: this.tools.definitions, signal, onText: this.onText, onThought: this.onThought,
