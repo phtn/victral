@@ -1,8 +1,18 @@
 # Effect integration plan
 
 Prepared October 10, 2026 for Victral at `ba82ad30e`, including the pending
-configuration and Schema-guide changes. This is an implementation backlog;
-no Effect runtime migration has started.
+configuration and Schema-guide changes. This is an implementation backlog.
+
+## Implementation status
+
+Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0 and 1 are complete;
+step 2 has begun with MCP configuration validation. The first production
+boundary uses the pinned published Effect 4.0.2 dependency. Task plans, tool
+registries and audio settings remain ahead of the step-2 acceptance gate.
+
+See the [baseline and frozen fixtures](EFFECT_MIGRATION_BASELINE.md),
+[Schema patterns](../agent-patterns/effect-schema.md) and
+[runtime/error conventions](../agent-patterns/effect-runtime.md).
 
 ## Recommendation
 
@@ -75,13 +85,13 @@ modules, L = stateful subsystem requiring extensive compatibility checks.
 
 ## 0. Establish the baseline
 
-- [ ] Run `bun run check` and `bun run build`; record the results. The most recent
+- [x] Run `bun run check` and `bun run build`; record the results. The most recent
       completed check before this plan passed 137 tests across 18 files.
-- [ ] Record `bun run benchmark` results with the same history size and machine
+- [x] Record `bun run benchmark` results with the same history size and machine
       settings for later comparisons; set acceptable regressions before implementation.
-- [ ] Identify coverage gaps and add only missing contract tests: partial startup
+- [x] Identify coverage gaps and add only missing contract tests: partial startup
       failure, cancel during acquisition, repeated close, and late worker reports.
-- [ ] Save representative provider request/replay fixtures and prompt/tool-schema
+- [x] Save representative provider request/replay fixtures and prompt/tool-schema
       bytes, using fake credentials. Preserve a legacy chat fixture and restart
       expectations. Keep these fixtures outside `repos/`.
 
@@ -90,18 +100,18 @@ checks pass without discovering vendored tests.
 
 ## 1. Add the dependency and establish patterns
 
-- [ ] Verify a published Effect version compatible with the inspected v4 API,
+- [x] Verify a published Effect version compatible with the inspected v4 API,
       pin the dependency, and update the lockfile. Confirm Bun and TypeScript
       compatibility with a minimal compiled/runnable application example.
-- [ ] Use `Context.Service`, `Layer`, and `Effect.fn` following the vendored
+- [x] Use `Context.Service`, `Layer`, and `Effect.fn` following the vendored
       examples. Define shared typed errors for validation, I/O, timeout,
       protocol failure, and denied tool access, introducing domain-specific
       errors where callers need distinct handling.
-- [ ] Define how interruption differs from ordinary failure and from defects.
+- [x] Define how interruption differs from ordinary failure and from defects.
       Preserve original causes internally and redact public messages.
-- [ ] Establish narrow Promise/AbortSignal adapters for existing `ModelPort`,
+- [x] Establish narrow Promise/AbortSignal adapters for existing `ModelPort`,
       `AgentTools`, and UI consumers. Do not convert those consumers yet.
-- [ ] Keep existing Bun tests. Add Effect testing dependencies only when a real
+- [x] Keep existing Bun tests. Add Effect testing dependencies only when a real
       clock/fiber testing need arises; inspect their matching vendored examples.
 
 **Gate:** the version and examples compile; failure and cancellation adapters
@@ -109,12 +119,14 @@ have meaningful tests. No application import resolves into `repos/`.
 
 ## 2. Upgrade Schema boundaries first
 
-- [ ] Replace `parseIntegrations` checks with schemas for stdio and HTTP variants,
+- [x] Replace `parseIntegrations` checks with schemas for stdio and HTTP variants,
       server names, environment-variable references, and exact tool allowlists.
       Preserve defaults, size limits, unknown-field policy, and error usefulness.
 - [ ] Migrate task-plan input and saved-plan validation. Encode the step status
       enum, bounded text/collections, safe revisions, and at-most-one active
       step. Preserve trimming, revision conflicts, and save-before-publish behavior.
+- [ ] Add schema-validated notification volume/mute settings before the step-3
+      audio service. Keep live playback opt-in after the prototype audition.
 - [ ] Introduce a tool registry that associates each tool name with its argument
       schema, capability requirements, and implementation. Migrate tool groups
       in sequence: browsing, file/Git reads, mutations, commands, workers/MCP.

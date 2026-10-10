@@ -1,0 +1,44 @@
+{
+  "main": [
+    {
+      "i": 0,
+      "kind": "user",
+      "text": "Saved decision 🦓",
+      "date": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "i": 1,
+      "kind": "talk",
+      "text": "Keep the source.",
+      "date": "2026-01-01T00:00:01.000Z"
+    }
+  ],
+  "tree": [
+    {
+      "l": 0,
+      "i": 0,
+      "text": "user: Saved decision 🦓"
+    },
+    {
+      "l": 0,
+      "i": 1,
+      "text": "talk: Keep the source."
+    },
+    {
+      "l": 1,
+      "i": 0,
+      "text": "user: Saved decision 🦓\ntalk: Keep the source."
+    }
+  ],
+  "view": [
+    [
+      0,
+      0
+    ],
+    [
+      0,
+      1
+    ]
+  ],
+  "render": "<chat>\n0+1|user: Saved decision 🦓\n1+1|talk: Keep the source.\n</chat>"
+}

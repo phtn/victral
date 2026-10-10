@@ -5,11 +5,12 @@ code from normal package dependencies. `@repos/` in `AGENTS.md` means the
 repository's `repos/` directory; it is not a TypeScript import alias.
 Never import from or edit `repos/effect` when implementing application features.
 
-The reference checkout identifies itself as Effect **4.0.3**. These examples
-follow its v4 API. Victral does not currently declare an `effect` dependency:
-before introducing runtime Schema code, add a compatible normal dependency
-and verify examples against that installed version. Do not assume that a v3
-package implements these signatures or silently migrate existing validation.
+The reference checkout identifies itself as Effect **4.0.3**. Victral pins the
+published **4.0.2** package, with application compilation and runtime tests
+verifying the v4 APIs used here. The reference version is not yet published at
+the initial migration check. See the [baseline](../docs/EFFECT_MIGRATION_BASELINE.md)
+for verification and the [runtime conventions](effect-runtime.md) for errors
+and adapters. Do not assume that a v3 package implements these signatures.
 
 ## Reference material
 
@@ -65,6 +66,13 @@ Use `Finite` rather than unrestricted `Number` when JSON or the domain requires
 finite numbers. Add built-in checks with `.check(...)` or
 `.pipe(Schema.check(...))`; avoid reconstructing standard checks by hand.
 
+Refined `Record` keys select properties: unmatched keys are ignored by default.
+Use `onExcessProperty: "error"` when every key must be valid, such as MCP server
+names and environment-reference targets. This follows the vendored `Record`
+tests. For different policies at different levels, decode those boundaries
+separately: MCP permits top-level metadata but rejects unknown server fields.
+Do not assume a custom `parseOptions` annotation changes the parser's options.
+
 ## Decoding and encoding
 
 This example adapts the built-in string/number codec documented in `Schema.ts`:
@@ -104,13 +112,23 @@ For strict configuration, select parse options explicitly:
 ```ts
 const decodeSettings = Schema.decodeUnknownEffect(Settings, {
   onExcessProperty: "error",
-  errors: "all"
+  errors: "all",
+  reportInput: false
 })
 ```
 
 This adapts excess-property cases from `Schema.test.ts`. Do not assume unknown
 keys are rejected by default. Choose ignore or error behavior deliberately
 and test it against the external contract.
+
+The first production example is [integration-config.ts](../src/integration-config.ts).
+It uses a `Union` of stdio and HTTP structs, `optional(Never)` for fields forbidden
+on a transport, bounded exact tool names, and
+`withDecodingDefault(Effect.succeed([]))` for the discovery-only allowlist.
+That default deliberately accepts both an absent key and explicit `undefined`,
+matching legacy callers. It rejects `null`. Use `withDecodingDefaultKey` when
+only absence should trigger the default. Preserve exact tool-name matching;
+`["*"]` permits only a tool literally named `*`.
 
 ## Transformations
 
@@ -190,6 +208,9 @@ if (Result.isFailure(result)) {
 and `toJSON()`. Preserve useful paths when mapping it to an application error,
 without logging secrets or complete sensitive payloads. Result adapters return
 schema mismatches as failures; defects and non-schema failures can still throw.
+Keep `reportInput: false` at credential/configuration boundaries. Enabling input
+reporting can put original values into issues and formatted messages. Schema
+annotations and custom filter messages must not interpolate private input.
 
 ## Avoid
 

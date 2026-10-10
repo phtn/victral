@@ -29,6 +29,7 @@
     "@octanejs/ink": "0.0.21",
     "@web-kits/audio": "^0.2.0",
     "ai": "^7.0.133",
+    "effect": "4.0.2",
     "entities": "^8.1.0",
     "linkedom": "^0.18.13",
     "marked": "^18.1.0",
