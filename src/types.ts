@@ -13,7 +13,7 @@ export interface ToolDefinition {
 }
 export interface AgentTools {
   definitions: ToolDefinition[];
-  execute(name: string, args: Record<string, unknown>, signal?: AbortSignal, onNestedCall?: (name: string) => void): Promise<string>;
+  execute(name: string, args: unknown, signal?: AbortSignal, onNestedCall?: (name: string) => void): Promise<string>;
   close?(): Promise<void>;
   context?(): string;
 }

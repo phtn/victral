@@ -1,9 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
+import * as Cause from 'effect/Cause';
+import * as Context from 'effect/Context';
+import * as Effect from 'effect/Effect';
+import * as Exit from 'effect/Exit';
+import * as Layer from 'effect/Layer';
+import * as ManagedRuntime from 'effect/ManagedRuntime';
+import type * as Scope from 'effect/Scope';
 import { Storage, STORAGE_STREAMS, VIEW_FILES } from './storage.js';
 import { Memory } from './memory.js';
-import { createModel, formatModelsList, resolveModelId, PROVIDERS } from './models.js';
+import { formatModelsList, resolveModelId, PROVIDERS } from './models.js';
 import { Evaluations } from './evaluations.js';
 import { Metrics } from './metrics.js';
 import { Runner } from './runner.js';
@@ -13,10 +20,12 @@ import { projectTools, readOnlyProjectTools } from './tools.js';
 import { errorMessage, type ModelPort, type ToolActivity, type TurnRecord } from './types.js';
 import type { JevStatus } from './jev-status.js';
 import { COMMANDS } from './session-commands.js';
+import { SessionSettings, SessionModels, SessionStorage, releaseSessionResource, sessionExitValue, type ModelOptions } from './core/session-services.js';
+import { AudioNotifications } from './sfx/notifications.js';
 export { COMMANDS } from './session-commands.js';
 
-// Provider/storage implementations retain their existing JS API during migration.
-const modelFactory = createModel as unknown as (id: string, options: { purpose?: string; webSearch?: boolean; usage: (record: unknown) => void }) => ModelPort;
+type SessionEnvironment = SessionSettings | SessionModels | SessionStorage | SessionInstance | AudioNotifications;
+type SessionRuntime = ManagedRuntime.ManagedRuntime<SessionEnvironment, unknown>;
 export interface SessionOptions {
   project: string; chatDir: string; model: string; compactorModel: string;
   instructions?: string; webSearch?: boolean; mcpConfig?: string; allowShell: boolean; jev: boolean; metrics: boolean;
@@ -35,71 +44,104 @@ export class Session extends EventEmitter {
   private closed = false;
   private closing?: Promise<void>;
   private updateTimer?: ReturnType<typeof setTimeout>;
-  private runner: Runner;
-  private subagents: Subagents;
-  private evaluationListener: () => void;
+  private runner!: Runner;
+  private subagents!: Subagents;
+  private evaluationListener = () => this.scheduleUpdate();
 
-  private constructor(readonly options: SessionOptions, readonly storage: Storage, readonly memory: Memory, readonly evaluations: Evaluations, readonly metrics: Metrics, model: ModelPort, integrations: Integrations) {
+  private constructor(readonly options: SessionOptions, readonly storage: Storage, readonly memory: Memory, readonly evaluations: Evaluations, readonly metrics: Metrics, private readonly runtime: SessionRuntime) {
     super();
+  }
+  private initialize(model: ModelPort, integrations: Integrations, transferIntegrations: () => void): Effect.Effect<void, unknown, Scope.Scope> {
+    const self = this, { options, storage, memory, evaluations, metrics } = this;
     const planStore = { load: () => storage.load('plans'), save: (plan: Parameters<Storage['savePlan']>[0]) => storage.savePlan(plan) };
-    this.subagents = new Subagents({
-      model: () => modelFactory(this.runner.model.model, { purpose: 'subagent', webSearch: options.webSearch, usage: record => metrics.usage(record) }),
-      tools: () => readOnlyProjectTools(memory, options.project, { planStore }),
-      context: () => memory.render(), instructions: () => this.instructions(),
-      report: text => {
-        if (this.closed || this.closing) return;
-        this.add('system', text);
-        void this.runner.submit(text, 'work')?.then(() => {
-          if (!this.closed) { this.phase = 'Ready'; this.update(); this.emit('idle'); }
-        }).catch(error => this.add('error', errorMessage(error)));
-      },
+    return Effect.gen(function*() {
+      let tools: ReturnType<typeof projectTools> | undefined;
+      self.subagents = yield* Effect.acquireRelease(Effect.try({ try: () => new Subagents({
+        model: () => self.createModel(self.runner.model.model, { purpose: 'subagent', webSearch: options.webSearch, usage: record => metrics.usage(record) }),
+        tools: () => readOnlyProjectTools(memory, options.project, { planStore }),
+        context: () => memory.render(), instructions: () => self.instructions(),
+        report: text => {
+          if (self.closed || self.closing) return;
+          self.add('system', text);
+          void self.runner.submit(text, 'work')?.then(() => {
+            if (!self.closed) { self.phase = 'Ready'; self.update(); self.emit('idle'); }
+          }).catch(error => self.add('error', errorMessage(error)));
+        },
+      }), catch: cause => cause }), agents => tools ? Effect.void : releaseSessionResource('Research workers cleanup', () => agents.close()));
+      const ports = yield* Effect.acquireRelease(Effect.try({ try: () => {
+        const ports = projectTools(memory, options.project, { allowShell: options.allowShell, planStore, integrations, subagents: self.subagents });
+        // Handoff occurs inside uninterruptible acquisition, before publication.
+        tools = ports; transferIntegrations(); return ports;
+      }, catch: cause => cause }), ports => releaseSessionResource('Agent tools cleanup', () => self.runner ? self.runner.close() : ports.close?.()));
+      self.runner = yield* Effect.try({ try: () => new Runner(memory, model, ports, self.instructions(), {
+        onText: text => {
+          const last = self.entries.at(-1);
+          if (last?.role === 'victral') last.text += text;
+          else self.add('victral', text, false);
+          self.phase = 'Responding'; self.emit('text', text); self.scheduleUpdate();
+        },
+        onThought: () => { self.phase = 'Thinking'; self.scheduleUpdate(); },
+        onPhase: phase => { self.phase = phase; self.update(); },
+        onError: text => { self.add('error', text); self.emit('errorText', text); },
+        onTool: activity => {
+          self.tool = activity;
+          self.phase = activity.status === 'running' ? `Running ${activity.name}` : 'Thinking';
+          if (activity.status !== 'running') self.add('tool', `${activity.name} · ${activity.status} · ${((activity.duration_ms ?? 0) / 1000).toFixed(2)}s`);
+          self.emit('tool', activity); self.update();
+        },
+        onTurn: record => { metrics.record({ type: 'turn', ...record }); self.turn = record; },
+      }), catch: cause => cause });
+      yield* Effect.addFinalizer(() => releaseSessionResource('Session listeners cleanup', () => {
+        self.closed = true; clearTimeout(self.updateTimer); evaluations.off('update', self.evaluationListener);
+      }));
+      yield* Effect.try({ try: () => {
+        for (const record of storage.root.slice(-60)) {
+          if (record.kind === 'user' || record.kind === 'talk') self.add(record.kind === 'user' ? 'you' : 'victral', record.text, false);
+        }
+        evaluations.on('update', self.evaluationListener);
+        evaluations.pump(); memory.pump();
+      }, catch: cause => cause });
     });
-    this.runner = new Runner(memory, model, projectTools(memory, options.project, { allowShell: options.allowShell,
-      planStore, integrations, subagents: this.subagents,
-    }), this.instructions(), {
-      onText: text => {
-        const last = this.entries.at(-1);
-        if (last?.role === 'victral') last.text += text;
-        else this.add('victral', text, false);
-        this.phase = 'Responding'; this.emit('text', text); this.scheduleUpdate();
-      },
-      onThought: () => { this.phase = 'Thinking'; this.scheduleUpdate(); },
-      onPhase: phase => { this.phase = phase; this.update(); },
-      onError: text => { this.add('error', text); this.emit('errorText', text); },
-      onTool: activity => {
-        this.tool = activity;
-        this.phase = activity.status === 'running' ? `Running ${activity.name}` : 'Thinking';
-        if (activity.status !== 'running') this.add('tool', `${activity.name} · ${activity.status} · ${((activity.duration_ms ?? 0) / 1000).toFixed(2)}s`);
-        this.emit('tool', activity); this.update();
-      },
-      onTurn: record => { metrics.record({ type: 'turn', ...record }); this.turn = record; },
-    });
-    for (const record of storage.root.slice(-60)) {
-      if (record.kind === 'user' || record.kind === 'talk') this.add(record.kind === 'user' ? 'you' : 'victral', record.text, false);
-    }
-    this.evaluationListener = () => this.scheduleUpdate();
-    evaluations.on('update', this.evaluationListener);
-    evaluations.pump(); memory.pump();
   }
   static async open(options: SessionOptions): Promise<Session> {
-    // Validate credentials and instructions before locking storage.
-    const instructionFile = options.instructions ?? path.join(options.project, 'AGENTS.md');
-    if (options.instructions && !fs.existsSync(instructionFile)) throw new Error('The instructions file does not exist.');
-    let metrics: Metrics | undefined;
-    const usage = (record: unknown) => metrics?.usage(record);
-    const model = modelFactory(options.model, { usage, webSearch: options.webSearch });
-    const integrations = options.mcpConfig ? await loadIntegrations(path.resolve(options.mcpConfig), options.project) : new Integrations({}, options.project);
-    const compactor = modelFactory(options.compactorModel, { purpose: 'compactor', usage });
-    const storage = await Storage.open(options.chatDir);
-    let memory: Memory | undefined, evaluations: Evaluations | undefined;
-    try {
-      memory = new Memory(storage, compactor);
-      evaluations = new Evaluations(memory, { enabled: options.jev });
-      metrics = new Metrics(storage, memory, evaluations);
-      return new Session(options, storage, memory, evaluations, metrics, model, integrations);
-    } catch (error) {
-      metrics?.close(); await evaluations?.close(); await memory?.stop(); await storage.close(); throw error;
+    const layer: Layer.Layer<SessionEnvironment, unknown> = Layer.effectContext(Effect.gen(function*() {
+      const settings = yield* SessionSettings, models = yield* SessionModels;
+      // Validate credentials and instructions before locking storage.
+      yield* Effect.try({ try: () => {
+        const instructionFile = settings.instructions ?? path.join(settings.project, 'AGENTS.md');
+        if (settings.instructions && !fs.existsSync(instructionFile)) throw new Error('The instructions file does not exist.');
+      }, catch: cause => cause });
+      let ownedMetrics: Metrics | undefined, ownedEvaluations: Evaluations | undefined, integrationsTransferred = false;
+      const usage = (record: unknown) => ownedMetrics?.usage(record);
+      const model = yield* models.create(settings.model, { usage, webSearch: settings.webSearch });
+      const integrations = yield* Effect.acquireRelease(Effect.tryPromise({
+        try: async () => settings.mcpConfig ? loadIntegrations(path.resolve(settings.mcpConfig), settings.project) : new Integrations({}, settings.project),
+        catch: cause => cause,
+      }), integrations => integrationsTransferred ? Effect.void : releaseSessionResource('Integrations cleanup', () => integrations.close()));
+      const compactor = yield* models.create(settings.compactorModel, { purpose: 'compactor', usage });
+      const storage = yield* SessionStorage.acquire(settings.chatDir);
+      // Register these before memory so its final work and evaluation shutdown
+      // still reach metrics. Values are assigned inside synchronous construction.
+      yield* Effect.addFinalizer(() => releaseSessionResource('Metrics cleanup', () => ownedMetrics?.close()));
+      yield* Effect.addFinalizer(() => releaseSessionResource('Evaluations cleanup', () => ownedEvaluations?.close()));
+      const memory = yield* Effect.acquireRelease(Effect.try({ try: () => new Memory(storage, compactor), catch: cause => cause }),
+        memory => releaseSessionResource('Memory cleanup', () => memory.stop()));
+      const evaluations = yield* Effect.try({ try: () => ownedEvaluations = new Evaluations(memory, { enabled: settings.jev }), catch: cause => cause });
+      const metrics = yield* Effect.try({ try: () => ownedMetrics = new Metrics(storage, memory, evaluations), catch: cause => cause });
+      const session = new Session(options, storage, memory, evaluations, metrics, runtime);
+      yield* session.initialize(model, integrations, () => { integrationsTransferred = true; });
+      return Context.make(SessionInstance, session).pipe(Context.add(SessionStorage, storage));
+    })).pipe(Layer.provideMerge(Layer.mergeAll(Layer.succeed(SessionSettings, options), SessionModels.layer, AudioNotifications.layerSilent)));
+    const runtime: SessionRuntime = ManagedRuntime.make(layer);
+    const exit = await runtime.runPromiseExit(SessionInstance);
+    if (Exit.isFailure(exit)) {
+      const cleanup = await Effect.runPromiseExit(runtime.disposeEffect);
+      if (Exit.isFailure(cleanup)) return sessionExitValue(Exit.failCause(Cause.combine(exit.cause, cleanup.cause)), 'Session startup');
     }
+    return sessionExitValue(exit, 'Session startup');
+  }
+  private createModel(id: string, options: ModelOptions): ModelPort {
+    return sessionExitValue(this.runtime.runSyncExit(Effect.flatMap(SessionModels, models => models.create(id, options))), 'Model creation');
   }
   private instructions(): string {
     const filename = this.options.instructions ?? path.join(this.options.project, 'AGENTS.md');
@@ -161,7 +203,7 @@ export class Session extends EventEmitter {
       if (this.runner.active) throw new Error('Switch models between turns; /cancel ends the current turn.');
       const selected = resolveModelId(arg);
       if (selected === this.runner.model.model) return `Already using ${selected}.`;
-      this.runner.model = modelFactory(selected, { webSearch: this.options.webSearch, usage: record => this.metrics.usage(record) }); this.update();
+      this.runner.model = this.createModel(selected, { webSearch: this.options.webSearch, usage: record => this.metrics.usage(record) }); this.update();
       return `Switched agent to ${selected}. Session-local; saved memory kept. Compactor unchanged (${this.options.compactorModel}).`;
     }
     if (name === '/zoom' || name === '/date') {
@@ -212,12 +254,10 @@ export class Session extends EventEmitter {
   }
   private async shutdown(): Promise<void> {
     this.closed = true;
-    clearTimeout(this.updateTimer);
-    this.evaluations.off('update', this.evaluationListener);
-    try { await this.runner.close(); }
-    finally {
-      try { await this.memory.stop(); }
-      finally { try { await this.evaluations.close(); } finally { this.metrics.close(); await this.storage.close(); this.emit('closed'); } }
-    }
+    const exit = await Effect.runPromiseExit(this.runtime.disposeEffect);
+    this.emit('closed');
+    sessionExitValue(exit, 'Session cleanup');
   }
 }
+
+class SessionInstance extends Context.Service<SessionInstance, Session>()('victral/session/Instance') {}

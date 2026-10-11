@@ -238,8 +238,10 @@ before decoding; schema decoding runs before invoking the handler. `prepare()`
 validates and captures arguments without starting work, so parallel batches can
 prepare all registered inputs before I/O. Schema errors reject the batch during
 preflight; runtime errors such as missing pages/files remain individual results.
-During the incremental migration, tools outside the registry retain their
-legacy validation. Keep provider-facing definitions in `tools.ts` unchanged;
+Every enabled project tool, including the batch envelope, uses this registry.
+Accept `unknown` at `AgentTools.execute` and Promise/Effect adapters; let schemas
+establish the argument type rather than asserting a parsed JSON record.
+Keep provider-facing definitions in `tools.ts` unchanged;
 they are frozen request fixtures and are not generated from these codecs.
 
 Legacy `WebBrowser.open/read/find` calls decode unknown values and delegate to
@@ -390,6 +392,53 @@ groups only when their services are enabled. Keep worker restrictions and the
 parallel-read allowlist explicit: registration does not authorize external
 actions or delegation, and these groups do not become batch-readable merely
 because some operations inspect state.
+
+## Bounded batch envelopes
+
+Adapt the vendored `Literals`, `Array` and `Record` examples for a batch of
+unknown tool payloads. This shortened example uses two allowed names; the
+[production batch schema](../src/parallel-tools.ts) defines the full policy.
+
+```ts
+import * as Schema from "effect/Schema"
+
+const ReadName = Schema.Literals(["get_plan", "fetch_url"])
+const ReadCall = Schema.Struct({
+  tool: ReadName,
+  arguments: Schema.Record(Schema.String, Schema.Unknown)
+})
+const Batch = Schema.Struct({
+  calls: Schema.Array(ReadCall).check(Schema.isBetweenLength(1, 8))
+})
+type BatchArguments = typeof Batch.Type
+const decodeBatch = Schema.decodeUnknownSync(Batch, {
+  reportInput: false,
+  onExcessProperty: "ignore"
+})
+const args: BatchArguments = decodeBatch({
+  calls: [{ tool: "get_plan", arguments: {} }]
+})
+```
+
+Use the literal schema's `literals` for the runtime set so names have one source
+of truth. Keep the batch policy explicit; a registered tool's read capability
+does not automatically authorize batching it. This excludes writes, command
+execution, worker/MCP operations and recursion. Arrays infer readonly element
+types and bounds apply to collection length, without a duplicate call interface.
+
+Decode the complete envelope before preparing any nested call, then prepare all
+nested schemas before returning the batch invocation. Preparation must not start
+I/O or emit nested-call telemetry. Invocation forwards the same cancellation
+signal, emits telemetry when each call starts, and preserves input-order results
+even when calls finish out of order. Runtime errors remain per-call results;
+interruption escapes the batch. Preserve the existing UTF-8 cap and error text.
+
+Ignore legacy envelope/call extras, but retain every key inside `arguments` until
+the nested tool's schema applies its own policy. Reject sparse arrays, malformed
+call objects and invalid argument objects before execution. Disabled command
+reads retain their legacy per-call errors; enabled command reads must validate
+their argument schemas during preparation. Do not defer arbitrary missing
+registrations or schema failures into successful batch preparation.
 
 ## Errors and domain models
 

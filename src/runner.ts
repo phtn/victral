@@ -103,7 +103,7 @@ export class Runner {
               try {
                 const args: unknown = JSON.parse(call.function.arguments);
                 if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Tool arguments must be an object.');
-                output = await this.tools.execute(call.function.name, args as Record<string, unknown>, signal, name => {
+                output = await this.tools.execute(call.function.name, args, signal, name => {
                   toolCalls++; if (name === 'zoom') retrievals++;
                 });
               } catch (error) {
@@ -139,7 +139,11 @@ export class Runner {
   }
   async close() {
     this.closed = true; this.cancel();
-    try { await this.running; }
-    finally { this.take(); await this.tools.close?.(); }
+    const errors: unknown[] = [];
+    try { await this.running; } catch (error) { errors.push(error); }
+    this.take();
+    try { await this.tools.close?.(); } catch (error) { errors.push(error); }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, 'Runner cleanup failed.');
   }
 }

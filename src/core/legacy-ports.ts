@@ -16,14 +16,14 @@ function modelEffects(model: ModelPort) {
 function toolEffects(tools: AgentTools) {
   return {
     definitions: tools.definitions,
-    execute: Effect.fn('LegacyPorts.tools.execute')((name: string, args: Record<string, unknown>, onNestedCall?: (name: string) => void) =>
+    execute: Effect.fn('LegacyPorts.tools.execute')((name: string, args: unknown, onNestedCall?: (name: string) => void) =>
       fromAbortablePromise(signal => tools.execute(name, args, signal, onNestedCall),
         cause => new ToolExecutionError({ tool: name, cause }))),
   };
 }
 
-// The legacy Session still owns close(), subscriptions and background jobs.
-// Supplying this layer does not transfer ownership of either port.
+// Borrow existing ports. Their session runtime or standalone Runner owns close(),
+// subscriptions and background jobs; this adapter transfers no ownership.
 export class LegacyPorts extends Context.Service<LegacyPorts, {
   readonly model: ReturnType<typeof modelEffects>;
   readonly tools: ReturnType<typeof toolEffects>;

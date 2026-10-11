@@ -3,7 +3,7 @@ import { ToolAccessDenied } from './core/errors.js';
 import { validationDecoder } from './core/schema.js';
 
 export type ToolCapability = 'read' | 'write' | 'shell' | 'integrations' | 'subagents';
-export type ToolInvocation = (signal?: AbortSignal) => Promise<string>;
+export type ToolInvocation = (signal?: AbortSignal, onNestedCall?: (name: string) => void) => Promise<string>;
 export interface RegisteredTool {
   readonly name: string;
   readonly schema: Schema.ConstraintDecoder<unknown>;
@@ -46,8 +46,8 @@ export class ToolRegistry {
     if (entry.capabilities.some(capability => !this.capabilities.has(capability))) throw new ToolAccessDenied({ tool: name });
     return entry.prepare(value);
   }
-  async execute(name: string, value: unknown, signal?: AbortSignal): Promise<string> {
+  async execute(name: string, value: unknown, signal?: AbortSignal, onNestedCall?: (name: string) => void): Promise<string> {
     signal?.throwIfAborted();
-    return this.prepare(name, value)(signal);
+    return this.prepare(name, value)(signal, onNestedCall);
   }
 }

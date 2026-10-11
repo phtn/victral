@@ -5,15 +5,27 @@ configuration and Schema-guide changes. This is an implementation backlog.
 
 ## Implementation status
 
-Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0 and 1 are complete;
-step 2 now includes MCP configuration, task plans, audio settings and tool
-registries for browsing, file/Git reads, mutations, commands and workers/MCP.
+Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0, 1, 2 and 3 are complete,
+including MCP configuration, task plans, audio settings and tool registries for
+browsing, file/Git reads, mutations, commands, workers/MCP and the batch envelope.
 These boundaries use the pinned published Effect 4.0.2 dependency. The latest
-change passes 214 tests, typecheck and build; legacy rendering,
+change passes 248 tests across 32 files, typecheck and build; legacy rendering,
 browsing/read/mutation output, file bytes/modes, Git/command arguments and
 provider request/tool fixtures match unchanged.
 Worker prompts/reports and MCP requests/redaction match their legacy fixtures.
-The batch envelope and final registry integration remain ahead of the step-2 gate.
+Batch output, cancellation, ordering and nested-call counts retain their existing
+contracts. Every enabled tool now validates through the registry; external
+argument adapters accept unknown values without a record assertion.
+Step 3 has one session ManagedRuntime, settings/model/storage services and
+scoped startup/shutdown. Tests prove partial acquisitions release their owners
+once, completed turns retain background jobs, and cleanup preserves all causes.
+The Session/UI API and synchronous persistence callbacks remain compatible.
+`AudioNotifications` supplies a silent default and opt-in live layer with scoped
+playback ownership, validated volume/mute settings and isolated audio failures.
+Interruption waits for native playback cleanup; independent background cues keep
+their own lifetime. The Session installs the silent layer, and workflow event
+wiring remains in steps 7–9. Next: step 4, external I/O services, beginning with
+fetch cancellation and response-reader ownership.
 
 See the [baseline and frozen fixtures](EFFECT_MIGRATION_BASELINE.md),
 [Schema patterns](../agent-patterns/effect-schema.md) and
@@ -132,7 +144,7 @@ have meaningful tests. No application import resolves into `repos/`.
       step. Preserve trimming, revision conflicts, and save-before-publish behavior.
 - [x] Add schema-validated notification volume/mute settings before the step-3
       audio service. Keep live playback opt-in after the prototype audition.
-- [ ] Introduce a tool registry that associates each tool name with its argument
+- [x] Introduce a tool registry that associates each tool name with its argument
       schema, capability requirements, and implementation. Migrate tool groups
       in sequence: browsing, file/Git reads, mutations, commands, workers/MCP.
       All five groups are complete, including `zoom`,
@@ -151,38 +163,51 @@ have meaningful tests. No application import resolves into `repos/`.
       identifier rules and execution-time capacity checks. MCP envelope validation
       finishes before acquisition, with configured-server/exact-allowlist checks
       before payload validation and again at invocation. Native remote schemas
-      and payload keys remain unchanged. Next: the batch envelope and final
-      registry integration; the envelope retains legacy validation for now.
-- [ ] Remove duplicate argument interfaces only after schemas can derive their
+      and payload keys remain unchanged. The batch envelope now uses a bounded
+      array of read-tool literals and opaque argument objects. Preparation validates
+      every nested schema before returning an invocation; telemetry begins only
+      during execution. Ordered output, independent runtime failures, cancellation,
+      UTF-8 caps and disabled-command result bytes remain unchanged.
+- [x] Remove duplicate argument interfaces only after schemas can derive their
       types. Treat refinement rules such as project containment and tool
-      permission as explicit domain checks, not type assertions.
+      permission as explicit domain checks, not type assertions. Tool arguments,
+      configuration and plan types now derive from schemas; public tool adapters
+      accept unknown input. Native provider/protocol and service interfaces remain
+      ordinary TypeScript contracts.
 - [x] Preserve provider-facing tool definitions exactly at first. Generating
       their JSON Schemas from Effect is a separate change requiring request
       fixture comparisons; otherwise schema conversion can disrupt cache prefixes.
 
-**Gate:** valid existing input still works, invalid input fails before side
+**Gate (passed):** valid existing input still works, invalid input fails before side
 effects, and tool permissions and persisted plan shapes remain unchanged.
 
 ## 3. Introduce one runtime and explicit resource ownership
 
-- [ ] Add one `ManagedRuntime` per session. Keep the existing Session/UI API as
+- [x] Add one `ManagedRuntime` per session. Keep the existing Session/UI API as
       the external adapter, with runtime execution at that boundary.
-- [ ] Start with small services for settings, model creation, and storage access.
+- [x] Start with small services for settings, model creation, and storage access.
       Add other services as they migrate; avoid a layer for every pure helper.
-- [ ] Initially wrap `Storage.open`/`close` without changing its durable writes
+- [x] Initially wrap `Storage.open`/`close` without changing its durable writes
       or format. Use scoped acquisition/finalization for the chat lock and other
       resources as they become Effect-owned.
-- [ ] Document one owner for every acquired resource. Hand ownership from legacy
+- [x] Document one owner for every acquired resource. Hand ownership from legacy
       `close()` code to Effect finalizers explicitly so both systems do not close
-      the same resource or omit cleanup during partial construction.
-- [ ] Define session, turn, and background-job lifetimes. Completed turns must
+      the same resource or omit cleanup during partial construction. See the
+      ownership table in [runtime patterns](../agent-patterns/effect-runtime.md).
+- [x] Define session, turn, and background-job lifetimes. Completed turns must
       not dispose session services or work allowed to continue in the background.
-- [ ] Make shutdown idempotent and expose cleanup failures without losing the
+- [x] Make shutdown idempotent and expose cleanup failures without losing the
       original failure. Keep synchronous persistence callbacks synchronous while
       compatibility adapters still depend on them.
+- [x] Add `AudioNotifications` with a silent test/default layer and opt-in live
+      playback layer. Give playback resources a session owner and preserve the
+      prototype's opt-in audition requirement. Workflow event wiring follows at
+      steps 7–9; this service must not enable sounds in regular chat by default.
 
 **Gate:** startup failures release the lock and every acquired resource; close
 is safe to repeat. Restart and existing Session/CLI behavior remain compatible.
+This gate passes, including silent default audio, opt-in player ownership,
+interruption cleanup, independent cue lifetimes and audio failure isolation.
 
 ## 4. Migrate external I/O services
 

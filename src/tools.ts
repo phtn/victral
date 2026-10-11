@@ -14,7 +14,7 @@ import { subagentTools } from './subagent-tool-registry.js';
 import { ToolRegistry, type ToolCapability } from './tool-registry.js';
 import type { Integrations } from './integrations.js';
 import type { Subagents } from './subagents.js';
-import { PARALLEL_READ_TOOLS, parallelReads } from './parallel-tools.js';
+import { PARALLEL_READ_TOOLS, parallelTools } from './parallel-tools.js';
 import type { AgentTools, MemoryPort, ToolDefinition } from './types.js';
 
 const string = { type: 'string' }, integer = { type: 'integer' };
@@ -96,7 +96,11 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
   if (allowShell) capabilities.push('shell');
   if (integrations) capabilities.push('integrations');
   if (subagents) capabilities.push('subagents');
-  const registry = new ToolRegistry([
+  const registry: ToolRegistry = new ToolRegistry([
+    parallelTools((name, args) => !allowShell && (name === 'command_status' || name === 'list_commands') ? async () => {
+      // Disabled command reads retain their individual runtime errors in a batch.
+      throw new Error(`Unknown or disabled tool: ${name}`);
+    } : registry.prepare(name, args)),
     ...browsingTools(browser, fetchImpl, timeoutMs), ...readTools(memory, { project, resolveFile, plans, git }),
     ...mutationTools({ resolveFile, plans }),
     // Keep disabled command names undiscoverable and their public rejection
@@ -104,16 +108,14 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
     ...(allowShell ? commandTools(commands, timeoutMs) : []),
     ...(integrations ? integrationTools(integrations) : []), ...(subagents ? subagentTools(subagents) : []),
   ], capabilities);
-  async function execute(name: string, args: Record<string, unknown>, signal?: AbortSignal, onNestedCall?: (name: string) => void): Promise<string> {
-    signal?.throwIfAborted();
-    if (registry.has(name)) return registry.execute(name, args, signal);
-    if (name === 'parallel_tools') return parallelReads(args.calls, (nested, values) => {
-      const invoke = registry.has(nested) ? registry.prepare(nested, values) : (nestedSignal?: AbortSignal) => execute(nested, values, nestedSignal);
-      return nestedSignal => { onNestedCall?.(nested); return invoke(nestedSignal); };
-    }, signal);
-    throw new Error(`Unknown or disabled tool: ${name}`);
-  }
-  return { definitions, execute, close: async () => { await Promise.all([commands.close(), integrations?.close(), subagents?.close()]); }, context: () => plans.context() };
+  return { definitions, execute: (name, args, signal, onNestedCall) => registry.execute(name, args, signal, onNestedCall),
+    close: async () => {
+      // Finish every owned cleanup before releasing memory/storage, even if one fails.
+      const results = await Promise.allSettled([() => commands.close(), () => integrations?.close(), () => subagents?.close()]
+        .map(close => Promise.resolve().then(close)));
+      const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+      if (errors.length) throw new AggregateError(errors, 'Tool cleanup failed.');
+    }, context: () => plans.context() };
 }
 
 export function readOnlyProjectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project: string, options: Pick<ToolOptions, 'fetchImpl' | 'planStore'> = {}): AgentTools {

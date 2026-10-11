@@ -16,15 +16,20 @@ export class EffectAdapterError extends Error {
   }
 }
 
-// Temporary Promise/UI boundary for service-free (or already provided) effects.
-// Use the session's ManagedRuntime when it is introduced; never create one here.
-export async function toLegacyPromise<A, E>(effect: Effect.Effect<A, E>, signal?: AbortSignal): Promise<A> {
-  if (signal?.aborted) throw new EffectAdapterError('The operation was canceled.', 'interruption', Cause.interrupt());
-  const exit = await Effect.runPromiseExit(effect, { signal });
+// Share Cause handling between service-free adapters and session runtime edges.
+// An override must be an application-owned message, never a diagnostic cause.
+export function legacyExitValue<A, E>(exit: Exit.Exit<A, E>, message?: string): A {
   if (Exit.isSuccess(exit)) return exit.value;
   const cause = exit.cause;
   if (Cause.hasInterruptsOnly(cause)) throw new EffectAdapterError('The operation was canceled.', 'interruption', cause);
-  if (Cause.hasDies(cause)) throw new EffectAdapterError('An unexpected error occurred.', 'defect', cause);
+  if (Cause.hasDies(cause)) throw new EffectAdapterError(message ?? 'An unexpected error occurred.', 'defect', cause);
   const failure = cause.reasons.find(Cause.isFailReason);
-  throw new EffectAdapterError(publicFailureMessage(failure?.error), 'failure', cause);
+  throw new EffectAdapterError(message ?? publicFailureMessage(failure?.error), 'failure', cause);
+}
+
+// Service-free (or already provided) effects outside a session. Session code
+// executes against its single ManagedRuntime instead of creating another runner.
+export async function toLegacyPromise<A, E>(effect: Effect.Effect<A, E>, signal?: AbortSignal): Promise<A> {
+  if (signal?.aborted) throw new EffectAdapterError('The operation was canceled.', 'interruption', Cause.interrupt());
+  return legacyExitValue(await Effect.runPromiseExit(effect, { signal }));
 }

@@ -31,7 +31,7 @@ numeric strings, out-of-range values and unknown setting keys fail. The lab's
 current preview. Invalid settings leave playback and state untouched. Keyboard
 volume adjustments still clamp and round to whole percentages. Native playback
 also validates volume before locating assets or spawning the player. These
-settings are reusable by the future notification service; live chat audio still
+settings are reused by the notification service; live chat audio still
 requires the audition and opt-in service described below.
 
 ## Conversion from the browser component
@@ -69,12 +69,15 @@ playback is separate from the agent's optional command-execution tools.
 - `scripts/build-sfx.ts`: offline rendering and asset cache.
 - `src/sfx/player.ts`: native playback and cancellation.
 - `src/sfx/settings.ts`: Schema-backed settings and volume validation.
+- `src/sfx/notifications.ts`: silent/default and opt-in live Effect service layers.
 - `src/sfx/lab-model.ts`: testable selection, volume, mute and scenario state.
 - `src/sfx/lab.ink.btsx`: terminal audition page.
 - `src/sfx/lab.ts`: render/start adapter.
 - `test/sfx.test.ts`: WAV signal checks and silent fake-player/UI tests.
+- `test/audio-notifications.test.ts`: layer ownership, volume, failure isolation
+  and cancellation checks with fake players and a silent subprocess.
 
-## Before live Effect integration
+## Before live workflow integration
 
 Audition the sounds at comfortable volume on the actual output device. Review
 processing frequency, distinction between retry and warning, and whether
@@ -82,9 +85,16 @@ failure/success sounds are easy to recognize. Automated waveform tests verify
 non-silent signal, PCM format and no clipping; they cannot judge the sound's
 perceived quality.
 
-Follow the audio section of [the migration plan](EFFECT_MIGRATION_PLAN.md):
-introduce a session-owned `AudioNotifications` service, a silent testing layer,
-and typed events with stable operation IDs. Map success after completion,
-retry when an actual attempt begins, and cancellation separately from failure.
+`AudioNotifications` now provides `layerSilent` and an opt-in `layerLive` with
+immutable volume/mute settings. The Session runtime installs only `layerSilent`.
+The live layer acquires one native player without starting playback, and owns
+its cleanup and all active cues. Each `play()` effect observes its caller's
+cancellation and waits for playback cleanup. Muted/zero-volume settings skip
+playback; unavailable devices and audio failures leave agent work intact. The
+standalone audition lab retains its existing controls and behavior.
+
+Follow the audio section of [the migration plan](EFFECT_MIGRATION_PLAN.md) when
+connecting typed events with stable operation IDs in steps 7–9. Map success after
+completion, retry when an actual attempt begins, and cancellation separately from failure.
 Deduplicate and limit cues; a playback failure must not change the task result
 or retry policy. Keep notifications opt-in until audition and event tests pass.

@@ -69,6 +69,8 @@ and compare this benchmark when those subsystems or their orchestration migrate.
   cancellation-signal forwarding and result bytes, described below.
 - `legacy-extension-tools.json`: pre-migration MCP requests/redacted output and
   worker output, prompts and automatic reports, described below.
+- `legacy-parallel-tools.json`: pre-migration batch preparation, signal forwarding,
+  ordered result/error bytes, UTF-8 caps and disabled-command results, described below.
 
 The messages and service setup live in `test/migration-fixtures.ts`. All keys,
 encrypted strings and records are synthetic. Providers use injected fake fetch;
@@ -313,3 +315,119 @@ The batch envelope and final registry integration are next before the step-2
 gate. Resource ownership and supervision will migrate in their later steps.
 Memory scheduling and metrics are unchanged; their original CPU benchmark
 remains the comparison point for those migrations.
+
+## Batch envelope and step-2 gate verification
+
+`legacy-parallel-tools.json` was captured before this change from
+`parallel-tools.ts` and `tools.ts` at `d9898e319`. Preparation/execution use
+deterministic stubs; a project toolset captures disabled command reads with no
+processes or external I/O. The fixture freezes one/eight-call endpoints,
+preparation order and payload keys, signal forwarding, independent runtime
+errors, ordered formatting and clipping near a four-byte Unicode boundary.
+Existing fixtures were not regenerated.
+
+- `bun run check`: 223 tests passed across 30 files; 5815 assertions and typecheck passed.
+- `bun run build`: passed; entry point bundled 63 application modules, 1.11 MB.
+- Every enabled provider tool, including `parallel_tools`, uses a validating
+  registry entry. Provider definitions, prompts and request bytes match all
+  frozen fixtures. Public tool and Effect adapters accept unknown arguments;
+  the Runner no longer asserts that parsed JSON is a record.
+- The batch schema validates 1–8 calls, explicit read-tool literals and argument
+  objects. It ignores legacy envelope/call extras and preserves opaque nested
+  argument keys, including own `__proto__` and `constructor` keys. Its types
+  infer from Schema rather than a duplicate call interface.
+- Malformed roots, missing fields, invalid collections/calls, sparse arrays,
+  unknown names, mutation/recursion and invalid argument objects fail with typed,
+  redacted Schema paths before nested preparation, I/O or telemetry. Every nested
+  schema validates before batch preparation returns an invocation.
+- Tests prove prepared values survive caller mutation, preparation performs no
+  work, capability denial precedes decoding, and pre-aborted invocations do no
+  nested work. Concurrent calls retain input order after later calls finish first.
+  In-flight interruption reaches every nested signal and escapes result formatting.
+- Legacy ordered output, independent runtime-error bytes, 3000-byte UTF-8 caps
+  and disabled-command failures match the captured implementation. Enabled command
+  reads still validate during preparation; read-only worker batches retain their
+  existing permissions. Runner nested-call/retrieval counts remain unchanged.
+- Configuration defaults/exact allowlists, plan persistence/conflict rules,
+  audio settings, browsing, file/Git reads, mutations, commands and workers/MCP
+  retain their prior boundary and native-resource contracts. The step-2 gate is
+  complete; runtime ownership begins at step 3.
+
+Memory scheduling and metrics remain unchanged; their original CPU benchmark
+remains the comparison point for those later migrations.
+
+## Session runtime and resource ownership verification
+
+The session now has one `ManagedRuntime` with settings, model-creation and
+storage services. Startup builds a scoped context before publishing the existing
+Session object. Model switches and worker model factories use that same runtime;
+the agent loop, UI API and synchronous persistence methods retain their native
+behavior. The [ownership table](../agent-patterns/effect-runtime.md) records the
+scoped owners and explicit handoffs to legacy Runner/toolset cleanup.
+
+- `bun run check`: 236 tests passed across 31 files; 5959 assertions and typecheck passed.
+- `bun run build`: passed; entry point bundled 65 application modules, 1.12 MB.
+- All frozen provider/prompt/tool and legacy output/request fixtures still match.
+  No existing fixtures were regenerated and the vendored source remains read-only.
+- Thirteen new tests prove runtime/storage reuse across completed turns and
+  model switches, cached repeated close, listener removal, storage reopen and
+  rejection of work on the disposed runtime.
+- Failures at instruction checks, compactor creation, memory/evaluation/metrics
+  construction, plan loading, Runner configuration and initial pump each release
+  every acquired owner exactly once. Toolset acquisition transfers integration
+  and worker ownership only when it succeeds; a failed Runner still closes its
+  already-created toolset. Every scenario permits reopening the chat lock.
+- Original startup failure identity/messages remain intact when cleanup succeeds.
+  Simultaneous memory/metrics cleanup failures retain their typed internal causes
+  alongside the original startup reason, with fixed public messages. Remaining
+  finalizers still run and release storage.
+- Toolset cleanup awaits all owned services even when one fails and another
+  remains pending; shutdown cannot release memory/storage ahead of that service.
+  Multiple tool failures and failed Runner drain/cleanup retain all original
+  errors. Failed close remains cached, emits `closed` once and never retries owners.
+- Memory stops before evaluations, then metrics, then storage, preserving the
+  existing final-write/subscription order. Storage open/close is wrapped without
+  changing append, plan, view or telemetry callbacks, file formats or durable writes.
+- A real background process survives two completed turns and stops at session
+  scope close. Existing originating-turn cancellation, interactive commands,
+  worker late reports, MCP acquisition cancellation/recovery, restart and CLI
+  model-switch/backup contracts still pass. Providers use deterministic mocks;
+  no paid model requests or live audio are used in these checks.
+
+At this checkpoint, runtime ownership checks passed and the audio service remained
+before completing step 3; its verification follows below. Transport and job
+supervision remain in their later phases. Memory and metrics scheduling algorithms
+are unchanged, so their original CPU benchmark remains the comparison point.
+
+## Audio notification service verification
+
+`AudioNotifications` completes step 3 with a silent default layer in the Session
+runtime and an opt-in live layer. The sound patch, native player and prototype
+remain separate from notification policy. No workflow listeners or regular-chat
+audio are enabled. Settings are decoded before player acquisition and remain
+immutable for the layer lifetime; audition and live controls/event checks still
+precede enabling actual notifications in steps 7–9.
+
+- `bun run check`: 248 tests passed across 32 files; 6083 assertions and typecheck passed.
+- `bun run build`: passed; entry point bundled 66 application modules, 1.13 MB.
+- Twelve new tests cover silent/default behavior, lazy/shared player acquisition,
+  invalid settings before acquisition, volume/mute/unavailable-device behavior,
+  partial layer startup, cached disposal and no playback after scope closure.
+- Foreground interruption aborts its cue, waits for native cleanup and leaves an
+  independent background cue alive. Session disposal interrupts and drains all
+  managed cues before closing the player once. The layer also aborts/drains
+  captured-service playback outside the runtime, even if player close fails.
+- Discovery, synchronous/asynchronous playback and audio-only cleanup failures
+  retain original causes in typed internal diagnostics without changing task
+  results, triggering retries or playing recursive error cues. Cancellation
+  retains its interruption cause and does not become an audio failure.
+- A fake `afplay` executable runs a real silent subprocess; cancellation verifies
+  that the process has exited before the playback effect finishes. No live audio
+  or paid provider requests are used in these checks.
+- Session tests verify the actual runtime resolves the silent service and never
+  calls native playback/cleanup. Frozen provider, tool, output and persistence
+  fixtures still match; none were regenerated, and vendored source is read-only.
+
+Step 3 is complete. Next is step 4's external I/O migration, beginning with
+interruption-aware fetch and scoped response readers. Memory/metrics scheduling
+and the agent-loop migration retain their original later phases.
