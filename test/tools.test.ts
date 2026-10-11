@@ -62,7 +62,7 @@ test('fetch_url returns text, summarizes binary, and rejects non-http(s) URLs', 
     seen.push(url);
     const binary = url.endsWith('/binary');
     const body = new TextEncoder().encode(binary ? 'PNGDATA' : 'hello page');
-    return { status: binary ? 200 : 404, headers: new Headers({ 'content-type': binary ? 'image/png' : 'text/html; charset=utf-8' }), arrayBuffer: async () => body };
+    return new Response(body, { status: binary ? 200 : 404, headers: { 'content-type': binary ? 'image/png' : 'text/html; charset=utf-8' } });
   };
   const tools = projectTools({ zoom: () => '', date: () => '' }, directory, { fetchImpl: stub as unknown as typeof fetch });
   expect(tools.definitions.some(t => t.function.name === 'fetch_url')).toBe(true);

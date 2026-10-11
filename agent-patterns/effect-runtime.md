@@ -37,7 +37,7 @@ Promise-based, and the Runner loop remains in ordinary TypeScript for now.
 | Memory, evaluations and metrics | Session layer finalizers stop/close the existing instances, in that order, before releasing storage. |
 | Session listeners and UI timer | A session finalizer detaches them before closing the Runner. |
 | Main Runner and project toolset | A guarded toolset finalizer closes the Runner when construction succeeded, or closes the toolset directly when Runner construction failed. |
-| Integrations and research workers | Scoped fallback owners cover partial startup; successful toolset acquisition transfers ownership to the existing toolset `close()`. |
+| Integrations and research workers | Scoped fallback owners cover partial startup; successful toolset acquisition transfers ownership to toolset `close()`. Integrations closes its Effect-owned MCP connection scope; workers retain legacy internals. |
 | Command processes and worker Runners | Existing command/worker services retain their internal lifetimes; the project toolset closes those services. |
 | Audio player and active cues | The opt-in `AudioNotifications.layerLive` owns one player; each playback observes its caller's interruption. Scope close aborts/drains remaining playback and closes the player once. The Session uses `layerSilent`. |
 
@@ -181,3 +181,65 @@ Refer to [Effect.tryPromise](../repos/effect/packages/effect/src/Effect.ts),
 [Cause](../repos/effect/packages/effect/src/Cause.ts), and
 [scoped acquisition](../repos/effect/ai-docs/src/01_effect/05_resources/10_acquire-release.ts).
 Keep Bun tests until a real controllable-clock/fiber testing need arises.
+
+## HTTP, browsing and MCP services
+
+[Http](../src/core/http.ts) provides `withResponse(url, timeoutMs, consume)`.
+Run `readResponseBytes` inside its consumer so the response scope owns the reader.
+Only completed bytes and inert response metadata may leave the consumer. The
+`Http.layer(fakeFetch)` test layer uses the same ownership as the live adapter;
+application browsing bridges use `Http.service(fetchImpl)` without another runtime.
+
+Fetch acquisition uses `tryPromise` with its supplied signal. A response controller
+covers the body lifetime after headers arrive. Reader finalization aborts that
+controller, awaits cancellation and releases the lock, including a stalled read.
+Acquisition finalization drains a late fetch and cancels any unconsumed body.
+`timeoutOrElse` retains a typed `TimeoutError` after those finalizers complete.
+Native fetches must honor cancellation; abandoning their Promise does not prove
+cleanup. Do not use `acquireRelease`'s default uninterruptible acquisition around
+a network handshake or fetch that can stall.
+
+`browse_url` keeps its 2 MB limit and original URL/content/line/snapshot policies.
+`fetch_url` keeps its legacy full response size reporting, text cap and binary
+summary; it also consumes its body with a scoped reader. Empty raw responses stay
+valid; browsing still requires a body. A canceled native fetch may leave its stream
+in an errored state. `cancelResponseReader` distinguishes that stored read error
+from a new cancellation failure; only the latter becomes a cleanup defect.
+
+[Mcp](../src/core/mcp.ts) provides lazy connections and typed request effects.
+`Mcp.layer(factory, failureMapper)` is available for deterministic tests. The
+Promise-based `Integrations` facade acquires the same service in one explicit
+Effect scope. Session/toolset ownership closes that scope through the existing
+`Integrations.close()` handoff; standalone tools own it through their `close()`.
+This bridge adds no ManagedRuntime. The service's private owner scope releases
+connection child scopes after aborting/draining pending handshakes and calls.
+Failed acquisition closes its child scope before clearing the shared pending exit.
+Successful connections remain available across turns.
+
+Register client and transport finalizers before connecting. Memoize native close:
+SDK initialization itself can invoke `client.close()`, and that in turn closes its
+transport. Constructor, handshake, timeout, interruption and shutdown paths must
+not invoke the underlying release twice. Keep cleanup defects and the original
+failure together; attempt every remaining finalizer even when a close fails.
+The facade caches the disposal Promise, including a failed disposal.
+
+The first connection caller owns a shared pending handshake. A joining caller can
+stop waiting independently; interrupting the initiator rolls acquisition back for
+all waiters, and a subsequent request can reconnect. The connection deadline is
+15 seconds; each call or discovery page retains its separate 30-second deadline.
+Do not turn pagination into a single total deadline or add automatic retries.
+
+[MCP HTTP ownership](../src/core/mcp-http.ts) carries the current Effect signal
+through `AsyncLocalStorage` into the SDK's custom fetch hook and combines it with
+SDK, connection and session signals. Protocol cancellation alone does not cancel
+the actual HTTP POST. The wrapper owns native response byte readers and drains
+them on call completion/cancellation or session shutdown. SDK JSON/SSE parsing,
+replay and protocol behavior remain in the SDK; this is not a replacement parser.
+Request cleanup hooks wait for detached native reader cancellation, and the
+connection scope covers optional GET streams and late fetch acquisition.
+
+[External Promise adapters](../src/core/external-io.ts) retain typed Causes, safe
+browsing messages and the existing capped/redacted MCP diagnostics. `HttpFailure`
+and `McpFailure` retain private causes for diagnostics; never expose those causes.
+Exact allowlists, lazy environment references, secret redaction and opaque native
+tool schemas remain in the integration facade, before any client acquisition.

@@ -1,3 +1,6 @@
+import * as Effect from 'effect/Effect';
+import { toExternalPromise } from './core/external-io.js';
+import { Http, HttpFailure, readResponseBytes } from './core/http.js';
 import { parseHTML } from 'linkedom';
 import { cutBytes } from './constants.js';
 import { httpURL } from './http-url.js';
@@ -10,32 +13,24 @@ const MAX_BYTES = 2_000_000;
 export class WebBrowser {
   private pages = new Map<string, Page>();
   private sequence = 0;
-  constructor(private fetchImpl: typeof fetch = fetch) {}
+  private readonly http;
+  constructor(fetchImpl: typeof fetch = fetch) { this.http = Http.service(fetchImpl); }
   async open(args: unknown, signal?: AbortSignal): Promise<string> {
     signal?.throwIfAborted();
     return this.openPage(parseBrowseUrl(args), signal);
   }
   async openPage(args: BrowseUrlArgs, signal?: AbortSignal): Promise<string> {
-    const url = args.url, timeout = args.timeout_ms;
-    const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout);
-    requestSignal.throwIfAborted();
-    const response = await this.fetchImpl(url.toString(), { signal: requestSignal, redirect: 'follow' });
-    const finalURL = httpURL(response.url || url.toString()).toString();
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error('Web response has no body.');
-    let size = 0, contents = '';
-    const decoder = new TextDecoder();
-    try {
-      for (;;) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        size += chunk.value.length;
-        if (size > MAX_BYTES) throw new Error('Page exceeds the 2 MB browsing limit.');
-        contents += decoder.decode(chunk.value, { stream: true });
-        requestSignal.throwIfAborted();
-      }
-      contents += decoder.decode();
-    } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+    const { response, finalURL, contents } = await toExternalPromise(this.http.withResponse(
+      args.url.toString(), args.timeout_ms, response => Effect.gen(function*() {
+        // Redirect validation retains precedence; the response scope cancels its
+        // unconsumed body if metadata is invalid, before any reader is acquired.
+        const finalURL = yield* Effect.try({ try: () => httpURL(response.url || args.url.toString()).toString(),
+          catch: cause => new HttpFailure({ reason: 'response', message: 'Expected an HTTP(S) URL without embedded credentials.', cause }) });
+        const bytes = yield* readResponseBytes(response, MAX_BYTES);
+        return { response, finalURL, contents: new TextDecoder().decode(bytes) };
+      }),
+    ), signal);
+    signal?.throwIfAborted();
     const contentType = response.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
     const html = contentType === 'text/html' || contentType === 'application/xhtml+xml' || (!contentType && /^\s*<!doctype html|^\s*<html/i.test(contents));
     if (!html && contentType && !contentType.startsWith('text/') && !/json|xml/.test(contentType)) throw new Error(`Cannot browse ${contentType}; use a document integration for this content.`);

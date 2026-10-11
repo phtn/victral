@@ -431,3 +431,54 @@ precede enabling actual notifications in steps 7–9.
 Step 3 is complete. Next is step 4's external I/O migration, beginning with
 interruption-aware fetch and scoped response readers. Memory/metrics scheduling
 and the agent-loop migration retain their original later phases.
+
+
+## External I/O service verification
+
+Step 4 is complete. HTTP/browsing and MCP now use typed Effect services with
+scoped native I/O ownership behind their existing Promise-based tool facades.
+The Session still owns one ManagedRuntime; the integration facade's scope closes
+through the existing session/toolset resource handoff. Provider transport and
+stream parsing retain their later step-5 migration.
+
+- `bun run check`: 263 tests passed across 33 files; 6186 assertions and typecheck passed.
+- `bun run build`: passed; entry point bundled 70 application modules, 1.14 MB.
+- Fifteen new tests in `test/external-io.test.ts` use fake HTTP/MCP layers,
+  fake protocol responses and local native HTTP/stdio fixtures. They make no
+  live external-provider, paid integration or audio calls.
+- Fetch acquisition receives the actual Effect signal. Body interruption also
+  aborts the request after headers have arrived. Stalled reader cancellation is
+  awaited before lock release and rejection; late acquisition disposes its body.
+  Success, read failure, byte-limit failure, invalid redirect metadata and timeout
+  leave no native reader locked. Cleanup failure retains the original typed
+  failure together with its defect. Stored stream errors, including native
+  AbortError, do not fabricate an additional cleanup defect.
+- Browsing keeps its 2 MB limit, URL/line/link behavior, read-only snapshots and
+  16-page retention. Raw fetch preserves status/size reporting, text truncation,
+  binary summaries and valid empty responses. Its old arrayBuffer-only test stub
+  now supplies a real Response to exercise stream ownership; expected output is
+  unchanged. Frozen legacy browsing fixtures were not regenerated.
+- MCP acquisition remains lazy and shares one pending handshake. A joining
+  waiter cancels independently; canceling the initiator drains rollback for all
+  shared waiters and permits a later connection. Partial transport construction,
+  failed handshakes and connection timeouts release acquired owners once.
+- Connection and call deadlines remain 15 and 30 seconds. Each discovery page
+  retains a separate call deadline. Pagination bounds/cursor guards, exact
+  allowlists, environment references, secret redaction/caps, native input schemas
+  and SDK request arguments match their frozen legacy contracts.
+- SDK protocol cancellation reaches the actual HTTP fetch through an async
+  request context. A scoped byte-stream wrapper drains detached SDK SSE bodies:
+  call completion waits for its reader cleanup, and session shutdown waits for
+  connection streams. The SDK still owns all JSON/SSE parsing and protocol work.
+- Shutdown aborts/drains pending handshakes and active calls before disposing
+  connection scopes, caches its Promise, and attempts all remaining finalizers
+  when one cleanup fails. Client/transport close is memoized because SDK failed
+  initialization can also close them. Native stdio initialization cancellation
+  proves its process has exited before the operation rejects.
+- Session/restart, provider requests/replays, tool permissions, mutation/file
+  bytes, commands, workers and every other frozen fixture pass unchanged.
+  No vendored files were edited or imported into application code.
+
+Next is step 5, provider adapters and streaming. Memory/metrics scheduling and
+the agent loop remain in their original later phases, so their original baseline
+measurements remain the comparison point for those subsystem migrations.

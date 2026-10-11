@@ -1,3 +1,9 @@
+import * as Effect from 'effect/Effect';
+import * as Exit from 'effect/Exit';
+import * as Scope from 'effect/Scope';
+import { Mcp, McpFailure, acquireMcpResource, type McpFactory, type McpOptions } from './core/mcp.js';
+import { acquireMcpFetch } from './core/mcp-http.js';
+import { toExternalPromise } from './core/external-io.js';
 import fs from 'node:fs/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -17,12 +23,32 @@ export async function loadIntegrations(filename: string, project: string): Promi
 }
 
 export class Integrations {
-  private clients = new Map<string, Client>();
-  private pending = new Map<string, Promise<Client>>();
+  private readonly scope = Scope.makeUnsafe();
+  private readonly mcp;
+  private closePromise?: Promise<void>;
   private secrets = new Set<string>();
   private closing = false;
-  private lifetime = new AbortController();
-  constructor(private config: IntegrationConfigs, private project: string) {}
+  constructor(private config: IntegrationConfigs, private project: string,
+    options: McpOptions & { factory?: McpFactory; fetchImpl?: typeof fetch } = {}) {
+    const failure = (operation: string, cause: unknown) => new McpFailure({ operation, cause, message: this.redact(errorMessage(cause)) });
+    const owner = this;
+    const factory: McpFactory = options.factory ?? ((name, context) => Effect.gen(function*() {
+      const httpFetch = config[name]!.url ? yield* acquireMcpFetch(context, options.fetchImpl) : undefined;
+      return yield* acquireMcpResource(
+        () => new Client({ name: 'victral', version: '0.2.0' }, { capabilities: {} }),
+        () => {
+          const config = owner.config[name]!;
+          return config.url
+            ? new StreamableHTTPClientTransport(httpURL(config.url), {
+              requestInit: { headers: owner.references(config.headers), redirect: 'error' },
+              fetch: httpFetch,
+            })
+            : new StdioClientTransport({ command: config.command!, args: config.args, cwd: owner.project,
+              env: { ...getDefaultEnvironment(), ...owner.references(config.env) }, stderr: 'ignore', maxBufferSize: 2_000_000 });
+        }, cause => failure('MCP connection', cause));
+    }));
+    this.mcp = Effect.runSync(Mcp.acquire(factory, failure, options).pipe(Effect.provideService(Scope.Scope, this.scope)));
+  }
   private redact(text: string): string {
     for (const secret of this.secrets) text = text.replaceAll(secret, '[redacted]');
     return capResult(text);
@@ -38,34 +64,7 @@ export class Integrations {
   }
   list(): string {
     return JSON.stringify(Object.entries(this.config).map(([name, config]) => ({ name,
-      transport: config.url ? 'http' : 'stdio', connected: this.clients.has(name), enabled_tools: config.allowTools })), null, 2);
-  }
-  private async client(name: string, signal?: AbortSignal): Promise<Client> {
-    if (this.closing) throw new Error('Integrations are closed.');
-    signal?.throwIfAborted();
-    const config = this.config[name];
-    if (!Object.hasOwn(this.config, name)) throw new Error(`Unknown integration: ${name}. Use list_integrations.`);
-    if (this.clients.has(name)) return this.clients.get(name)!;
-    if (this.pending.has(name)) return this.pending.get(name)!;
-    const client = new Client({ name: 'victral', version: '0.2.0' }, { capabilities: {} });
-    const transport = config.url
-      ? new StreamableHTTPClientTransport(httpURL(config.url), { requestInit: { headers: this.references(config.headers), redirect: 'error' } })
-      : new StdioClientTransport({ command: config.command!, args: config.args, cwd: this.project,
-        env: { ...getDefaultEnvironment(), ...this.references(config.env) }, stderr: 'ignore', maxBufferSize: 2_000_000 });
-    const work = (async () => {
-      try {
-        await client.connect(transport, { timeout: 15_000, signal: signal ? AbortSignal.any([signal, this.lifetime.signal]) : this.lifetime.signal });
-        if (this.closing) throw new Error('Integrations are closed.');
-        this.clients.set(name, client);
-        client.onclose = () => { if (this.clients.get(name) === client) this.clients.delete(name); };
-        return client;
-      } catch (error) {
-        await client.close().catch(() => {}); await transport.close().catch(() => {});
-        throw new Error(this.redact(errorMessage(error)));
-      } finally { this.pending.delete(name); }
-    })();
-    this.pending.set(name, work);
-    return work;
+      transport: config.url ? 'http' : 'stdio', connected: this.mcp.connected(name), enabled_tools: config.allowTools })), null, 2);
   }
   private serverConfig(server: string) {
     if (!Object.hasOwn(this.config, server)) throw new Error(`Unknown integration: ${server}.`);
@@ -91,41 +90,42 @@ export class Integrations {
   }
   async discoverTools(args: ListIntegrationToolsArgs, signal?: AbortSignal): Promise<string> {
     const config = this.serverConfig(args.server);
-    const client = await this.client(args.server, signal);
-    const options = { timeout: 30_000, signal: signal ? AbortSignal.any([signal, this.lifetime.signal]) : this.lifetime.signal };
-    try {
+    if (this.closing) throw new Error('Integrations are closed.');
+    const mcp = this.mcp, redact = this.redact.bind(this);
+    return toExternalPromise(Effect.gen(function*() {
       const tools = [];
       let cursor: string | undefined;
       const cursors = new Set<string>();
       do {
-        const page = await client.listTools(cursor ? { cursor } : {}, options);
+        // Each discovery page keeps its own call deadline, as in the SDK API.
+        const page = yield* mcp.request(args.server, 'MCP tool discovery',
+          (client, options) => client.listTools(cursor ? { cursor } : {}, options));
         tools.push(...page.tools.map(tool => ({ ...tool, enabled: config.allowTools.includes(tool.name) })));
         cursor = page.nextCursor;
-        if (cursor && cursors.has(cursor)) throw new Error('MCP server repeated its tool-list cursor.');
+        if (cursor && cursors.has(cursor)) return yield* Effect.fail(new McpFailure({ operation: 'MCP tool discovery',
+          message: 'MCP server repeated its tool-list cursor.', cause: undefined }));
         if (cursor) cursors.add(cursor);
-        if (tools.length > 500) throw new Error('MCP tool list exceeds 500 tools.');
+        if (tools.length > 500) return yield* Effect.fail(new McpFailure({ operation: 'MCP tool discovery',
+          message: 'MCP tool list exceeds 500 tools.', cause: undefined }));
       } while (cursor);
-      return this.redact(JSON.stringify({ server: args.server, tools }, null, 2));
-    } catch (error) { throw new Error(this.redact(errorMessage(error))); }
+      return redact(JSON.stringify({ server: args.server, tools }, null, 2));
+    }), signal);
   }
   async callTool(args: CallIntegrationToolArgs, signal?: AbortSignal): Promise<string> {
     // Prepared calls may outlive a permission change. Recheck the exact name
     // immediately before acquisition; never treat '*' as a wildcard.
     this.checkToolAccess(args.server, args.tool);
-    const client = await this.client(args.server, signal);
-    const options = { timeout: 30_000, signal: signal ? AbortSignal.any([signal, this.lifetime.signal]) : this.lifetime.signal };
-    try {
+    if (this.closing) throw new Error('Integrations are closed.');
+    return toExternalPromise(this.mcp.request(args.server, 'MCP tool call', async (client, options) => {
       const result = await client.callTool({ name: args.tool, arguments: args.arguments }, undefined, options);
       const content = (Array.isArray(result.content) ? result.content : []).map((block: Record<string, unknown>) => block.type === 'text' && typeof block.text === 'string' ? block.text : JSON.stringify({ type: block.type, note: 'Non-text content omitted; use a specialized client to view it.' })).join('\n');
       const output = this.redact(content || JSON.stringify(result.structuredContent ?? {}));
       if (result.isError) throw new Error(`Integration tool failed: ${output}`);
       return output;
-    } catch (error) { throw new Error(this.redact(errorMessage(error))); }
+    }), signal);
   }
-  async close(): Promise<void> {
-    this.closing = true; this.lifetime.abort();
-    await Promise.allSettled([...this.pending.values()]);
-    await Promise.allSettled([...this.clients.values()].map(client => client.close()));
-    this.clients.clear();
+  close(): Promise<void> {
+    this.closing = true;
+    return this.closePromise ??= toExternalPromise(Scope.close(this.scope, Exit.void));
   }
 }

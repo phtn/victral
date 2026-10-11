@@ -20,11 +20,11 @@ Review these files before writing related code:
   optional fields, codecs, transformations, and error handling.
 - [Schema implementation](../repos/effect/packages/effect/src/Schema.ts):
   signatures, supported services, and JSDoc examples.
-- [Schema runtime tests](../repos/effect/packages/effect/test/schema/Schema.test.ts):
+- [Schema runtime tests](../repos/effect/packages/effect/test/Schema/Schema.test.ts):
   success, rejection, parse options, round trips, and formatted errors.
 - [Schema basics](../repos/effect/ai-docs/src/01_effect/02_schema/10_schema-basics.ts):
   domain classes, reusable parsers, and typed application errors.
-- [SchemaGetter tests](../repos/effect/packages/effect/test/schema/SchemaGetter.test.ts)
+- [SchemaGetter tests](../repos/effect/packages/effect/test/Schema/SchemaGetter.test.ts)
   and [implementation](../repos/effect/packages/effect/src/SchemaGetter.ts):
   pure, optional, and effectful transformation getters.
 
@@ -490,6 +490,36 @@ schema mismatches as failures; defects and non-schema failures can still throw.
 Keep `reportInput: false` at credential/configuration boundaries. Enabling input
 reporting can put original values into issues and formatted messages. Schema
 annotations and custom filter messages must not interpolate private input.
+
+## Typed external I/O failures
+
+[HTTP](../src/core/http.ts) and [MCP](../src/core/mcp.ts) follow the vendored
+[`TaggedError` tests](../repos/effect/packages/effect/test/Schema/Schema.test.ts)
+and [Schema basics](../repos/effect/ai-docs/src/01_effect/02_schema/10_schema-basics.ts).
+Use `Schema.Literals` for a closed set of failure reasons and `Schema.Defect()`
+for a diagnostic cause whose native shape is not part of the wire contract:
+
+```ts
+import * as Schema from 'effect/Schema';
+
+class HttpFailure extends Schema.TaggedError<HttpFailure>()('HttpFailure', {
+  reason: Schema.Literals(['request', 'body', 'limit', 'response']),
+  message: Schema.String,
+  cause: Schema.Defect(),
+}) {}
+```
+
+This is adapted from Victral's transport boundary. Set `message` to safe,
+application-owned text; MCP's compatibility adapter instead retains its existing
+explicit redaction/capping before exposing a server diagnostic. Keep native errors
+in `cause`, use existing `TimeoutError` for deadlines, and preserve interruption
+as an Effect interruption. Do not serialize diagnostic failures into chat records
+or replace cancellation with a successful empty response.
+
+Native MCP tool input schemas remain opaque SDK payloads in this migration.
+Schema validates the call envelope and exact access rules; it does not translate
+or reinterpret the server's JSON Schema. See the [I/O ownership patterns](effect-runtime.md#http-browsing-and-mcp-services)
+for scoped decoding/consumption and cleanup details.
 
 ## Avoid
 

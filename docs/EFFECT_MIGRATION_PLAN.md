@@ -5,11 +5,11 @@ configuration and Schema-guide changes. This is an implementation backlog.
 
 ## Implementation status
 
-Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0, 1, 2 and 3 are complete,
+Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0, 1, 2, 3 and 4 are complete,
 including MCP configuration, task plans, audio settings and tool registries for
 browsing, file/Git reads, mutations, commands, workers/MCP and the batch envelope.
 These boundaries use the pinned published Effect 4.0.2 dependency. The latest
-change passes 248 tests across 32 files, typecheck and build; legacy rendering,
+change passes 263 tests across 33 files, typecheck and build; legacy rendering,
 browsing/read/mutation output, file bytes/modes, Git/command arguments and
 provider request/tool fixtures match unchanged.
 Worker prompts/reports and MCP requests/redaction match their legacy fixtures.
@@ -24,8 +24,10 @@ The Session/UI API and synchronous persistence callbacks remain compatible.
 playback ownership, validated volume/mute settings and isolated audio failures.
 Interruption waits for native playback cleanup; independent background cues keep
 their own lifetime. The Session installs the silent layer, and workflow event
-wiring remains in steps 7–9. Next: step 4, external I/O services, beginning with
-fetch cancellation and response-reader ownership.
+wiring remains in steps 7–9. Step 4 adds typed HTTP/MCP services, interruption-aware
+native fetches, scoped response readers and session-owned lazy MCP connections.
+Fake layers and native loopback/stdio tests verify deadline and cleanup behavior.
+Next: step 5, provider adapters and scoped streaming.
 
 See the [baseline and frozen fixtures](EFFECT_MIGRATION_BASELINE.md),
 [Schema patterns](../agent-patterns/effect-schema.md) and
@@ -211,20 +213,24 @@ interruption cleanup, independent cue lifetimes and audio failure isolation.
 
 ## 4. Migrate external I/O services
 
-- [ ] Wrap fetch operations with typed failures and interruption-aware
+- [x] Wrap fetch operations with typed failures and interruption-aware
       `Effect.tryPromise` adapters. Pass the supplied cancellation signal into
       fetch, rather than merely stopping the waiting fiber.
-- [ ] Scope response readers so success, failure, timeout, and interruption all
+- [x] Scope response readers so success, failure, timeout, and interruption all
       cancel/release them. Preserve browsing byte limits, line/URL behavior,
       snapshot retention, and read-only operation.
-- [ ] Give MCP clients/transports session-scoped acquisition and cleanup.
+- [x] Give MCP clients/transports session-scoped acquisition and cleanup.
       Preserve lazy connections, shared pending handshakes, exact allowlists,
       redaction, discovery pagination, and separate connect/call deadlines.
-- [ ] Provide fake fetch and MCP layers in tests so transport behavior can be
+- [x] Provide fake fetch and MCP layers in tests so transport behavior can be
       tested without live provider calls or paid integration operations.
 
 **Gate:** canceled I/O and failed handshakes leave no client, process, reader,
 or pending promise behind; no permission or credential behavior changes.
+This gate passes, including late fetch acquisition, stalled browsing bodies,
+detached MCP SSE byte readers, shared-handshake cancellation/recovery and native
+stdio process exit. Per-page discovery deadlines and frozen outputs remain intact.
+See [verification](EFFECT_MIGRATION_BASELINE.md#external-io-service-verification).
 
 ## 5. Migrate provider adapters and streaming
 
