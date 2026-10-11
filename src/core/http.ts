@@ -12,7 +12,12 @@ export class HttpFailure extends Schema.TaggedError<HttpFailure>()('HttpFailure'
 
 const ResponseCancellation = Context.Reference<() => void>('victral/core/Http/ResponseCancellation', { defaultValue: () => () => {} });
 
+// Resource-owning callbacks may abort the response before draining native work.
+export const responseAbort = Effect.map(ResponseCancellation, abort => abort);
+
 export interface HttpService {
+  readonly withRequest: <A, E, R>(url: string, init: RequestInit,
+    consume: (response: Response) => Effect.Effect<A, E, R>) => Effect.Effect<A, E | HttpFailure, Exclude<R, Scope.Scope>>;
   readonly withResponse: <A, E, R>(url: string, timeoutMs: number,
     consume: (response: Response) => Effect.Effect<A, E, R>) => Effect.Effect<A, E | HttpFailure | TimeoutError, Exclude<R, Scope.Scope>>;
 }
@@ -20,8 +25,8 @@ export interface HttpService {
 // Consume body bytes inside the response scope; only inert metadata may escape.
 export class Http extends Context.Service<Http, HttpService>()('victral/core/Http') {
   static service(fetchImpl: typeof fetch = fetch): HttpService {
-    return {
-      withResponse: (url, timeoutMs, consume) => Effect.scoped(Effect.gen(function*() {
+    const service: HttpService = {
+      withRequest: (url, init, consume) => Effect.scoped(Effect.gen(function*() {
         const controller = new AbortController();
         let request: Promise<Response> | undefined, response: Response | undefined;
         yield* Effect.addFinalizer(() => Effect.tryPromise({
@@ -37,19 +42,22 @@ export class Http extends Context.Service<Http, HttpService>()('victral/core/Htt
         response = yield* Effect.tryPromise({
           try: signal => {
             request = Promise.resolve().then(() => {
-              const requestSignal = AbortSignal.any([signal, controller.signal]);
+              const requestSignal = AbortSignal.any(init.signal ? [signal, controller.signal, init.signal] : [signal, controller.signal]);
               requestSignal.throwIfAborted();
-              return fetchImpl(url, { signal: requestSignal, redirect: 'follow' });
+              return fetchImpl(url, { ...init, signal: requestSignal });
             });
             return request;
           },
           catch: cause => new HttpFailure({ reason: 'request', message: 'Web request failed.', cause }),
         });
         return yield* consume(response).pipe(Effect.provideService(ResponseCancellation, () => controller.abort()));
-      })).pipe(Effect.timeoutOrElse({ duration: timeoutMs,
-        orElse: () => Effect.fail(new TimeoutError({ operation: 'Web request', cause: undefined })),
       })),
+      withResponse: (url, timeoutMs, consume) => service.withRequest(url, { redirect: 'follow' }, consume).pipe(
+        Effect.timeoutOrElse({ duration: timeoutMs,
+          orElse: () => Effect.fail(new TimeoutError({ operation: 'Web request', cause: undefined })),
+        })),
     };
+    return service;
   }
   static layer(fetchImpl: typeof fetch = fetch): Layer.Layer<Http> { return Layer.succeed(Http, Http.service(fetchImpl)); }
 }
@@ -58,17 +66,7 @@ export class Http extends Context.Service<Http, HttpService>()('victral/core/Htt
 // Register the finalizer atomically with getReader, including on parsing failures.
 export const readResponseBytes = Effect.fn('Http.readResponseBytes')(function*(response: Response, maxBytes?: number) {
   if (!response.body && maxBytes === undefined) return new Uint8Array(0);
-  const abort = yield* ResponseCancellation;
-  const reader = yield* Effect.acquireRelease(
-    Effect.try({ try: () => {
-      if (!response.body) throw new Error('Web response has no body.');
-      return response.body.getReader();
-    }, catch: cause => new HttpFailure({ reason: 'body', message: 'Web response has no body.', cause }) }),
-    reader => Effect.tryPromise({ try: async () => {
-      abort();
-      await cancelResponseReader(reader);
-    }, catch: cause => new HttpFailure({ reason: 'body', message: 'Web response cleanup failed.', cause }) }).pipe(Effect.orDie),
-  );
+  const reader = yield* acquireResponseReader(response);
   const chunks: Uint8Array[] = [];
   let size = 0;
   for (;;) {
@@ -97,3 +95,17 @@ export async function cancelResponseReader(reader: ReadableStreamDefaultReader<U
     if (stored !== cause) throw cause;
   } finally { reader.releaseLock(); }
 }
+
+export const acquireResponseReader = Effect.fn('Http.acquireResponseReader')(function*(response: Response) {
+  const abort = yield* ResponseCancellation;
+  return yield* Effect.acquireRelease(
+    Effect.try({ try: () => {
+      if (!response.body) throw new Error('Web response has no body.');
+      return response.body.getReader();
+    }, catch: cause => new HttpFailure({ reason: 'body', message: 'Web response has no body.', cause }) }),
+    reader => Effect.tryPromise({ try: async () => {
+      abort();
+      await cancelResponseReader(reader);
+    }, catch: cause => new HttpFailure({ reason: 'body', message: 'Web response cleanup failed.', cause }) }).pipe(Effect.orDie),
+  );
+});

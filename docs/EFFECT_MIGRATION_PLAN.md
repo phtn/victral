@@ -5,11 +5,11 @@ configuration and Schema-guide changes. This is an implementation backlog.
 
 ## Implementation status
 
-Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0, 1, 2, 3 and 4 are complete,
+Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0–6 are complete,
 including MCP configuration, task plans, audio settings and tool registries for
 browsing, file/Git reads, mutations, commands, workers/MCP and the batch envelope.
 These boundaries use the pinned published Effect 4.0.2 dependency. The latest
-change passes 263 tests across 33 files, typecheck and build; legacy rendering,
+change passes 301 tests across 35 files, typecheck and build; legacy rendering,
 browsing/read/mutation output, file bytes/modes, Git/command arguments and
 provider request/tool fixtures match unchanged.
 Worker prompts/reports and MCP requests/redaction match their legacy fixtures.
@@ -27,7 +27,16 @@ their own lifetime. The Session installs the silent layer, and workflow event
 wiring remains in steps 7–9. Step 4 adds typed HTTP/MCP services, interruption-aware
 native fetches, scoped response readers and session-owned lazy MCP connections.
 Fake layers and native loopback/stdio tests verify deadline and cleanup behavior.
-Next: step 5, provider adapters and scoped streaming.
+Step 5 converts Meta/OpenAI adapters, request instrumentation and SSE consumption
+to TypeScript/Effect. Wire validation retains native replay bytes/key order;
+scoped readers stop at terminal events, and usage reports once after cleanup.
+Typed output limits preserve MAX_TOKENS for existing Promise callers. The model
+catalog stays independent of transport so terminal labels/completion remain pure.
+Step 6 runs validated tool invocations through Effect, bounds parallel reads at
+8, and owns command processes/readers/writes in scoped fibers. Closing the command
+owner drains foreground and background jobs; completed turns retain their jobs,
+and later originating-turn cancellation still kills their process groups.
+Next: step 7, the agent turn loop.
 
 See the [baseline and frozen fixtures](EFFECT_MIGRATION_BASELINE.md),
 [Schema patterns](../agent-patterns/effect-schema.md) and
@@ -94,7 +103,7 @@ modules, L = stateful subsystem requiring extensive compatibility checks.
 | 2 | Schema boundaries | `integrations.ts`, `task-plans.ts`, tool inputs | M | Unknown input becomes validated domain data |
 | 3 | Session runtime and resource ownership | `session.ts`, new runtime/service layers | M | One session runtime with explicit cleanup ownership |
 | 4 | HTTP, browsing and MCP services | `web-browser.ts`, `integrations.ts` | M | Cancellation and cleanup propagate to actual I/O |
-| 5 | Provider transport and streaming | `meta.js`, `openai.js`, `models.js`, `sse.js` | M | Typed provider failures and scoped response streams |
+| 5 | Provider transport and streaming | `meta.ts`, `openai.ts`, `models.ts`, `sse.ts`, `providers/` | M | Typed provider failures and scoped response streams |
 | 6 | Tool execution and command jobs | `tools.ts`, `command-tools.ts`, `parallel-tools.ts` | M | Validated dispatch and supervised processes |
 | 7 | Turn execution | `runner.ts`, `smooth-response.ts` | L | A turn is one interruptible workflow |
 | 8 | Research workers | `subagents.ts` | M | Supervised workers with automatic report delivery |
@@ -234,36 +243,40 @@ See [verification](EFFECT_MIGRATION_BASELINE.md#external-io-service-verification
 
 ## 5. Migrate provider adapters and streaming
 
-- [ ] Convert provider adapters and request instrumentation to TypeScript as
+- [x] Convert provider adapters and request instrumentation to TypeScript as
       they acquire Effect service interfaces. Retain explicit model/compactor
       selection and current effort behavior.
-- [ ] Model HTTP, malformed response, truncated stream, and output-limit failures
+- [x] Model HTTP, malformed response, truncated stream, and output-limit failures
       explicitly. Validate fields the adapter consumes while preserving unknown
       native provider blocks and encrypted reasoning for exact in-turn replay.
-- [ ] Adapt the proven SSE parser into scoped stream consumption. Do not replace
+- [x] Adapt the proven SSE parser into scoped stream consumption. Do not replace
       its framing algorithm just because orchestration moves to Effect.
-- [ ] Keep visible text, thoughts, tool entries, citations, and native replay
+- [x] Keep visible text, thoughts, tool entries, citations, and native replay
       separate. Ensure a terminal event finishes even if the connection stays open.
-- [ ] Keep usage reporting exactly once per request, with agent/compactor/subagent
+- [x] Keep usage reporting exactly once per request, with agent/compactor/subagent
       attribution. Preserve smoothing and time-to-first-text behavior.
 
 **Gate:** current request, replay, SSE, streaming, and usage fixtures pass.
 There is no model fallback or new automatic retry policy. Retrying a partially
 streamed response must not silently duplicate text, tool calls, or charges.
+This gate passes, including exact native extension/key-order replay, partial-stream
+and JSON cancellation, terminal completion on open connections, callback cleanup,
+compound output-limit/cleanup failures and exactly-once usage through both APIs.
+See [verification](EFFECT_MIGRATION_BASELINE.md#provider-transport-and-streaming-verification).
 
 ## 6. Migrate tools and command supervision
 
-- [ ] Route the schema-backed registry through Effect implementations while
+- [x] Route the schema-backed registry through Effect implementations while
       retaining the existing public tool names and result formats.
-- [ ] Move parallel reads to bounded Effect concurrency. Preserve input order,
+- [x] Move parallel reads to bounded Effect concurrency. Preserve input order,
       independent per-call failures, cancellation, full-batch validation before
       execution, and existing output caps.
-- [ ] Supervise Bun child processes and output readers with scoped finalizers.
+- [x] Supervise Bun child processes and output readers with scoped finalizers.
       Preserve literal arguments, filtered credentials, process-group killing,
       interactive stdin, EOF, and blocked-write deadlines.
-- [ ] Place background commands in the session/job scope. Retain originating-turn
+- [x] Place background commands in the session/job scope. Retain originating-turn
       cancellation without terminating them when that turn completes normally.
-- [ ] Keep patch rollback, project containment, read-only worker restrictions,
+- [x] Keep patch rollback, project containment, read-only worker restrictions,
       and MCP permissions enforced at execution, not only tool discovery.
 
 **Gate:** no leaked process trees or pipes; permission, patch, parallel-read,

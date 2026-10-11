@@ -482,3 +482,115 @@ stream parsing retain their later step-5 migration.
 Next is step 5, provider adapters and streaming. Memory/metrics scheduling and
 the agent loop remain in their original later phases, so their original baseline
 measurements remain the comparison point for those subsystem migrations.
+
+
+## Provider transport and streaming verification
+
+Step 5 is complete. Meta/OpenAI adapters, model creation/instrumentation and SSE
+consumption are TypeScript. `ProviderModel` exposes borrowed Effect `chat`/`stream`
+services while Runner, memory and Session retain compatible Promise model APIs.
+The session still has one ManagedRuntime, and selected models, compactor effort,
+web-search policy and caller retry policies are unchanged.
+
+- `bun run check`: 289 tests passed across 34 files; 6423 assertions and typecheck passed.
+- `bun run build`: passed; entry point bundled 73 application modules, 1.16 MB.
+- After the final HTTP request-signal adjustment, typecheck and all 50 focused
+  provider, browsing and external-I/O tests passed (576 assertions).
+- Twenty-six new tests in `test/provider-effects.test.ts` use fake transport
+  responses, a borrowed service layer and local native HTTP streams. No live
+  provider, paid integration or audio operations are used.
+- Shared `Http.withRequest` supplies interruption-aware POST acquisition and
+  scoped JSON/SSE response readers. Acquisition cancellation, stalled body reads,
+  native HTTP disconnects and terminal events on still-open connections release
+  readers before reporting or returning. HTTP response text retains redaction
+  and its existing 1500-character diagnostic cap.
+- The original SSE scan cursor, UTF-8 decoder, multiline-data handling,
+  LF/CRLF/CR framing and unterminated final-frame behavior remain unchanged.
+  Both adapters stop at their terminal event without reading later frames.
+  Existing SSE, request, provider, smoothing and streaming tests pass unchanged
+  in expected output. The cancellation test now checks the actual supplied Effect
+  signal instead of requiring caller-signal object identity.
+- Schema checks validate consumed response/event fields and classify malformed
+  JSON, invalid tool/text payloads, HTTP failures, native transport rejection,
+  explicit provider errors and truncated streams. Private Schema/native causes
+  remain available internally; public diagnostics do not expose them.
+- Check-only wire validation retains the original native objects rather than
+  encoding a Schema projection. Tests compare exact JSON/key order for unknown
+  nested extensions, encrypted reasoning, signatures, native blocks and assistant
+  phase. Visible text, thought callbacks, entries and citations keep their existing
+  separation and replay contracts. Unknown native event/item types remain opaque.
+- `ProviderOutputLimit` explicitly retains partial native output in the typed
+  error channel. Existing Promise callers recover only a lone limit as
+  `MAX_TOKENS`, preserving their current policy with no transport retry or model
+  fallback. Cause-preserving error translation retains cleanup defects alongside
+  the original limit; failed cleanup cannot become a successful partial result.
+- Usage instrumentation now belongs to the borrowed Effect service and reports
+  once through either API. Request IDs, latency, first nonempty visible-text timing,
+  selected model and agent/compactor/subagent attribution remain intact. Failure
+  and cancellation do not fabricate successful usage. A throwing reporting sink
+  is invoked once, and response cleanup finishes before reporting success.
+- Text/thought callbacks remain synchronous; entry callbacks keep awaited order.
+  Interrupting an asynchronous entry callback aborts HTTP immediately and drains
+  the already-started callback before releasing its response. Callback failure
+  closes the reader and produces one safe error report.
+- Frozen provider request bytes were not regenerated. Their baseline test now
+  invokes public `stream` with a valid offline terminal response instead of the
+  removed internal response-returning `request` helper. This verifies the migrated
+  production path while preserving the same expected requests.
+- Pure labels/aliases/completion use `model-catalog.ts`; `models.ts` reexports the
+  existing catalog API. Separating this import prevents provider Effect/Schema
+  initialization from entering the terminal UI bundle. Session/restart, all tool
+  and MCP contracts, memory/evaluation policy and persistence fixtures still pass.
+  The vendored checkout remains read-only and is not imported by application code.
+
+Next is step 6, tool execution and command supervision. The agent loop, worker/job
+supervision, persistence and memory/metrics scheduling remain in their planned
+later phases; their existing baseline remains the comparison point.
+
+
+## Tool execution and command supervision verification
+
+Step 6 is complete. The Schema registry supplies native Effect invocations and
+compatible Promise boundaries. `LegacyPorts` prefers a toolset's native Effect
+implementation and keeps its borrowed ownership. There is still one session
+ManagedRuntime; commands use an explicit closeable scope and scoped fibers.
+
+- `bun run check`: typecheck and 301 tests across 35 files passed, with 6456 assertions.
+- `bun run build`: passed; 74 application modules, 1.17 MB.
+- After the final atomic foreground-acquisition review, typecheck, build and all
+  57 focused tool/command tests passed (854 assertions).
+- Twelve new tests in `test/tool-effects.test.ts` cover native registry execution,
+  batch cancellation/drain, full-batch validation, independent domain failures,
+  retained compound causes, worker restrictions, borrowed service dispatch,
+  output-reader failures/locks, native foreground process trees, owner shutdown,
+  background lifetimes and blocked native stdin writes.
+- Batches use `Effect.forEach` with concurrency 8, retaining immediate dispatch,
+  ordered results, independent ordinary tool errors, UTF-8 caps and nested counts.
+  Every nested argument/capability check completes before any operation starts.
+  Interruption, defects and compound failures escape batch result formatting.
+- All Schema-bound implementations execute in Effect. Existing filesystem and
+  patch transaction bodies use an interruption-aware callback adapter that waits
+  for started native work and rollback before returning. Public Promise methods,
+  error messages, provider tool descriptors and frozen fixtures remain compatible.
+- Foreground and background commands share a session-owned job scope.
+  `forkIn` prevents a successful start invocation from ending its job, while an
+  explicit originating-turn signal stays attached until that job is cleaned up.
+  Native foreground interruption and owner close kill inherited-pipe descendants.
+  Close is memoized and now drains foreground jobs as well as the job list.
+- Stdout/stderr readers acquire their locks atomically with scoped cleanup.
+  Read failure interrupts the other reader; finalizers kill the process group
+  before canceling/releasing reads and await child exit. Pending stdin writes are
+  also drained before the command owner finishes cleanup.
+- Interactive input uses scoped Effect writes with the existing 2-second
+  blocked-write deadline, UTF-8 byte limit, concurrent-write exclusion, literal
+  text and EOF semantics. Failure/cancellation kills the command before awaiting
+  the native FileSink operation. Status wait cancellation leaves another turn's
+  job running, and stop requests drain cleanup even if interrupted.
+- Existing command IDs, result/list formats, credential filtering, literal argv,
+  process-group killing, output caps, job bounds and completed-result retention
+  pass unchanged. Patch rollback, containment/symlink checks, read-only worker
+  guards and MCP execution permissions remain enforced in the execution path.
+  No vendored source or baseline fixture was changed for step 6.
+
+Next is step 7, the agent turn loop. Worker orchestration, evaluation, persistence
+and memory scheduling remain in their planned later phases.

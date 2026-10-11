@@ -108,7 +108,7 @@ test('OpenAI rejects failed and truncated streams, marks output limits, and reda
 test('OpenAI passes cancellation through to transport and reports a canceled request', async () => {
   const controller = new AbortController(), records = [];
   const model = createModel('luna6', { apiKey: 'test', usage: record => records.push(record), fetchImpl: async (_url, options) => {
-    expect(options.signal).toBe(controller.signal);
+    expect(options.signal).toBeInstanceOf(AbortSignal); expect(options.signal.aborted).toBe(false);
     controller.abort(); throw new DOMException('Aborted', 'AbortError');
   } });
   await expect(model.stream([], { signal: controller.signal })).rejects.toThrow('Aborted');

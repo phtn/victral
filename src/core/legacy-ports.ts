@@ -1,3 +1,4 @@
+import * as Cause from 'effect/Cause';
 import * as Context from 'effect/Context';
 import * as Effect from 'effect/Effect';
 import * as Layer from 'effect/Layer';
@@ -16,7 +17,9 @@ function modelEffects(model: ModelPort) {
 function toolEffects(tools: AgentTools) {
   return {
     definitions: tools.definitions,
-    execute: Effect.fn('LegacyPorts.tools.execute')((name: string, args: unknown, onNestedCall?: (name: string) => void) =>
+    execute: Effect.fn('LegacyPorts.tools.execute')((name: string, args: unknown, onNestedCall?: (name: string) => void, origin?: AbortSignal) =>
+      tools.executeEffect ? Effect.catchCause(tools.executeEffect(name, args, onNestedCall, origin), cause =>
+        Effect.failCause(Cause.map(cause, error => new ToolExecutionError({ tool: name, cause: error })))) :
       fromAbortablePromise(signal => tools.execute(name, args, signal, onNestedCall),
         cause => new ToolExecutionError({ tool: name, cause }))),
   };

@@ -23,10 +23,10 @@ test('migration baseline preserves prompt, tool-schema and native provider reque
     for (const [name, Model, model] of [['meta', Meta, 'muse-spark-1.3'], ['openai', OpenAI, 'gpt-6.1-sol']] as const) {
       let body: unknown;
       const provider = new Model({ apiKey: 'offline-fixture-key', model, fetchImpl: (async (_url: unknown, init: RequestInit) => {
-        body = init.body; return Response.json({});
+        body = init.body; return new Response('data: ' + JSON.stringify(name === 'meta' ? { type: 'message_stop' } : { type: 'response.completed', response: { status: 'completed', output: [] } }) + '\n\n');
       }) as unknown as typeof fetch });
       const requestOptions = { tools: tools.definitions, stream: true };
-      await provider.request(baselineMessages(), requestOptions);
+      await provider.stream(baselineMessages(), requestOptions);
       expect(body).toBe((await fixture(`${name}-request.json`).text()).trimEnd());
     }
   } finally { await tools.close?.(); }

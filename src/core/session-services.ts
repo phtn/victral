@@ -6,15 +6,16 @@ import * as Layer from 'effect/Layer';
 import { createModel } from '../models.js';
 import { Storage } from '../storage.js';
 import type { SessionOptions } from '../session.js';
+import type { ProviderPurpose } from '../providers/types.js';
 import type { ModelPort } from '../types.js';
 import { legacyExitValue } from './async.js';
 import { IOError } from './errors.js';
 
 export class SessionSettings extends Context.Service<SessionSettings, Readonly<SessionOptions>>()('victral/session/Settings') {}
 
-export interface ModelOptions { purpose?: string; webSearch?: boolean; usage: (record: unknown) => void }
-// Preserve the JS provider API until its separate I/O migration.
-const modelFactory = createModel as unknown as (id: string, options: ModelOptions) => ModelPort;
+export interface ModelOptions { purpose?: ProviderPurpose; webSearch?: boolean; usage: (record: unknown) => void }
+// Keep the Promise-based model API while the session/runner callers migrate.
+const modelFactory = createModel;
 export class SessionModels extends Context.Service<SessionModels, {
   readonly create: (id: string, options: ModelOptions) => Effect.Effect<ModelPort, unknown>;
 }>()('victral/session/Models') {

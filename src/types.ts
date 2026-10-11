@@ -1,9 +1,10 @@
+import type * as Effect from 'effect/Effect';
 export type MessageKind = 'user' | 'talk' | 'tool' | 'echo' | 'work' | 'note';
 export interface ContentBlock { type: string; text?: string; [key: string]: unknown }
 export interface ToolCall { id: string; function: { name: string; arguments: string } }
 export interface Message {
   role: string; content: string | ContentBlock[]; tool_calls?: ToolCall[];
-  tool_call_id?: string; [key: string]: unknown;
+  tool_call_id?: string; _metaContent?: ContentBlock[]; _openaiOutput?: ContentBlock[]; [key: string]: unknown;
 }
 export interface ToolDefinition {
   type: 'function';
@@ -14,6 +15,7 @@ export interface ToolDefinition {
 export interface AgentTools {
   definitions: ToolDefinition[];
   execute(name: string, args: unknown, signal?: AbortSignal, onNestedCall?: (name: string) => void): Promise<string>;
+  executeEffect?(name: string, args: unknown, onNestedCall?: (name: string) => void, origin?: AbortSignal): Effect.Effect<string, unknown>;
   close?(): Promise<void>;
   context?(): string;
 }

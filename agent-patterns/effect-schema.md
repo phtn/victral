@@ -521,6 +521,42 @@ Schema validates the call envelope and exact access rules; it does not translate
 or reinterpret the server's JSON Schema. See the [I/O ownership patterns](effect-runtime.md#http-browsing-and-mcp-services)
 for scoped decoding/consumption and cleanup details.
 
+## Provider wire validation and exact replay
+
+[Provider wire schemas](../src/providers/wire.ts) validate the fields used by
+Meta/OpenAI adapters: event tags/indices, text/thinking/signature deltas, tool
+names/IDs/arguments, consumed message/output shapes and citation collections.
+Known records use `Struct`, opaque usage/tool objects use `Record(String,
+Unknown)`, and event/block tags use `Literal`/`Literals`. Schemas and cached parsers
+are reused rather than rebuilt per streamed frame. Errors use `reportInput: false`
+and a safe application message; the Schema cause stays private.
+
+Native replay requires all extension keys, nested values, encrypted blocks and
+original key order. As the vendored
+[parse-option documentation](../repos/effect/packages/effect/src/SchemaAST.ts)
+explains, Schema decoding does not guarantee object property order. These
+check-only wire schemas therefore validate first and return the original object
+through `checkedWire`. The narrowing assertion follows successful validation;
+it does not replace validation. This pattern is specific to schemas without
+transformations, defaults or key projections. Never apply it to a codec that
+changes its decoded type or replaces input values.
+
+Validate only fields the adapter consumes. Unknown native block/event types and
+unconsumed encrypted data remain opaque for in-turn replay. Do not construct an
+exhaustive provider schema that rejects future native item types, project away
+unknown properties, or encode the parsed projection over the original payload.
+Tests compare literal replay JSON, including key order and unknown nested fields.
+The frozen provider request fixtures execute the public streaming adapter with
+valid offline terminal responses; their expected request bytes stay unchanged.
+
+[Provider errors](../src/providers/core.ts) use `TaggedError` for explicit failure
+reasons and output limits. `ProviderOutputLimit.result` contains an internally
+constructed typed partial result; its `Schema.Unknown` field is diagnostic data,
+not a validator for external persisted results. Preserve the full Effect Cause
+when mapping scoped failures, and recover only a lone output-limit failure at the
+legacy boundary. See the [runtime patterns](effect-runtime.md#provider-transport-streaming-and-usage)
+for interruption, compound cleanup errors and exactly-once usage reporting.
+
 ## Avoid
 
 - Type assertions or unchecked `JSON.parse` results standing in for validation.
@@ -539,3 +575,30 @@ For actual Schema implementation changes, test valid and invalid boundary input,
 optional/nullable and excess-key cases, and codec round trips. Keep Victral's
 checks in `test/`; the vendored Effect tests are reference material, not part
 of this application's test suite.
+
+
+## Bind decoded tool arguments to lazy Effects
+
+Use [schemaTool](../src/tool-registry.ts) to bind a Schema to its implementation.
+Its `executeEffect` receives the inferred decoded type, including existing defaults
+and transformations, after full validation. The registry's Promise boundary uses
+the same invocation; do not add a second parser or cast raw arguments to a record.
+Preparation may perform read-only revision checks, but must not start I/O.
+
+```ts
+schemaTool({
+  name: "run_command",
+  schema: runCommandSchema(timeoutMs),
+  capabilities: ["shell"],
+  execute: (args, signal) => commands.run([args.program, ...args.args], args.timeout_ms, signal),
+  executeEffect: (args, signal) => commands.runEffect([args.program, ...args.args], args.timeout_ms, signal),
+})
+```
+
+This is adapted from the project's [command registry](../src/command-tool-registry.ts).
+Capabilities are checked before decoding; readonly worker checks must also protect
+the native Effect entry point. For a batch, decode its envelope and prepare **all**
+nested Schema-backed invocations before running `Effect.forEach`. Preserve each
+nested tool's check/default semantics rather than validating only the envelope or
+reconstructing defaults during execution. Validation failure must leave earlier
+valid tools and nested-call telemetry untouched.

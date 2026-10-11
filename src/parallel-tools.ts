@@ -1,8 +1,10 @@
+import * as Cause from 'effect/Cause';
+import * as Effect from 'effect/Effect';
 import * as Schema from 'effect/Schema';
 import { cutBytes } from './constants.js';
 import { validationDecoder } from './core/schema.js';
 import { ArgumentsObjectSchema } from './tool-argument-schema.js';
-import type { RegisteredTool, ToolInvocation } from './tool-registry.js';
+import { effectInvocation, invocationEffect, type RegisteredTool, type ToolInvocation } from './tool-registry.js';
 import { errorMessage } from './types.js';
 
 const ReadToolSchema = Schema.Literals([
@@ -25,17 +27,17 @@ export function parallelTools(prepare: (name: string, args: unknown) => ToolInvo
     // Decode every nested tool before returning an invocation. Runtime failures
     // (missing files/pages, HTTP errors) remain independent per-call results.
     const invocations = calls.map(call => prepare(call.tool, call.arguments));
-    return async (signal, onNestedCall) => {
-      signal?.throwIfAborted();
-      const results = await Promise.all(calls.map(async (call, i) => {
-        let output: string, status = 'completed';
-        try { onNestedCall?.(call.tool); output = await invocations[i]!(signal); }
-        catch (error) { if (signal?.aborted) throw error; status = 'error'; output = errorMessage(error); }
+    return effectInvocation((signal, onNestedCall) => Effect.map(Effect.forEach(calls, (call, i) => {
+      const invoke = Effect.flatMap(Effect.try({ try: () => onNestedCall?.(call.tool), catch: error => error }),
+        () => invocationEffect(invocations[i]!, signal));
+      return Effect.map(Effect.catchCause(Effect.map(invoke, output => ({ output, status: 'completed' })), cause => {
+        // Cancellation and defects are whole-operation failures, never tool output.
+        if (signal?.aborted || Cause.hasInterrupts(cause) || Cause.hasDies(cause) || cause.reasons.length > 1) return Effect.failCause(cause);
+        return Effect.succeed({ output: errorMessage(Cause.squash(cause)), status: 'error' });
+      }), ({ output, status }) => {
         const clipped = cutBytes(output, 3000);
         return `[${i + 1}/${calls.length} ${call.tool}; status: ${status}]\n${clipped}${clipped !== output ? '\n[batch result capped; call this tool separately for more output]' : ''}`;
-      }));
-      signal?.throwIfAborted();
-      return results.join('\n\n');
-    };
+      });
+    }, { concurrency: 8 }), results => results.join('\n\n')));
   } };
 }

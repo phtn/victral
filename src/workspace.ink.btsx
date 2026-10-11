@@ -6,7 +6,7 @@ import { COMMANDS } from './session-commands.js';
 import { markdownLines, type MarkdownLine } from './markdown.js';
 import { safeText, shortProject, wrapLines, type WorkspaceSession } from './tui-model.js';
 import { formatJevStatus } from './jev-status.js';
-import { shortModelName } from './models.js';
+import { shortModelName } from './model-catalog.js';
 import { commandCompletion, completeCommand, completionStatus } from './command-completion.js';
 import { copyMarkdown, type CopyResponse } from './clipboard.js';
 module

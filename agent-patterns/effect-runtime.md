@@ -243,3 +243,137 @@ browsing messages and the existing capped/redacted MCP diagnostics. `HttpFailure
 and `McpFailure` retain private causes for diagnostics; never expose those causes.
 Exact allowlists, lazy environment references, secret redaction and opaque native
 tool schemas remain in the integration facade, before any client acquisition.
+
+## Provider transport, streaming and usage
+
+[Meta](../src/meta.ts), [OpenAI](../src/openai.ts) and the model factory are now
+TypeScript. Each adapter exposes a borrowed `effects` service; install it with
+`ProviderModel.layer(model.effects)` when composing Effect callers. Its `chat`
+and `stream` methods receive an Effect lifetime. Translate external AbortSignals
+at `runPromiseExit`/ManagedRuntime boundaries, rather than passing them in service
+options. Existing Runner, memory and Session callers keep the Promise-based
+`chat`/`stream` API until their scheduled migrations. The factory still chooses
+only an explicit supported model and preserves compactor effort/web-search policy.
+
+```ts
+import * as Effect from 'effect/Effect';
+import { ProviderModel } from '../src/providers/core.js';
+import { createModel } from '../src/models.js';
+
+const model = createModel('sol6.1', { apiKey: 'configured-key', purpose: 'agent' });
+const result = Effect.flatMap(ProviderModel, provider => provider.stream([], {
+  onText: text => process.stdout.write(text),
+}));
+// In a session, provide this borrowed layer to its existing runtime.
+const provided = result.pipe(Effect.provide(ProviderModel.layer(model.effects)));
+// Run at a standalone boundary only; the effect returns typed failures.
+const exit = await Effect.runPromiseExit(provided);
+```
+
+`Http.withRequest` owns POST acquisition and body consumption without introducing
+a provider deadline, retry, fallback or output-buffer limit. `consumeSse` in
+[sse.ts](../src/sse.ts) keeps the original scan cursor and framing algorithm:
+UTF-8 fragmentation, LF/CRLF/CR boundaries, multiline data and a final
+unterminated frame. Its handler returns false at a terminal event, so an open
+connection or invalid later frame cannot stall or corrupt a completed response.
+Each read uses `tryPromise`; the response scope aborts/cancels/drains/releases its
+reader on success, failure and interruption. The test-only compatibility
+`sseData` iterator uses the same framer.
+
+Keep visible text, thoughts, awaited entry callbacks, citations and native replay
+separate. Text/thought callbacks stay synchronous; no new smoothing timer or
+buffer is added. Entry callbacks preserve their awaited ordering. Interrupting
+an asynchronous entry callback aborts the native request immediately and waits
+for the already-started callback to settle before releasing its response. Do not
+abandon a persistence callback and allow it to write after the canceled operation
+has returned.
+
+`ProviderFailure` distinguishes transport, HTTP, malformed, truncated and explicit
+provider failures. It retains private causes, safe constant malformed/transport
+messages and redacted provider HTTP/error diagnostics. HTTP status is explicit.
+`ProviderOutputLimit` retains a typed partial result in the error channel. The
+legacy Promise adapter recovers a **lone** limit as `MAX_TOKENS`, preserving the
+existing caller policy and native replay without silently retrying or duplicating
+text/tool calls. A compound failure containing a cleanup defect must still reject.
+
+Preserve complete Causes when translating a scoped operation's errors. In this
+vendored v4 implementation, `mapError` and `catchTag` can select one typed failure
+from a compound Cause and discard other reasons. The provider uses `catchCause`
+with `Cause.map` for error translation and checks the completed Exit before
+recovering a lone limit. Never erase reader cleanup defects or interruption while
+handling a nominally recoverable provider outcome.
+
+Instrumentation lives in the borrowed Effect service, covering both Effect and
+Promise calls exactly once. The `createModel` factory adds request IDs, measured
+latency, first nonempty visible-text timing and completed/error/canceled status;
+agent, compactor and subagent purposes remain distinct. Direct provider
+construction retains its legacy successful-usage callback behavior. Limit results
+report completion with `MAX_TOKENS`; failed cleanup reports error. Report only
+after response cleanup, and do not re-report when the usage sink itself throws.
+No failure report fabricates successful token usage.
+
+The [pure model catalog](../src/model-catalog.ts) supplies labels, aliases and
+completion without importing provider transport into the terminal UI bundle.
+`models.ts` reexports the existing catalog API for compatibility. The remaining
+runner, compactor scheduling and job-lifetime changes belong to their later steps.
+
+
+## Tools, batches and command lifetimes
+
+[ToolRegistry](../src/tool-registry.ts) exposes `executeEffect`, with the existing
+Promise `execute` as its compatibility boundary. `schemaTool` decodes once during
+preparation, then binds the decoded argument type to a lazy Effect invocation.
+Supply `executeEffect` when an implementation already uses Effect; native command
+operations take this path. The fallback [toolPromise](../src/tool-effects.ts)
+adapter preserves the audited filesystem/patch transaction bodies and drains
+already-started work on interruption. Do not replace it with `tryPromise` if that
+would let a canceled tool return before a file write or patch rollback finishes.
+An expected abort rejection belongs to interruption; a different failure during
+drain remains a cleanup defect. Promise edges retain existing domain messages;
+compound causes must never be squashed into a nominally successful tool result.
+
+`AgentTools.executeEffect` is optional for legacy/fake ports. `LegacyPorts` prefers
+it, maps typed failures with `catchCause`/`Cause.map`, and keeps defects and
+interruption. It continues borrowing toolset ownership. Apply read-only guards
+to both public entry points, and keep MCP permission checks inside execution.
+
+[parallelTools](../src/parallel-tools.ts) prepares every nested invocation before
+executing any of them. Use `Effect.forEach(..., { concurrency: 8 })` for the
+validated maximum-eight batch. Output stays in input order, and ordinary runtime
+failures are per-call error results. Cancellation, defects and compound causes
+fail the operation. Keep the 3000-byte cap, exact headings and nested-call counts.
+Do not decode each nested tool inside its running fiber: a later invalid tool
+must prevent earlier valid tools from performing I/O.
+
+[CommandTools](../src/command-tools.ts) owns one closeable job scope. Its child
+supervision follows the vendored
+[`forkIn` tests](../repos/effect/packages/effect/test/Effect.test.ts) and
+[`Scope` implementation](../repos/effect/packages/effect/src/Scope.ts).
+A job fiber belongs to this scope through `forkIn`, rather than to its transient
+start invocation. The owner closes the scope once and drains all jobs, including
+foreground commands. This uses fibers, not another ManagedRuntime.
+
+Pass the originating turn's long-lived signal explicitly when starting jobs:
+`tools.executeEffect(name, args, onNestedCall, turnSignal)`. Existing Promise
+callers supply it through `execute(name, args, turnSignal, onNestedCall)`.
+Run the Effect invocation with the appropriate turn interruption signal as well.
+Do not attach background work to `Effect.abortSignal` from the short tool scope:
+normal scope closure would terminate a job that must outlive its starting call.
+Removing a completed invocation does not remove the job's original abort listener;
+the listener is released when job cleanup ends. This seam is available for the
+later Effect turn-loop migration.
+
+Sync process/reader acquisition uses atomic finalizer registration. Never acquire
+a process and yield before installing its cleanup. Concurrent stdout/stderr reads
+own their locks; read failure interrupts the sibling and kills the process group
+before awaiting native cancellation. Ignore only a reader's *same stored error*
+from cancel; retain a new cancellation failure as a defect. Release locks in
+`finally`. Child exit and pending stdin work must settle before owner shutdown.
+
+Foreground cancellation kills and drains its job. Interactive writes use scoped
+acquisition of the write guard, a two-second Effect deadline, and cleanup that
+kills before draining a blocked FileSink operation. EOF changes stdin state only
+when requested. Status waiting is a race between job completion and the bounded
+wait; interrupting that wait must not stop someone else's job. Stop drains native
+cleanup uninterruptibly after issuing the kill. Keep literal argv, filtered
+environment, process-group kills, job limits and legacy report/list bytes.

@@ -1,5 +1,5 @@
 import { COMMANDS } from './session-commands.js';
-import { MODEL_INFO, PROVIDERS } from './models.js';
+import { MODEL_INFO, PROVIDERS } from './model-catalog.js';
 import stringWidth from 'string-width';
 
 export interface CommandCompletion {

@@ -1,3 +1,4 @@
+import * as Effect from 'effect/Effect';
 import fs from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -108,7 +109,7 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
     ...(allowShell ? commandTools(commands, timeoutMs) : []),
     ...(integrations ? integrationTools(integrations) : []), ...(subagents ? subagentTools(subagents) : []),
   ], capabilities);
-  return { definitions, execute: (name, args, signal, onNestedCall) => registry.execute(name, args, signal, onNestedCall),
+  return { definitions, executeEffect: (name, args, nested, origin) => registry.executeEffect(name, args, nested, origin), execute: (name, args, signal, onNestedCall) => registry.execute(name, args, signal, onNestedCall),
     close: async () => {
       // Finish every owned cleanup before releasing memory/storage, even if one fails.
       const results = await Promise.allSettled([() => commands.close(), () => integrations?.close(), () => subagents?.close()]
@@ -123,6 +124,8 @@ export function readOnlyProjectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, 
   const allowed = new Set([...PARALLEL_READ_TOOLS, 'parallel_tools']);
   allowed.delete('command_status'); allowed.delete('list_commands');
   return { ...tools, definitions: tools.definitions.filter(tool => allowed.has(tool.function.name)),
+    executeEffect: (name, args, nested, origin) => allowed.has(name) ? tools.executeEffect!(name, args, nested, origin)
+      : Effect.fail(new Error(`Subagents cannot use ${name}.`)),
     execute: async (name, args, signal, onNestedCall) => {
       if (!allowed.has(name)) throw new Error(`Subagents cannot use ${name}.`);
       return tools.execute(name, args, signal, onNestedCall);
