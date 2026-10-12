@@ -7,7 +7,7 @@ import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import * as Layer from 'effect/Layer';
 import * as ManagedRuntime from 'effect/ManagedRuntime';
-import type * as Scope from 'effect/Scope';
+import * as Scope from 'effect/Scope';
 import { Storage, STORAGE_STREAMS, VIEW_FILES } from './storage.js';
 import { Memory } from './memory.js';
 import { formatModelsList, resolveModelId, PROVIDERS } from './models.js';
@@ -22,6 +22,7 @@ import type { JevStatus } from './jev-status.js';
 import { COMMANDS } from './session-commands.js';
 import { SessionSettings, SessionModels, SessionStorage, releaseSessionResource, sessionExitValue, type ModelOptions } from './core/session-services.js';
 import { AudioNotifications } from './sfx/notifications.js';
+import { workflowAudioObserver } from './sfx/workflow.js';
 export { COMMANDS } from './session-commands.js';
 
 type SessionEnvironment = SessionSettings | SessionModels | SessionStorage | SessionInstance | AudioNotifications;
@@ -51,10 +52,12 @@ export class Session extends EventEmitter {
   private constructor(readonly options: SessionOptions, readonly storage: Storage, readonly memory: Memory, readonly evaluations: Evaluations, readonly metrics: Metrics, private readonly runtime: SessionRuntime) {
     super();
   }
-  private initialize(model: ModelPort, integrations: Integrations, transferIntegrations: () => void): Effect.Effect<void, unknown, Scope.Scope> {
+  private initialize(model: ModelPort, integrations: Integrations, transferIntegrations: () => void): Effect.Effect<void, unknown, Scope.Scope | AudioNotifications> {
     const self = this, { options, storage, memory, evaluations, metrics } = this;
     const planStore = { load: () => storage.load('plans'), save: (plan: Parameters<Storage['savePlan']>[0]) => storage.savePlan(plan) };
     return Effect.gen(function*() {
+      const audio = yield* AudioNotifications, scope = yield* Scope.Scope;
+      const onWorkflow = workflowAudioObserver(audio, scope);
       let tools: ReturnType<typeof projectTools> | undefined;
       self.subagents = yield* Effect.acquireRelease(Effect.try({ try: () => new Subagents({
         model: () => self.createModel(self.runner.model.model, { purpose: 'subagent', webSearch: options.webSearch, usage: record => metrics.usage(record) }),
@@ -74,6 +77,7 @@ export class Session extends EventEmitter {
         tools = ports; transferIntegrations(); return ports;
       }, catch: cause => cause }), ports => releaseSessionResource('Agent tools cleanup', () => self.runner ? self.runner.close() : ports.close?.()));
       self.runner = yield* Effect.try({ try: () => new Runner(memory, model, ports, self.instructions(), {
+        runEffect: effect => self.runtime.runPromise(effect), onWorkflow,
         onText: text => {
           const last = self.entries.at(-1);
           if (last?.role === 'victral') last.text += text;

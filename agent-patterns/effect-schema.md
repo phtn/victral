@@ -602,3 +602,26 @@ nested Schema-backed invocations before running `Effect.forEach`. Preserve each
 nested tool's check/default semantics rather than validating only the envelope or
 reconstructing defaults during execution. Validation failure must leave earlier
 valid tools and nested-call telemetry untouched.
+
+
+## Keep turn failures typed without flattening Causes
+
+[TurnFailure](../src/runner.ts) uses the same vendored v4 tagged-error constructor
+pattern as the project's other boundaries:
+
+```ts
+class TurnFailure extends Schema.TaggedError<TurnFailure>()("TurnFailure", {
+  phase: Schema.Literals(["settle", "model", "tool", "callback"]),
+  message: Schema.String,
+  cause: Schema.Defect(),
+}) {}
+```
+
+The message is the public domain diagnostic; `cause` retains private details and
+must not be encoded into saved messages or workflow events. When translating an
+Effect workflow's failures, use `catchCause` with `Cause.map` to preserve compound
+cleanup/interruption reasons. A Schema error's phase should identify the boundary
+that actually failed, rather than reconstructing a generic Error from its text.
+Do not turn a native provider's typed output limit into a successful tool step:
+retain saved partial entries and apply the Runner's existing incomplete-response
+policy before executing tool calls.

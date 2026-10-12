@@ -26,7 +26,7 @@ the private session service before publishing the Session. Small services expose
 [settings, model creation and storage](../src/core/session-services.ts). Runtime
 startup builds them once; synchronous model switches and worker model factories
 use its cached context through `runSyncExit`. The external Session/UI API remains
-Promise-based, and the Runner loop remains in ordinary TypeScript for now.
+Promise-based; the Runner executes typed, scoped Effect turns in that runtime.
 
 ## Current resource owners
 
@@ -38,7 +38,7 @@ Promise-based, and the Runner loop remains in ordinary TypeScript for now.
 | Session listeners and UI timer | A session finalizer detaches them before closing the Runner. |
 | Main Runner and project toolset | A guarded toolset finalizer closes the Runner when construction succeeded, or closes the toolset directly when Runner construction failed. |
 | Integrations and research workers | Scoped fallback owners cover partial startup; successful toolset acquisition transfers ownership to toolset `close()`. Integrations closes its Effect-owned MCP connection scope; workers retain legacy internals. |
-| Command processes and worker Runners | Existing command/worker services retain their internal lifetimes; the project toolset closes those services. |
+| Command processes and worker Runners | Commands own scoped job fibers; existing worker orchestration retains its lifetime until step 8. The project toolset closes both owners. |
 | Audio player and active cues | The opt-in `AudioNotifications.layerLive` owns one player; each playback observes its caller's interruption. Scope close aborts/drains remaining playback and closes the player once. The Session uses `layerSilent`. |
 
 Make ownership transfers explicit. The integration and worker fallback finalizers
@@ -112,7 +112,7 @@ cleanup failure is retained in `lastFailure`; it cannot skip draining active cue
 or fail session disposal. Display only `publicFailureMessage(error)`, never its
 cause. Interruption remains interruption, and does not populate failure diagnostics.
 No failure handler plays a second cue. Workflow event mapping, operation IDs,
-deduplication, frequency limits and live chat controls belong to steps 7–9;
+turn mapping/deduplication/frequency limits are supplied by the step-7 observer; live chat controls and worker/evaluation observers remain in later phases;
 the service does not listen to Runner/UI events or parse their display strings.
 
 ## Promise and AbortSignal boundaries
@@ -251,7 +251,7 @@ TypeScript. Each adapter exposes a borrowed `effects` service; install it with
 `ProviderModel.layer(model.effects)` when composing Effect callers. Its `chat`
 and `stream` methods receive an Effect lifetime. Translate external AbortSignals
 at `runPromiseExit`/ManagedRuntime boundaries, rather than passing them in service
-options. Existing Runner, memory and Session callers keep the Promise-based
+options. Existing memory and Session callers keep the Promise-based
 `chat`/`stream` API until their scheduled migrations. The factory still chooses
 only an explicit supported model and preserves compactor effort/web-search policy.
 
@@ -315,7 +315,7 @@ No failure report fabricates successful token usage.
 The [pure model catalog](../src/model-catalog.ts) supplies labels, aliases and
 completion without importing provider transport into the terminal UI bundle.
 `models.ts` reexports the existing catalog API for compatibility. The remaining
-runner, compactor scheduling and job-lifetime changes belong to their later steps.
+compactor scheduling and worker orchestration belong to their later steps.
 
 
 ## Tools, batches and command lifetimes
@@ -361,7 +361,7 @@ Do not attach background work to `Effect.abortSignal` from the short tool scope:
 normal scope closure would terminate a job that must outlive its starting call.
 Removing a completed invocation does not remove the job's original abort listener;
 the listener is released when job cleanup ends. This seam is available for the
-later Effect turn-loop migration.
+Effect turn loop, which supplies the original controller signal to background starts.
 
 Sync process/reader acquisition uses atomic finalizer registration. Never acquire
 a process and yield before installing its cleanup. Concurrent stdout/stderr reads
@@ -377,3 +377,76 @@ when requested. Status waiting is a race between job completion and the bounded
 wait; interrupting that wait must not stop someone else's job. Stop drains native
 cleanup uninterruptibly after issuing the kill. Keep literal argv, filtered
 environment, process-group kills, job limits and legacy report/list bytes.
+
+
+## Agent turns and presentation
+
+[Runner](../src/runner.ts) preserves settle → render → take queued input →
+provider → tools → boundary input → next call. Its public methods still return
+Promises. Session supplies its existing runtime executor; standalone callers use
+one service-free run boundary. Do not create a ManagedRuntime per turn.
+
+Publish the owner flag and shared drain Promise before invoking callbacks.
+Reentrant submit calls must share that owner, and their input must keep submission
+order. The current queue is only synchronously appended/spliced by this owner and
+its callbacks; adding a Queue or Ref would not replace competing asynchronous
+state. Input during a call is logged immediately once, keeping `work` distinct
+from `user`, and is injected as user content at the next tool boundary. Render
+before taking a fresh turn's input. On settle failure/cancellation, log unanswered
+input for the next explicit submission; do not retry it automatically.
+
+A turn scope owns an execution fiber and an abort watcher. The watcher resumes on
+the explicit controller signal and requests `Fiber.interrupt(turn)`. The owner
+uses `Fiber.await(turn)` to obtain the actual completed Exit after finalizers.
+This follows the vendored
+[Fiber examples](../repos/effect/packages/effect/src/Fiber.ts) and
+[scoped-fork patterns](../repos/effect/packages/effect/test/Effect.test.ts).
+Do **not** race cancellation against the whole turn with `raceFirst` when you
+must retain cleanup errors: its winning cancellation result can discard cleanup
+defects from the interrupted loser. The native cancellation diagnostic test
+proves the scoped-fiber pattern retains both interruption and a rollback defect.
+The watcher is removed when the turn completes, without aborting the original
+signal attached to background commands. The command/job owner remains Session.
+
+`TurnFailure` retains a phase, public message and private original cause. Translate
+with `catchCause`/`Cause.map`; ordinary tool domain failures remain error results,
+while defects, compound failures and interruption escape per-tool formatting.
+`Runner.lastFailure` holds the completed Cause for internal diagnostics only.
+Never place it in saved messages or events. Finish checks and limits remain
+application policy: no extra model fallback, retry or tool execution after an
+incomplete finish. Report one turn metric after cleanup; an error-display callback
+failure must not skip that metric. Close is memoized and drains the turn before
+closing the toolset, retaining both drain and cleanup failures.
+
+[smoothResponseEffect](../src/smooth-response.ts) keeps `smoothStream` at the
+existing 10ms word cadence and keeps native content/entries outside presentation.
+The display reader and provider belong to its scope. Display interruption sets
+the canceled latch and cancels the reader immediately, even while provider cleanup
+must wait for a started entry callback. Await that callback and native work before
+ending the turn; no old display chunk may escape into a later response. Provider
+failure flushes partial display before failing. Native adapters retain typed limits;
+the legacy Promise smoother recovers only a lone limit after scoped cleanup.
+Use offline transport fixtures when testing native providers rather than spying
+on their Promise methods, which the migrated Runner no longer calls.
+
+[Workflow events](../src/workflow-events.ts) contain an operation ID, kind and
+status only. Emit start and verified terminal states for turns/model calls/tools;
+emit retry only when actually retrying. The independent
+[audio observer](../src/sfx/workflow.ts) maps turn events to existing cues, ignores
+model/tool chatter, deduplicates operation/status pairs with bounded retention,
+and rate limits onset cues. Processing playback follows turn cancellation; terminal
+cues belong to Session's short playback scope. Observer/player failure cannot
+fail a turn, create a retry or recursively emit an error cue. Events and cues
+never enter memory. Session still installs the silent layer; live notifications
+remain an explicit opt-in with controls required before activation.
+
+
+A native invocation's I/O signal must combine its originating lifetime signal
+with the callback fiber's interruption signal. Otherwise a failed batch can
+interrupt a sibling fiber while that sibling's native I/O keeps waiting on a
+still-live turn signal. `toolPromise` combines those signals for native calls;
+`legacyToolEffect` is confined to actual registry Promise entry points that retain
+caller-signal identity. Do not apply that compatibility override to the whole
+Runner workflow or session runtime. The nested-I/O interruption test verifies
+that a native failed batch cancels its sibling while leaving the background-job
+origin signal un-aborted.

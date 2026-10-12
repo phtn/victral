@@ -90,3 +90,24 @@ test('Runner rejects a tool termination with no calls instead of reporting compl
   expect(statuses).toEqual(['error']);
   expect(errors).toEqual(['Model requested a tool step without tool calls.']);
 });
+
+test('native smoothing cancellation stops display immediately while awaiting a started entry callback', async () => {
+  const Effect = await import('effect/Effect'), Exit = await import('effect/Exit'), Cause = await import('effect/Cause');
+  const { toolPromise } = await import('../src/tool-effects.js'), { smoothResponseEffect } = await import('../src/smooth-response.js');
+  let release!: () => void, started!: () => void;
+  const persistence = new Promise<void>(resolve => { release = resolve; }), entryStarted = new Promise<void>(resolve => { started = resolve; });
+  const controller = new AbortController(), visible: string[] = []; let finished = false;
+  const model: ModelPort = { model: 'native', async stream() { throw new Error('Promise path must not run.'); }, effects: {
+    stream: (_messages, opts) => toolPromise(async signal => {
+      opts?.onText?.('one two three four five six '); await opts?.onEntry?.('talk', 'partial'); signal.throwIfAborted(); return response;
+    }).pipe(Effect.orDie),
+  } };
+  const pending = Effect.runPromiseExit(smoothResponseEffect(model, [], { ...options(), onText: text => { visible.push(text); controller.abort(); },
+    onEntry: async () => { started(); await persistence; },
+  }), { signal: controller.signal }).then(exit => { finished = true; return exit; });
+  await entryStarted; await Bun.sleep(25); expect(visible).toEqual(['one ']); expect(finished).toBe(false);
+  release(); const exit = await pending; expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+  const next: string[] = [];
+  await smoothResponse({ model: 'next', async stream(_messages, opts) { opts.onText('Next response'); return response; } }, [], { ...options(), onText: text => next.push(text) });
+  expect(next.join('')).toBe('Next response'); expect(visible).toEqual(['one ']);
+});

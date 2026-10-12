@@ -5,11 +5,11 @@ configuration and Schema-guide changes. This is an implementation backlog.
 
 ## Implementation status
 
-Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0–6 are complete,
+Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0–7 are complete,
 including MCP configuration, task plans, audio settings and tool registries for
 browsing, file/Git reads, mutations, commands, workers/MCP and the batch envelope.
 These boundaries use the pinned published Effect 4.0.2 dependency. The latest
-change passes 301 tests across 35 files, typecheck and build; legacy rendering,
+change passes 323 tests across 37 files, typecheck and build; legacy rendering,
 browsing/read/mutation output, file bytes/modes, Git/command arguments and
 provider request/tool fixtures match unchanged.
 Worker prompts/reports and MCP requests/redaction match their legacy fixtures.
@@ -24,7 +24,7 @@ The Session/UI API and synchronous persistence callbacks remain compatible.
 playback ownership, validated volume/mute settings and isolated audio failures.
 Interruption waits for native playback cleanup; independent background cues keep
 their own lifetime. The Session installs the silent layer, and workflow event
-wiring remains in steps 7–9. Step 4 adds typed HTTP/MCP services, interruption-aware
+wiring begins at step 7; worker/evaluation observers remain in steps 8–9. Step 4 adds typed HTTP/MCP services, interruption-aware
 native fetches, scoped response readers and session-owned lazy MCP connections.
 Fake layers and native loopback/stdio tests verify deadline and cleanup behavior.
 Step 5 converts Meta/OpenAI adapters, request instrumentation and SSE consumption
@@ -36,7 +36,12 @@ Step 6 runs validated tool invocations through Effect, bounds parallel reads at
 8, and owns command processes/readers/writes in scoped fibers. Closing the command
 owner drains foreground and background jobs; completed turns retain their jobs,
 and later originating-turn cancellation still kills their process groups.
-Next: step 7, the agent turn loop.
+Step 7 makes the turn loop a typed, scoped Effect workflow in that same runtime.
+Native provider/tool effects retain streaming, saved entries, boundary input and
+turn metrics. A scoped cancellation watcher interrupts the turn fiber and awaits
+its actual Exit, retaining cleanup defects. Typed workflow events feed an isolated,
+deduplicated turn-audio observer; the installed Session layer remains silent.
+Next: step 8, research subagents.
 
 See the [baseline and frozen fixtures](EFFECT_MIGRATION_BASELINE.md),
 [Schema patterns](../agent-patterns/effect-schema.md) and
@@ -284,15 +289,15 @@ and interactive-command tests pass with the same observable results.
 
 ## 7. Migrate the agent turn loop
 
-- [ ] Make settle → render → take queued input → provider call → tools → next
+- [x] Make settle → render → take queued input → provider call → tools → next
       call a typed Effect workflow, retaining that exact ordering.
-- [ ] Give each turn an explicit scope and cancellation handle. Preserve message
+- [x] Give each turn an explicit scope and cancellation handle. Preserve message
       injection at tool boundaries and the distinction between user and `work`.
-- [ ] Introduce queues/refs only where they replace shared mutable asynchronous
+- [x] Introduce queues/refs only where they replace shared mutable asynchronous
       state. Keep a single logical turn owner and preserve submission order.
-- [ ] Preserve canceled/failed input retention, partial saved entries, finish
+- [x] Preserve canceled/failed input retention, partial saved entries, finish
       reason checks, model-step limits, and exactly-once turn metrics.
-- [ ] Adapt smoothing to the new workflow without changing display cadence or
+- [x] Adapt smoothing to the new workflow without changing display cadence or
       letting queued display text escape into a subsequent canceled turn.
 
 **Gate:** runner and streaming tests pass, plus races involving queued input,

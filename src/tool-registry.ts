@@ -1,5 +1,5 @@
 import * as Effect from 'effect/Effect';
-import { runToolEffect, toolPromise } from './tool-effects.js';
+import { legacyToolEffect, runToolEffect, toolPromise } from './tool-effects.js';
 import type * as Schema from 'effect/Schema';
 import { ToolAccessDenied } from './core/errors.js';
 import { validationDecoder } from './core/schema.js';
@@ -12,7 +12,7 @@ export function invocationEffect(invoke: ToolInvocation, signal?: AbortSignal, n
   return invoke.effect ? invoke.effect(signal, nested) : toolPromise(actual => invoke(actual, nested), signal);
 }
 export function effectInvocation(effect: NonNullable<ToolInvocation['effect']>): ToolInvocation {
-  return Object.assign((signal?: AbortSignal, nested?: (name: string) => void) => runToolEffect(effect(signal, nested), signal), { effect });
+  return Object.assign((signal?: AbortSignal, nested?: (name: string) => void) => runToolEffect(legacyToolEffect(effect(signal, nested)), signal), { effect });
 }
 export interface RegisteredTool {
   readonly name: string;
@@ -64,6 +64,6 @@ export class ToolRegistry {
   }
   async execute(name: string, value: unknown, signal?: AbortSignal, onNestedCall?: (name: string) => void): Promise<string> {
     signal?.throwIfAborted();
-    return runToolEffect(this.executeEffect(name, value, onNestedCall, signal), signal);
+    return runToolEffect(legacyToolEffect(this.executeEffect(name, value, onNestedCall, signal)), signal);
   }
 }

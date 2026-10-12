@@ -1,3 +1,4 @@
+import type { ProviderService } from './providers/core.js';
 import type * as Effect from 'effect/Effect';
 export type MessageKind = 'user' | 'talk' | 'tool' | 'echo' | 'work' | 'note';
 export interface ContentBlock { type: string; text?: string; [key: string]: unknown }
@@ -29,6 +30,7 @@ export interface MemoryPort {
 }
 export interface ModelPort {
   model: string;
+  readonly effects?: Pick<ProviderService, 'stream'>;
   stream(messages: Message[], options: {
     tools: ToolDefinition[]; signal: AbortSignal;
     onText(text: string): void; onThought(text: string): void;

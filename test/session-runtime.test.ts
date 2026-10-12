@@ -15,7 +15,6 @@ import { Integrations } from '../src/integrations.js';
 import { Subagents } from '../src/subagents.js';
 import { CommandTools } from '../src/command-tools.js';
 import { Runner } from '../src/runner.js';
-import { Meta } from '../src/meta.js';
 import { SessionSettings, SessionStorage } from '../src/core/session-services.js';
 import { EffectAdapterError } from '../src/core/async.js';
 import { IOError } from '../src/core/errors.js';
@@ -30,6 +29,17 @@ afterEach(async () => {
   if (previousKey === undefined) delete process.env.META_API_KEY; else process.env.META_API_KEY = previousKey;
   await Promise.all(directories.splice(0).map(directory => fs.rm(directory, { recursive: true, force: true })));
 });
+// Exercise native Effect providers through offline transport, rather than spying
+// on the Promise stream method that the migrated Runner no longer calls.
+function offlineMeta(init: RequestInit | undefined, content: Array<Record<string, unknown>>) {
+  const body = JSON.parse(String(init?.body));
+  const stop_reason = content.some(block => block.type === 'tool_use') ? 'tool_use' : 'end_turn';
+  if (!body.stream) return Response.json({ content, stop_reason, usage: {} });
+  const events: unknown[] = [{ type: 'message_start', message: { usage: {} } }];
+  content.forEach((content_block, index) => events.push({ type: 'content_block_start', index, content_block }, { type: 'content_block_stop', index }));
+  events.push({ type: 'message_delta', delta: { stop_reason }, usage: {} }, { type: 'message_stop' });
+  return new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } });
+}
 async function options(): Promise<SessionOptions> {
   process.env.META_API_KEY = 'offline-runtime-fixture';
   const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'victral-runtime-'))); directories.push(directory);
@@ -60,9 +70,7 @@ test('one session runtime shares settings/storage across completed turns and syn
   const configured = await options(), runtimeSpy = spyOn(ManagedRuntime, 'make'), openSpy = spyOn(Storage, 'open');
   const playSpy = spyOn(NativeSoundPlayer.prototype, 'play'), audioCloseSpy = spyOn(NativeSoundPlayer.prototype, 'close');
   const releases = cleanup();
-  spyOn(Meta.prototype, 'stream').mockImplementation(async () => ({
-    message: { role: 'assistant', content: 'Answer 🦓', _metaContent: [] }, finish_reason: 'COMPLETE', usage: {},
-  }));
+  spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async (_url: URL | RequestInfo, init?: RequestInit) => offlineMeta(init, [{ type: 'text', text: 'Answer 🦓' }]), { preconnect() {} }));
   const session = await Session.open(configured); sessions.push(session);
   expect(runtimeSpy).toHaveBeenCalledTimes(1); expect(openSpy).toHaveBeenCalledTimes(1);
   const runtime = runtimeSpy.mock.results[0]!.value;
@@ -191,9 +199,9 @@ test('runner cleanup preserves a failed drain together with tool cleanup failure
 test('completed turns retain background commands until session scope closes', async () => {
   const configured = { ...await options(), allowShell: true }, releases = cleanup();
   let calls = 0;
-  spyOn(Meta.prototype, 'stream').mockImplementation(async () => ++calls === 1 ? {
-    message: { role: 'assistant', content: [], _metaContent: [], tool_calls: [{ id: 'start', function: { name: 'start_command', arguments: JSON.stringify({ program: process.execPath, args: ['-e', 'setTimeout(() => {}, 30000)'] }) } }] }, finish_reason: 'TOOL_CALL', usage: {},
-  } : { message: { role: 'assistant', content: 'Started.', _metaContent: [] }, finish_reason: 'COMPLETE', usage: {} });
+  spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async (_url: URL | RequestInfo, init?: RequestInit) => offlineMeta(init, ++calls === 1
+    ? [{ type: 'tool_use', id: 'start', name: 'start_command', input: { program: process.execPath, args: ['-e', 'setTimeout(() => {}, 30000)'] } }]
+    : [{ type: 'text', text: 'Started.' }]), { preconnect() {} }));
   const session = await Session.open(configured); sessions.push(session);
   await session.submit('Start the background job.'); await session.submit('Another completed turn.'); await session.submit('/jobs');
   expect(session.snapshot().entries.at(-1)?.text).toContain('running'); expect(releases.events).toEqual([]);

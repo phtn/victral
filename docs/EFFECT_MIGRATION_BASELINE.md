@@ -594,3 +594,67 @@ ManagedRuntime; commands use an explicit closeable scope and scoped fibers.
 
 Next is step 7, the agent turn loop. Worker orchestration, evaluation, persistence
 and memory scheduling remain in their planned later phases.
+
+
+## Agent turn-loop verification
+
+Step 7 is complete. Runner executes settle → render → take input → provider →
+tools → boundary input → next call as a typed Effect workflow. The public Session
+and Runner Promise APIs remain compatible, and the main Runner borrows the
+existing session runtime. Standalone Runner callers use a service-free boundary;
+there is no additional ManagedRuntime per turn or request.
+
+- `bun run check`: typecheck and 323 tests across 37 files passed, with 6568 assertions.
+- `bun run build`: passed; 75 application modules, 1.17 MB.
+- Seventeen new `test/runner-effects.test.ts` tests verify native dispatch, exact
+  operation order/native replay, one logical owner, queued inputs during settle,
+  late worker reports, reentrant completion/start observers, canceled settle/tool
+  cleanup, retained input and partial entries, typed output limits, model-step
+  policy, nested tool metrics, observer failure and full cancellation diagnostics.
+- `test/streaming.test.ts` adds native smoothing cancellation during an awaited
+  persistence callback: display stops immediately, cancellation waits for that
+  callback, and no queued text appears in the subsequent response. Existing word
+  cadence, thoughts, partial-error flush, tool-boundary display drain and finish
+  reason checks pass unchanged.
+- The input queue remains synchronous and ordered. There is no competing queue
+  consumer or redundant Ref. Ownership and the shared drain Promise are published
+  before callbacks can reenter submit. Input received in a provider/tool call is
+  logged once with its original user/work kind and injected at the next boundary.
+  Settling failures and cancellation retain unanswered input in memory.
+- Each turn has a scope, a scoped execution fiber and an explicit AbortController.
+  A scoped watcher requests `Fiber.interrupt`, and the owner awaits `Fiber.await`
+  for the actual completed Exit. A targeted test found that using `raceFirst`
+  here loses a canceled loser's cleanup defects. Internal `Runner.lastFailure`
+  retains the complete Cause; no raw diagnostic enters memory or workflow events.
+  Successful turn completion does not abort the origin signal for background jobs.
+- `TurnFailure` is a tagged Schema error with settle/model/tool/callback phases.
+  Translation uses Cause-preserving mapping. Ordinary tool domain failures remain
+  model-visible error results; interruption and compound failures fail the turn.
+  Native Promise-backed I/O combines the originating turn signal with the
+  invocation fiber's signal, so a failed batch can cancel siblings while the
+  origin signal stays live for background jobs. Only legacy registry Promise
+  boundaries preserve caller-signal identity for their existing fixtures.
+  Existing incomplete-finish messages, step limits and retry policy remain intact.
+  Metrics report once after cleanup, including when the error callback throws.
+- `smoothResponseEffect` owns its display reader and provider work. It prefers
+  native provider effects, keeps the original ai smoothStream settings, flushes
+  partial text on failure and suppresses queued text on interruption. Native output
+  limits stay typed; the compatible smoothing Promise adapter recovers a lone
+  limit only after cleanup, preserving compound failures.
+- Typed turn/model/tool events carry stable operation IDs and status, with no raw
+  prompts, arguments or output. Four `test/workflow-audio.test.ts` tests use fake
+  players for turn-cue mapping, volume/mute, duplicate/onset suppression, turn
+  cancellation, scoped playback drain and failure isolation. Model/tool events
+  cause no extra sound. The Session layer remains silent and no live audio was enabled.
+  No retry event is fabricated; current turn execution performs no added retry.
+- Session runtime tests now use offline HTTP/SSE fixtures instead of spying on
+  provider Promise methods bypassed by the native Runner. The native-audio test
+  uses macOS system `/tmp` for its executable fixture because per-user temporary
+  shell startup stalled in isolation; its failure now includes fixture diagnostics.
+  Production audio code is unchanged. Native process shutdown is still asserted.
+- Frozen fixtures and vendored source remain unchanged. Session restart, completed
+  background jobs, permission/patch checks, late worker reports and all existing
+  memory/evaluation contracts pass. Worker scheduling, evaluation and memory
+  orchestration remain in their planned later migrations.
+
+Next is step 8, research subagents.

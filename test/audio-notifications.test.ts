@@ -198,7 +198,10 @@ test('a pre-aborted request starts no playback', async () => {
 
 test('live-layer interruption terminates a real native subprocess without playing sound', async () => {
   if (process.platform === 'win32') return;
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'victral-audio-scope-'));
+  // macOS can stall executable shell fixtures under its per-user /var/folders
+  // directory. Use the system temp directory for this native executable test.
+  const tempRoot = process.platform === 'darwin' ? '/tmp' : os.tmpdir();
+  const directory = await fs.mkdtemp(path.join(tempRoot, 'victral-audio-scope-'));
   const executable = path.join(directory, 'afplay');
   // The marker is derived from the WAV argument; no shell interpolation of paths.
   await fs.writeFile(path.join(directory, 'success.wav'), 'silent fixture');
@@ -209,7 +212,11 @@ test('live-layer interruption terminates a real native subprocess without playin
     const marker = path.join(directory, 'success.wav.started');
     const deadline = Date.now() + 2000;
     while (!await fs.access(marker).then(() => true, () => false)) {
-      if (Date.now() > deadline) throw new Error('Fake native player did not start.');
+      if (Date.now() > deadline) {
+        const audio = await owner.runPromise(AudioNotifications);
+        const failure = await owner.runPromise(audio.lastFailure);
+        throw new Error(`Fake native player did not start: ${String(failure?.cause ?? 'playback still pending')}`);
+      }
       await new Promise(resolve => setTimeout(resolve, 5));
     }
     const pid = Number(await fs.readFile(path.join(directory, 'success.wav.pid'), 'utf8'));
