@@ -5,11 +5,11 @@ configuration and Schema-guide changes. This is an implementation backlog.
 
 ## Implementation status
 
-Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0–8 are complete,
+Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0–9 are complete,
 including MCP configuration, task plans, audio settings and tool registries for
 browsing, file/Git reads, mutations, commands, workers/MCP and the batch envelope.
 These boundaries use the pinned published Effect 4.0.2 dependency. The latest
-change passes 345 tests across 38 files, typecheck and build; legacy rendering,
+change passes 366 tests across 39 files, typecheck and build; legacy rendering,
 browsing/read/mutation output, file bytes/modes, Git/command arguments and
 provider request/tool fixtures match unchanged.
 Worker prompts/reports and MCP requests/redaction match their legacy fixtures.
@@ -46,7 +46,13 @@ Spawn snapshots model/context/tools, keeps three active lifetimes and 32 results
 and retains 20 model steps and the five-minute deadline. Scoped report receipts,
 cleanup and cancellation drain before completion; late reports enter the parent's
 queue once as `work`. Both CLI modes await the parent's final report handling.
-Next: step 9, background evaluations.
+Step 9 migrates Jev and evaluation boundaries to TypeScript/Schema and scoped
+Effect consumers. Two workers retain complete-state guards, independent audit
+judgments, restart recovery and the exact two-retry transient-status policy.
+Borrowed TestClock tests prove 1/2-second backoff and per-attempt deadlines;
+shutdown drains native cleanup and leaves canceled jobs recoverable. Evaluation
+workflow events share the isolated audio observer; the Session default is silent.
+Next: step 10a, persistence, followed by 10b, memory scheduling.
 
 See the [baseline and frozen fixtures](EFFECT_MIGRATION_BASELINE.md),
 [Schema patterns](../agent-patterns/effect-schema.md) and
@@ -326,14 +332,14 @@ close, and separate subagent usage attribution remain correct.
 
 ## 9. Migrate background evaluations
 
-- [ ] Convert `jev.js`/`evaluations.js` boundaries to typed Schema/Effect code.
+- [x] Convert `jev.js`/`evaluations.js` boundaries to typed Schema/Effect code.
       Preserve the complete-state size guard and independent judgment fields.
-- [ ] Replace manual concurrency and retry timers with supervised work and an
+- [x] Replace manual concurrency and retry timers with supervised work and an
       explicit schedule: two workers, retries only for existing transient status
       codes, and at most two retries with the current exponential delays.
-- [ ] Preserve saved pending-job recovery, visible failures, and canceled jobs
+- [x] Preserve saved pending-job recovery, visible failures, and canceled jobs
       remaining recoverable. Evaluation must never gate turns or rewrite memory.
-- [ ] Use a controllable clock/test layer for retry timing, inspecting the
+- [x] Use a controllable clock/test layer for retry timing, inspecting the
       vendored testing examples before choosing a testing package.
 
 **Gate:** retry limits, restart recovery, oversized skips, and metrics agree

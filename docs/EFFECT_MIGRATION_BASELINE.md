@@ -728,3 +728,44 @@ No new ManagedRuntime is created for a worker.
   persistence and memory orchestration remain in their planned later phases.
 
 Next is step 9, background evaluations.
+
+## Background evaluation verification — October 13, 2026
+
+Step 9 is complete. `bun run check` passes typecheck and 366 tests across 39
+files with 6,791 assertions. `bun run build` succeeds with 75 modules and a
+1.19 MB CLI bundle. All new audit tests use offline responses/injected functions;
+no live TypeSafe/provider API calls were made.
+
+- `jev.ts` validates complete state and three independent finite probabilities
+  in [0, 1], retaining native result extensions. Scoped HTTP consumption releases
+  body readers before returning failure or allowing a retry. Credential diagnostics
+  retain the existing redaction/cap and native status is a typed failure field.
+- `evaluations.ts` validates persisted envelopes and owns two default scoped Queue
+  consumers. Generated summaries dispatch once; exact copies require no calls.
+  The 24,000-byte serialized complete-state guard skips without truncation. Existing
+  metrics, missing-credential visibility, saved queued/running recovery and
+  summarization independence tests remain unchanged and pass.
+- New tests borrow the vendored TestClock/Schedule patterns through `pumpEffect`.
+  They prove exact 999/1/1999/1ms retry boundaries, a 60-second per-attempt deadline,
+  and cancellation during backoff. Only HTTP 429/503/529 retries, at most twice;
+  existing persistent-failure tests prove the three-call ceiling. Other HTTP status
+  codes, schema failures, timeouts and compound cleanup failures do not retry.
+- Two active audit lifetimes occupy their slots through native cleanup. Closing
+  awaits both, starts no remaining queued requests and persists active jobs as
+  queued for recovery. Canceling a drain waiter leaves those audits running.
+  Cleanup Causes remain private even when a canceled job must remain recoverable.
+- Typed evaluation events use stable IDs without source/context/credentials. The
+  shared audio observer deduplicates cues and retains the silent Session default.
+  The pre-existing native audio fixture missed its two-second startup marker in
+  one full run; its isolated run and subsequent full check passed. Its code and
+  process-exit assertions were not changed in this step.
+- The CPU benchmark (10,000 messages, 200 iterations, five rounds) reports median
+  snapshot 0.001949375 ms, initialization 791.984417 ms, saved-view restore
+  3.417208 ms, pending-view restore 7.681959 ms and idle pump 0.00005 ms. Nodes/view
+  parts remain 19,995/156 and idle-pump node reads remain zero. These timings do
+  not measure audit throughput or make network requests.
+- Vendored files and frozen request/legacy-chat fixtures were not changed.
+  Memory received only a storage-field type declaration for the typed evaluation
+  boundary; persistence and memory scheduling remain for step 10.
+
+Next is step 10a, persistence, followed by step 10b, memory scheduling.

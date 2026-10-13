@@ -14,7 +14,7 @@ export function workflowAudioObserver(audio: AudioNotificationService, scope: Sc
   const seen = new Set<string>();
   let lastOnset = -Infinity;
   return (event, signal) => {
-    if (event.kind !== 'turn' && event.kind !== 'worker') return;
+    if (event.kind !== 'turn' && event.kind !== 'worker' && event.kind !== 'evaluation') return;
     const key = `${event.operationId}:${event.status}`;
     if (seen.has(key)) return;
     seen.add(key);

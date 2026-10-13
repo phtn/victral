@@ -642,3 +642,29 @@ Native spawn waits for that rollback and combines construction and cleanup Cause
 its legacy synchronous adapter retains the original exception while owner-managed
 cleanup drains. Do not replace an existing ValidationError with a startup wrapper,
 or expose private rollback Causes in the report/status JSON.
+
+## Audit probabilities and persisted evaluation envelopes
+
+The [Jev boundary](../src/jev.ts) adapts the vendored `Schema.Finite`,
+`isBetween` and `Struct` examples. Validate each judgment independently:
+
+```ts
+const Judgment = Schema.Struct({
+  type: Schema.Literal('noul'),
+  noul: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }))
+})
+```
+
+These probabilities are separate judgments; do not normalize their sum or accept
+numeric strings, missing judgments, NaN or infinity. Validate injected audit
+results as well as HTTP JSON. The check-only schema retains the original object
+and its extensions, using the same `checkedWire` pattern as provider responses.
+State strings preserve complete source/summary/context bytes; guard the serialized
+state at 24,000 bytes before starting I/O, without trimming or truncation.
+
+[EvaluationRecord](../src/evaluations.ts) validates persisted job coordinates,
+status, context coordinates and optional result fields while retaining extension
+metadata. Its job envelope remains compatible with queued/running legacy records.
+Keep HTTP status as a typed failure field; parsing diagnostic text is confined to
+the compatibility adapter for injected legacy Promise audits. Schema failures,
+timeouts, network failures and cleanup defects must not become transient retries.

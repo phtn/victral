@@ -58,6 +58,8 @@ export class Session extends EventEmitter {
     return Effect.gen(function*() {
       const audio = yield* AudioNotifications, scope = yield* Scope.Scope;
       const onWorkflow = workflowAudioObserver(audio, scope);
+      evaluations.onWorkflow = onWorkflow;
+      yield* evaluations.pumpEffect();
       let tools: ReturnType<typeof projectTools> | undefined;
       self.subagents = yield* Effect.acquireRelease(Effect.try({ try: () => new Subagents({
         model: () => self.createModel(self.runner.model.model, { purpose: 'subagent', webSearch: options.webSearch, usage: record => metrics.usage(record) }),

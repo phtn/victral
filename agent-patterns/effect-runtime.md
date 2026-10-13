@@ -510,3 +510,31 @@ observer handles turn/worker outcomes, excludes model/tool chatter and retains i
 deduplication/onset limits. Observer failure never fails or retries a worker;
 Session remains silent by default. Keep execution-time read-only/recursion guards,
 provider usage purpose `subagent`, literal prompts and report/list/status formats.
+
+## Background evaluation ownership and retries
+
+[Evaluations](../src/evaluations.ts) owns a parallel closeable scope and an Effect
+Queue with two default consumers. Pending records are saved before dispatch;
+recovered queued/running records enter the same queue. `pumpEffect` captures the
+caller's context once, including Clock, while keeping the owner scope independent
+of any turn. The legacy `pump` adapter starts with the default runtime context.
+Session starts native consumers with its runtime services and installs the same
+isolated workflow observer used by turns/workers. Drain cancellation ends only
+that wait; closing the owner interrupts consumers and awaits their native cleanup.
+Active canceled jobs return to persisted queued state, with full diagnostic Causes
+retained privately even if cleanup fails. Evaluations never append chat messages
+or rewrite memory, and exact-copy nodes need no audit.
+
+Each attempt has a 60-second Effect deadline. A `Schedule.exponential(1000)`
+restricted to two recurrences retains 1,000/2,000ms retry delays. Only a lone typed
+HTTP 429/503/529 failure can retry; compound cleanup failures, schema failures,
+network errors and timeouts cannot. Retries increment and emit a typed event when
+the next request actually starts, rather than when a delay is scheduled. Native
+Jev HTTP bodies are consumed in the scoped transport before retrying. Injected
+Promise audits use `toolPromise` to abort and drain pending native work.
+
+Tests borrow `effect/testing/TestClock` using `pumpEffect`; this follows vendored
+`test/TestClock.test.ts` and `test/Schedule.test.ts` examples without adding a
+second testing package. Advancing 999/1/1999/1ms verifies both delay boundaries
+and the exact three-call ceiling. Offline fixtures also verify worker capacity,
+shutdown/restart, cancellation during backoff, deadlines and probability bounds.

@@ -80,3 +80,12 @@ test('a worker processing cue follows its job lifetime independently of another 
   worker.abort(); await aborted.promise; cleanup.resolve(); await Effect.runPromise(Scope.close(f.scope, Exit.void));
   expect(f.played).toEqual([{ sound: 'processing', volume: 0.4 }]);
 });
+
+test('evaluation events use isolated audio cues without exposing audit state', async () => {
+  const f = await fixture();
+  f.observe({ operationId: 'evaluation-1', kind: 'evaluation', status: 'processing' }); await Bun.sleep(0); f.tick();
+  f.observe({ operationId: 'evaluation-1', kind: 'evaluation', status: 'retry' });
+  f.observe({ operationId: 'evaluation-1', kind: 'evaluation', status: 'retry' });
+  f.observe({ operationId: 'evaluation-1', kind: 'evaluation', status: 'completed' }); await Bun.sleep(0);
+  expect(f.played).toEqual((['processing', 'retry', 'success'] as const).map(sound => ({ sound, volume: 0.4 })));
+});

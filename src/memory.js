@@ -39,6 +39,8 @@ class IndexQueue {
 }
 
 export class Memory extends EventEmitter {
+  /** @type {import("./storage.js").Storage} */
+  storage;
   constructor(storage, model, { viewBudget = VIEW, viewMinimum = viewBudget === VIEW ? VIEW_MIN : Math.floor(viewBudget / 2), compactBudget = COMPACT_VIEW, compactMinimum = compactBudget === COMPACT_VIEW ? COMPACT_VIEW_MIN : Math.floor(compactBudget / 2), nodeBudget = NODE, jobs = JOBS, report = console.error } = {}) {
     super();
     Object.assign(this, { storage, model, viewBudget, viewMinimum, compactBudget, compactMinimum, nodeBudget, jobs, report });
