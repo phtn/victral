@@ -62,7 +62,7 @@ export class Session extends EventEmitter {
       self.subagents = yield* Effect.acquireRelease(Effect.try({ try: () => new Subagents({
         model: () => self.createModel(self.runner.model.model, { purpose: 'subagent', webSearch: options.webSearch, usage: record => metrics.usage(record) }),
         tools: () => readOnlyProjectTools(memory, options.project, { planStore }),
-        context: () => memory.render(), instructions: () => self.instructions(),
+        context: () => memory.render(), instructions: () => self.instructions(), onWorkflow,
         report: text => {
           if (self.closed || self.closing) return;
           self.add('system', text);

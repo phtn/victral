@@ -208,6 +208,8 @@ test('live-layer interruption terminates a real native subprocess without playin
   await fs.writeFile(executable, '#!/bin/sh\nprintf "%s\\n" "$$" > "$3.pid"\ntouch "$3.started"\nexec sleep 30\n', { mode: 0o700 });
   const owner = runtime(AudioNotifications.layerLive({}, () => new NativeSoundPlayer(directory, executable)));
   const controller = new AbortController(), work = cue(owner, 'success', controller.signal);
+  let playbackExit: Awaited<typeof work> | undefined;
+  void work.then(exit => { playbackExit = exit; });
   try {
     const marker = path.join(directory, 'success.wav.started');
     const deadline = Date.now() + 2000;
@@ -215,7 +217,7 @@ test('live-layer interruption terminates a real native subprocess without playin
       if (Date.now() > deadline) {
         const audio = await owner.runPromise(AudioNotifications);
         const failure = await owner.runPromise(audio.lastFailure);
-        throw new Error(`Fake native player did not start: ${String(failure?.cause ?? 'playback still pending')}`);
+        throw new Error(`Fake native player did not start: ${String(failure?.cause ?? (playbackExit && Exit.isSuccess(playbackExit) ? JSON.stringify(playbackExit.value) : 'playback still pending'))}`);
       }
       await new Promise(resolve => setTimeout(resolve, 5));
     }

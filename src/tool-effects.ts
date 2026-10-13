@@ -7,6 +7,7 @@ import * as Exit from 'effect/Exit';
 // Native scopes must combine origin lifetime with actual fiber interruption.
 const LegacyToolSignal = Context.Reference<boolean>('victral/tools/LegacySignal', { defaultValue: () => false });
 export const legacyToolEffect = <A, E>(effect: Effect.Effect<A, E>) => effect.pipe(Effect.provideService(LegacyToolSignal, true));
+export const nativeToolEffect = <A, E>(effect: Effect.Effect<A, E>) => effect.pipe(Effect.provideService(LegacyToolSignal, false));
 
 // Await already-started native work on interruption, including patch rollback and
 // pipe cleanup. tryPromise alone only interrupts the wait for that work.

@@ -5,11 +5,11 @@ configuration and Schema-guide changes. This is an implementation backlog.
 
 ## Implementation status
 
-Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0–7 are complete,
+Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0–8 are complete,
 including MCP configuration, task plans, audio settings and tool registries for
 browsing, file/Git reads, mutations, commands, workers/MCP and the batch envelope.
 These boundaries use the pinned published Effect 4.0.2 dependency. The latest
-change passes 323 tests across 37 files, typecheck and build; legacy rendering,
+change passes 345 tests across 38 files, typecheck and build; legacy rendering,
 browsing/read/mutation output, file bytes/modes, Git/command arguments and
 provider request/tool fixtures match unchanged.
 Worker prompts/reports and MCP requests/redaction match their legacy fixtures.
@@ -24,7 +24,7 @@ The Session/UI API and synchronous persistence callbacks remain compatible.
 playback ownership, validated volume/mute settings and isolated audio failures.
 Interruption waits for native playback cleanup; independent background cues keep
 their own lifetime. The Session installs the silent layer, and workflow event
-wiring begins at step 7; worker/evaluation observers remain in steps 8–9. Step 4 adds typed HTTP/MCP services, interruption-aware
+wiring begins at step 7; worker observers are connected at step 8; evaluation observers remain in step 9. Step 4 adds typed HTTP/MCP services, interruption-aware
 native fetches, scoped response readers and session-owned lazy MCP connections.
 Fake layers and native loopback/stdio tests verify deadline and cleanup behavior.
 Step 5 converts Meta/OpenAI adapters, request instrumentation and SSE consumption
@@ -41,7 +41,12 @@ Native provider/tool effects retain streaming, saved entries, boundary input and
 turn metrics. A scoped cancellation watcher interrupts the turn fiber and awaits
 its actual Exit, retaining cleanup defects. Typed workflow events feed an isolated,
 deduplicated turn-audio observer; the installed Session layer remains silent.
-Next: step 8, research subagents.
+Step 8 supervises research workers and their Runners in session-owned job scopes.
+Spawn snapshots model/context/tools, keeps three active lifetimes and 32 results,
+and retains 20 model steps and the five-minute deadline. Scoped report receipts,
+cleanup and cancellation drain before completion; late reports enter the parent's
+queue once as `work`. Both CLI modes await the parent's final report handling.
+Next: step 9, background evaluations.
 
 See the [baseline and frozen fixtures](EFFECT_MIGRATION_BASELINE.md),
 [Schema patterns](../agent-patterns/effect-schema.md) and
@@ -305,15 +310,15 @@ cancellation during tools/settle, and worker reports arriving at boundaries.
 
 ## 8. Migrate research subagents
 
-- [ ] Represent workers as supervised fibers using the migrated runner.
+- [x] Represent workers as supervised fibers using the migrated runner.
       Keep the model/effort and read-only context selected at spawn time.
-- [ ] Use session-owned job scopes with explicit originating-turn interruption.
+- [x] Use session-owned job scopes with explicit originating-turn interruption.
       A normally completed parent turn must not interrupt its research workers.
-- [ ] Preserve three concurrent workers, retained results, 20 model steps,
+- [x] Preserve three concurrent workers, retained results, 20 model steps,
       five-minute deadlines, stop/drain behavior, and disabled recursive delegation.
-- [ ] Deliver each completion report once through the parent input queue as
+- [x] Deliver each completion report once through the parent input queue as
       agent-authored `work`; handle delivery failure and shutdown explicitly.
-- [ ] Keep `--ask` and piped-input draining aware of both workers and the parent's
+- [x] Keep `--ask` and piped-input draining aware of both workers and the parent's
       final handling of reports.
 
 **Gate:** late reports, stop, concurrent limits, parent cancellation, session

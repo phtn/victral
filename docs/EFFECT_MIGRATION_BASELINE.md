@@ -658,3 +658,73 @@ there is no additional ManagedRuntime per turn or request.
   orchestration remain in their planned later migrations.
 
 Next is step 8, research subagents.
+
+
+## Research-worker supervision verification
+
+Step 8 is complete, verified October 12, 2026. Workers execute the migrated Runner
+as fibers in their own job scopes. The research owner supervises these jobs in a
+session-owned closeable scope. Native spawn captures runtime services, including
+Clock, while job and turn scopes replace the caller's transient resource lifetime.
+No new ManagedRuntime is created for a worker.
+
+- `bun run check`: typecheck and 345 tests across 38 files passed, with 6714 assertions.
+- `bun run build`: passed; 75 application modules, 1.18 MB.
+- Twenty-one new tests in `test/subagent-effects.test.ts` cover native model/tool
+  dispatch, frozen model/context/instructions, execution-time read-only guards,
+  completed parent turns, late report queuing, origin/stop/drain cancellation,
+  resource rollback, shutdown, report receipts/failures, result retention, reentrant
+  stop/close observers, cleanup diagnostics and inherited signal policy.
+- Native `spawnEffect`, `stopEffect` and `drainEffect` share the existing public
+  Promise/string API and Schema registry. Existing worker names, definitions,
+  prompts, raw task text, start/list/status/stop JSON, automatic reports, validation
+  and disabled recursive delegation match their frozen fixtures unchanged.
+- Each worker owns a supervisor fiber, a Runner scope and a completion Deferred.
+  The Deferred replaces the old work Promise and completes after cleanup/report
+  acceptance, including failure and shutdown paths. It is available before
+  callbacks can reenter stop. Stop awaits it uninterruptibly; canceled drain stops
+  every worker and awaits their native cleanup before returning interruption.
+- The three-worker limit covers still-draining lifetimes, including resource
+  cleanup and receipt acceptance, so those phases cannot create an unbounded
+  backlog. Completed results retain their existing maximum of 32. Workers still
+  stop at 20 model steps. The five-minute deadline uses scoped Effect sleep;
+  TestClock verifies the exact boundary without a five-minute wall-clock wait.
+  Deadline/stop strings and result caps remain compatible.
+- The originating-turn listener lives until execution finishes; normally ending
+  the parent turn removes no job lifetime and does not abort its signal. The
+  worker's own controller also cancels its processing cue. A separate scope owns
+  its Runner and read-only tools, and failed construction rolls back those tools.
+  Native failed/canceled starts wait for rollback; synchronous starts retain their
+  original exception while managed rollback remains owned and close drains it.
+- Each report is attempted once after execution and cleanup. Async report results
+  mean acceptance/enqueuing, not completion of the parent's response. Delivery
+  rejection updates retained status/result and preserves its Cause without retry.
+  Shutdown suppresses reports not yet started and drains receipts already in
+  flight. Draining re-snapshots jobs created by report handling rather than ending
+  after its initial snapshot. Full cleanup/interruption Causes remain private.
+- Worker runtime context explicitly restores native I/O signal policy. A legacy
+  spawn boundary must not carry its caller-signal identity override into the worker
+  Runner. A targeted test starts through that legacy registry and verifies a native
+  failed batch interrupts sibling I/O while the worker origin signal stays live.
+- Real CLI subprocesses with offline provider preloads verify both `--ask` and
+  piped EOF wait for late workers and the parent's final response. Each run makes
+  one worker request and three parent requests, saves one report as `work`, records
+  one separately attributed subagent usage event, and releases storage on exit.
+  Existing Session late-report and runtime-ownership tests also pass.
+- Worker workflow events use stable operation IDs without task/model payloads.
+  One additional fake-player test verifies a worker processing cue follows its job
+  signal independently of an unrelated canceled turn. The Session audio layer
+  remains silent. An existing native-audio fixture initially missed its startup
+  marker; isolated and full rerun checks passed. Its diagnostics now distinguish a
+  completed playback result from an actually pending operation. Production audio
+  playback code is unchanged, and process exit remains asserted.
+- The existing CPU benchmark was rerun with 10,000 messages, 200 iterations and
+  five rounds. It makes no API calls or storage writes and does not measure worker
+  throughput. Median metrics snapshot: 0.001925 ms; initialization: 707.299333 ms;
+  saved-view restore: 3.097042 ms; pending-view restore: 7.239083 ms; idle pump:
+  0.000044165 ms. Nodes/view parts remain 19,995/156, and idle-pump node reads stay
+  zero. No measurement exceeds the baseline regression budget.
+- No vendored source or frozen fixtures were changed. Evaluation scheduling,
+  persistence and memory orchestration remain in their planned later phases.
+
+Next is step 9, background evaluations.

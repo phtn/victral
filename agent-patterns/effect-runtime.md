@@ -37,8 +37,8 @@ Promise-based; the Runner executes typed, scoped Effect turns in that runtime.
 | Memory, evaluations and metrics | Session layer finalizers stop/close the existing instances, in that order, before releasing storage. |
 | Session listeners and UI timer | A session finalizer detaches them before closing the Runner. |
 | Main Runner and project toolset | A guarded toolset finalizer closes the Runner when construction succeeded, or closes the toolset directly when Runner construction failed. |
-| Integrations and research workers | Scoped fallback owners cover partial startup; successful toolset acquisition transfers ownership to toolset `close()`. Integrations closes its Effect-owned MCP connection scope; workers retain legacy internals. |
-| Command processes and worker Runners | Commands own scoped job fibers; existing worker orchestration retains its lifetime until step 8. The project toolset closes both owners. |
+| Integrations and research workers | Scoped fallback owners cover partial startup; successful toolset acquisition transfers ownership to toolset `close()`. Integrations closes its Effect-owned MCP connection scope; workers close their Effect-owned supervisor/job scopes. |
+| Command processes and worker Runners | Commands own scoped job fibers; research workers own supervisor fibers and scoped Runners. The project toolset closes both owners. |
 | Audio player and active cues | The opt-in `AudioNotifications.layerLive` owns one player; each playback observes its caller's interruption. Scope close aborts/drains remaining playback and closes the player once. The Session uses `layerSilent`. |
 
 Make ownership transfers explicit. The integration and worker fallback finalizers
@@ -112,7 +112,7 @@ cleanup failure is retained in `lastFailure`; it cannot skip draining active cue
 or fail session disposal. Display only `publicFailureMessage(error)`, never its
 cause. Interruption remains interruption, and does not populate failure diagnostics.
 No failure handler plays a second cue. Workflow event mapping, operation IDs,
-turn mapping/deduplication/frequency limits are supplied by the step-7 observer; live chat controls and worker/evaluation observers remain in later phases;
+turn mapping/deduplication/frequency limits are supplied by the step-7 observer; worker events are connected in step 8; live chat controls and evaluation observers remain in later phases;
 the service does not listen to Runner/UI events or parse their display strings.
 
 ## Promise and AbortSignal boundaries
@@ -315,7 +315,7 @@ No failure report fabricates successful token usage.
 The [pure model catalog](../src/model-catalog.ts) supplies labels, aliases and
 completion without importing provider transport into the terminal UI bundle.
 `models.ts` reexports the existing catalog API for compatibility. The remaining
-compactor scheduling and worker orchestration belong to their later steps.
+compactor scheduling and evaluation orchestration belong to their later steps.
 
 
 ## Tools, batches and command lifetimes
@@ -450,3 +450,63 @@ caller-signal identity. Do not apply that compatibility override to the whole
 Runner workflow or session runtime. The nested-I/O interruption test verifies
 that a native failed batch cancels its sibling while leaving the background-job
 origin signal un-aborted.
+
+
+## Research workers and report acceptance
+
+[Subagents](../src/subagents.ts) owns a closeable supervisor scope; each worker
+owns a Runner scope, controller, fiber and completion Deferred. Follow vendored
+[`forkIn` examples](../repos/effect/packages/effect/test/Effect.test.ts),
+[Scope finalizers](../repos/effect/packages/effect/src/Scope.ts) and
+[Deferred](../repos/effect/packages/effect/src/Deferred.ts). The Deferred replaces
+shared work-Promise state and is allocated before callbacks can reenter stop.
+It completes once after execution, native cleanup and report acceptance, even
+when execution/delivery fails. Keep shutdown and stop memoized/draining rather
+than returning after merely requesting interruption.
+
+Snapshot the selected model/effort, read-only toolset, parent context and custom
+instructions synchronously at spawn. Preserve three active worker lifetimes,
+32 retained results, 20 model steps and the five-minute deadline. Capacity must
+not be released while owned cleanup or receipt work is still outstanding. Native
+spawn borrows the caller's runtime context (including Clock), but the job's scopes
+must replace the short calling scope. The Runner workflow is forked into the job
+scope; no worker creates a ManagedRuntime. `TestClock` tests exercise the deadline
+through native spawn with borrowed services, not a production timeout override.
+
+The original turn's abort listener stays attached during worker execution.
+Ordinary parent completion must not close the job or abort that signal. Stop,
+deadline, canceled drain and owner close cancel the worker's controller and Runner,
+then wait for scoped cleanup. Deadline sleep lives in the execution scope and is
+removed before tool cleanup and report delivery. Keep existing reason/result bytes.
+The worker controller also ends its processing cue, independently of other turns.
+
+Register tool/Runner cleanup before later factories can throw. Native failed spawn
+waits for rollback, including if its caller is canceled during rollback. Legacy
+synchronous spawn preserves its original exception while a managed rollback fiber
+owns cleanup and owner close awaits it. Combine original and release Causes rather
+than erasing either reason. Execution/cleanup diagnostics remain internal through
+`lastFailure`; no Cause or raw task data belongs in workflow events.
+
+Borrowed context can carry a legacy Promise entry point's signal-identity policy.
+Use `nativeToolEffect` for worker supervision and Runner workflows so native
+operations combine invocation interruption with the originating signal. Preserve
+other borrowed services. Otherwise a failing nested batch could interrupt a fiber
+while its I/O still waits on a live origin signal. A legacy-spawn/native-worker
+regression test protects this boundary.
+
+Reports keep the existing agent-authored marker and enter the parent queue as
+`work`, once. An optional async report return is a receipt for acceptance/enqueuing.
+**Do not return the parent's whole submission/response Promise as that receipt**:
+a parent waiting in stop/drain can otherwise deadlock with its worker waiting for
+that same parent turn. Session enqueues synchronously and observes parent handling
+separately. Report rejection is retained as a delivery failure without retry.
+Shutdown suppresses new deliveries but drains receipts already started, preventing
+writes after release. Re-snapshot drain until all owned jobs finish, since report
+handling may start more workers. Session then waits for the parent's response and
+repeats if workers were created; both CLI `--ask` and piped EOF use that boundary.
+
+Worker events have their own stable IDs and job lifetime. The independent audio
+observer handles turn/worker outcomes, excludes model/tool chatter and retains its
+deduplication/onset limits. Observer failure never fails or retries a worker;
+Session remains silent by default. Keep execution-time read-only/recursion guards,
+provider usage purpose `subagent`, literal prompts and report/list/status formats.

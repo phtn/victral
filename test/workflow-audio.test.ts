@@ -68,3 +68,15 @@ test('playback failure has no recursive error cue or workflow retry', async () =
   expect(f.played).toEqual([{ sound: 'success', volume: 0.4 }]);
   expect(await f.runtime.runPromise(f.audio.lastFailure)).toBeDefined();
 });
+
+test('a worker processing cue follows its job lifetime independently of another canceled turn', async () => {
+  const started = deferred(), aborted = deferred(), cleanup = deferred();
+  const f = await fixture(undefined, async (_sound, _volume, signal) => {
+    signal.addEventListener('abort', aborted.resolve, { once: true }); started.resolve(); await cleanup.promise; signal.throwIfAborted();
+  });
+  const worker = new AbortController(), turn = new AbortController();
+  f.observe({ operationId: 'worker-1', kind: 'worker', status: 'processing' }, worker.signal); await started.promise;
+  turn.abort(); expect(worker.signal.aborted).toBe(false);
+  worker.abort(); await aborted.promise; cleanup.resolve(); await Effect.runPromise(Scope.close(f.scope, Exit.void));
+  expect(f.played).toEqual([{ sound: 'processing', volume: 0.4 }]);
+});

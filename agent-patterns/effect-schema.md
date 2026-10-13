@@ -625,3 +625,20 @@ that actually failed, rather than reconstructing a generic Error from its text.
 Do not turn a native provider's typed output limit into a successful tool step:
 retain saved partial entries and apply the Runner's existing incomplete-response
 policy before executing tool calls.
+
+
+## Keep worker parsing outside acquisition
+
+[SpawnSubagentSchema](../src/subagent-tool-schema.ts) retains raw task text and
+its existing name/task bounds. The worker [registry](../src/subagent-tool-registry.ts)
+binds its inferred decoded arguments to `spawnEffect`, and the unknown-input
+`spawn` adapter parses before acquiring model/tools/context. Do not decode twice
+inside a running worker or normalize/trim task text while taking the snapshot.
+Capability denial and malformed batches must still prevent factory execution.
+
+Worker startup failures are separate from Schema failures. Once tools are acquired,
+later context/instruction/Runner construction failures require scoped rollback.
+Native spawn waits for that rollback and combines construction and cleanup Causes;
+its legacy synchronous adapter retains the original exception while owner-managed
+cleanup drains. Do not replace an existing ValidationError with a startup wrapper,
+or expose private rollback Causes in the report/status JSON.
