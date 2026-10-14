@@ -105,8 +105,9 @@ export class Session extends EventEmitter {
           if (record.kind === 'user' || record.kind === 'talk') self.add(record.kind === 'user' ? 'you' : 'victral', record.text, false);
         }
         evaluations.on('update', self.evaluationListener);
-        evaluations.pump(); memory.pump();
+        evaluations.pump();
       }, catch: cause => cause });
+      yield* memory.pumpEffect();
     });
   }
   static async open(options: SessionOptions): Promise<Session> {

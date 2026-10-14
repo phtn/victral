@@ -146,6 +146,9 @@ test('indexed scheduling preserves source/context readiness, scan priority, retr
   for (let n = storage.root.length; n >= 1; n = Math.floor(n / 2)) expectedNodes += n;
   assert.equal(storage.nodes.size, expectedNodes);
   assert.equal(memory.remaining, 0);
+  // Event delivery now isolates observers; keep the independent view oracle
+  // authoritative by surfacing any assertion it raised during a change event.
+  assert.equal(memory.observerFailure, undefined);
   for (const key of ['0:3', '1:0', '1:2']) assert.equal(attempts.get(key), 2);
   const next = new Memory(storage, model, { nodeBudget: 64, viewBudget: 200 });
   assert.deepEqual(next.view, memory.view);

@@ -35,15 +35,12 @@ export function releaseSessionResource(operation: string, close: () => void | Pr
 // persistence callbacks keep their synchronous, durable behavior and format.
 export class SessionStorage extends Context.Service<SessionStorage, Storage>()('victral/session/Storage') {
   static readonly acquire = Effect.fn('SessionStorage.acquire')((directory: string) =>
-    Effect.acquireRelease(
-      Effect.tryPromise({ try: () => Storage.open(directory), catch: cause => cause }),
-      storage => releaseSessionResource('Chat storage cleanup', () => storage.close()),
-    ));
+    Storage.acquire(directory));
 }
 
 // A lone legacy failure keeps its existing Promise error and message. Combined
 // startup/cleanup causes use a safe message and retain every original reason.
-// Typed provider/storage failure classification belongs to their later migrations.
+// Native provider and storage failures retain their typed diagnostic causes.
 export function sessionExitValue<A>(exit: Exit.Exit<A, unknown>, operation: string): A {
   if (Exit.isFailure(exit) && exit.cause.reasons.length === 1) {
     const reason = exit.cause.reasons[0]!;

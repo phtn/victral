@@ -6,28 +6,18 @@ import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import * as Queue from 'effect/Queue';
 import * as Schedule from 'effect/Schedule';
-import * as Schema from 'effect/Schema';
 import * as Scope from 'effect/Scope';
-import { auditSummaryEffect, AuditResult, JevFailure, validateAuditResult, type AuditOptions } from './jev.js';
+import { auditSummaryEffect, JevFailure, validateAuditResult, type AuditOptions } from './jev.js';
 import { checkedWire } from './providers/wire.js';
 import { toolPromise } from './tool-effects.js';
 import { bytes } from './constants.js';
 
 import type { WorkflowObserver, WorkflowEvent } from './workflow-events.js';
 
+import { EvaluationRecord } from './evaluation-schema.js';
+export { EvaluationRecord } from './evaluation-schema.js';
+
 const MAX_STATE_BYTES = 24_000;
-const Index = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
-export const EvaluationRecord = Schema.Struct({
-  key: Schema.String, l: Index, i: Index,
-  context_parts: Schema.optional(Schema.Array(Schema.Struct({ l: Index, i: Index }))),
-  requested_model: Schema.optional(Schema.String),
-  status: Schema.Literals(['queued', 'running', 'skipped', 'completed', 'error']),
-  date: Schema.optional(Schema.String), state_bytes: Schema.optional(Schema.Number),
-  reason: Schema.optional(Schema.String), error: Schema.optional(Schema.String),
-  model: Schema.optional(Schema.String), answers: Schema.optional(AuditResult.fields.answers),
-  usage: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)), latency_ms: Schema.optional(Schema.Number), retries: Schema.optional(Index),
-});
-export type EvaluationRecord = typeof EvaluationRecord.Type;
 export interface EvaluationMemory extends Pick<EventEmitter, 'on' | 'off'> {
   node(l: number, i: number): { text: string } | undefined;
   storage: { root: { kind: string; text: string }[]; load(stream: string): unknown[]; telemetry(stream: string, record: unknown): unknown };

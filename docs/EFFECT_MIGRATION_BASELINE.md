@@ -769,3 +769,74 @@ no live TypeSafe/provider API calls were made.
   boundary; persistence and memory scheduling remain for step 10.
 
 Next is step 10a, persistence, followed by step 10b, memory scheduling.
+
+## Persistence and memory verification — October 13, 2026
+
+Steps 10a and 10b were implemented and verified in order. The persistence-only
+check passed typecheck and 374 tests across 40 files (6,813 assertions), plus build.
+The combined `bun run check` passes typecheck and 383 tests across 41 files with
+6,868 assertions. The final build contains 78 modules and a 1.20 MB CLI bundle.
+No live provider/TypeSafe requests or vendored/frozen fixture changes were made.
+
+### 10a — persistence
+
+- `storage.ts` retains synchronous append-only/fsync persistence and introduces
+  check-only schemas for message/tree records, three view files, plan envelopes,
+  usage and metrics/evaluation telemetry. Legitimate missing legacy metadata stays
+  optional, extensions and nested opaque usage counters stay intact, and tree byte
+  sizes are recomputed as before. Plan semantic/project/revision validation remains
+  in TaskPlans. Evaluation storage and scheduling share one extracted schema.
+- Storage.acquire owns the lock in SessionStorage's existing session layer.
+  Constructor rollback releases it; repeated close returns the same Promise. Live
+  contention, stale socket probing, inode protection, private permissions, torn
+  JSON reporting/skipping, newline repair and backup/restart behavior remain.
+- Native append/node/view operations expose synchronous durable commit sections;
+  reads remain interruptible. New fault-injection tests verify write/fsync/close,
+  fresh-directory fsync before publication, temporary-view fsync/rename/directory
+  fsync, short writes, failed node fsync, failed view rename and immutable nodes.
+  An abort requested inside fsync cannot separate the saved append from its
+  in-memory publication; restart sees exactly the published record.
+- Existing legacy restart/corruption and real CLI backup tests pass unchanged.
+  The new stale-lock test kills a real socket owner before reopening, rather than
+  treating arbitrary non-socket files as safe stale locks.
+
+### 10b — memory
+
+- MemoryJobs supervises native compactor fibers in a parallel owner scope, while
+  Memory keeps the same indexed level/index ready queues, child availability,
+  early-message admission window and eight default slots. Session borrows runtime
+  services and starts recovery only after Runner installs the complete prompt and
+  tools. Native providers avoid the Promise bridge; injected models/build overrides
+  retain it and drain native cleanup on interruption.
+- The original compaction algorithm remains in memory.js. Exact copies make no
+  model request; generated summaries use complete source/context, five attempts,
+  the same byte-feedback conversation, shortest selection and immutable node
+  writes. A new native/legacy comparison asserts complete request conversations and
+  saved summaries agree. Existing main/compaction view, four-line block, UTF-8,
+  zoom-paging, most-due folding and upstream-alignment tests also pass.
+- Settle/drain coordinate through Effect callback subscriptions with listener
+  cleanup and compatible Boolean Promise adapters. Canceling a waiter leaves jobs
+  alive; stop interrupts all active jobs, waits for cleanup and is cached. Tests
+  hold all eight native cleanups, prove a ninth request never starts during shutdown,
+  prevent late node commits and recover unfinished work after reopening storage.
+- Failed jobs retain the new-input/explicit-settle retry policy. Advancing a borrowed
+  TestClock by six minutes causes no background retry. Native output limits keep
+  the existing incomplete-compactor diagnostic and never save partial text;
+  simultaneous cancellation/cleanup defects stay in private full-Cause diagnostics.
+- Node/change adapters deliver synchronously but isolate each observer and track
+  rejected async receipts without waiting for them. Audit/metrics errors do not
+  invalidate a committed node, block another observer or rewrite memory. The
+  independent memory view oracle now explicitly surfaces any assertion captured
+  by that observer adapter, retaining its original regression coverage.
+- The existing native-audio subprocess fixture initially missed its startup marker
+  during the persistence-only check; its isolated and full reruns passed. The final
+  combined check passes it. No audio fixture or production playback changes were made.
+
+The independent CPU-only benchmark uses 10,000 messages, 200 iterations and five
+rounds. Median snapshot: 0.002827085 ms; initialization: 1,037.910750 ms; saved-view
+restore: 4.966500 ms; pending-view restore: 11.356291 ms; idle pump: 0.000085 ms.
+Nodes/view parts remain 19,995/156 and idle-pump node reads remain zero. All
+measurements stay within the agreed baseline regression limits; the benchmark
+makes no API requests or filesystem writes and does not measure model throughput.
+
+Next is step 11, final composition and removal of obsolete scaffolding.

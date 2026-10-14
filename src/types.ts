@@ -24,6 +24,7 @@ export interface MemoryPort {
   configure?(system: string, tools: ToolDefinition[]): void;
   append(kind: MessageKind, text: string): unknown;
   settle(signal?: AbortSignal): Promise<boolean>;
+  settleEffect?(signal?: AbortSignal): Effect.Effect<boolean, unknown>;
   render(): string;
   zoom(id: number, n: number, page?: number): string;
   date(id: number): string;

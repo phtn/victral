@@ -127,7 +127,7 @@ export class Runner {
   private turnEffect(state: TurnState, signal: AbortSignal): Effect.Effect<void, TurnFailure> {
     return Effect.gen({ self: this }, function*() {
       if (signal.aborted) return yield* Effect.interrupt;
-      const ready = yield* turnFailure(toolPromise(actual => this.memory.settle(actual)), 'settle');
+      const ready = yield* turnFailure(this.memory.settleEffect ? this.memory.settleEffect(signal) : toolPromise(actual => this.memory.settle(actual)), 'settle');
       if (!ready) return yield* Effect.fail(new TurnFailure({ phase: 'settle', message: 'Memory compaction failed. Send another message to retry.', cause: undefined }));
       const messages = yield* this.attempt<Message[]>('callback', () => {
         state.settled = performance.now();

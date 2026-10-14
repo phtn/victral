@@ -1,4 +1,9 @@
 import { EventEmitter } from 'node:events';
+import * as Cause from 'effect/Cause';
+import * as Effect from 'effect/Effect';
+import * as Exit from 'effect/Exit';
+import { MemoryJobs, compactorChat } from './memory-effects.js';
+import { runToolEffect, toolPromise } from './tool-effects.js';
 import { NODE, VIEW, VIEW_MIN, COMPACT_VIEW, COMPACT_VIEW_MIN, JOBS, TRIES, CAP, bytes, cutBytes, splitText, capResult } from './constants.js';
 import { SummaryView, pairs, restoreParts } from './summary-view.js';
 import { systemPrompt } from './prompt.js';
@@ -48,7 +53,8 @@ export class Memory extends EventEmitter {
     this.ready = [];
     this.queued = new Set();
     this.remaining = 0;
-    this.busy = new Map();
+    this.supervisor = new MemoryJobs();
+    this.busy = this.supervisor.active;
     this.failures = new Set();
     this.stopped = false;
     this.builtThrough = 0;
@@ -109,7 +115,7 @@ export class Memory extends EventEmitter {
     const merged = this.mainView.fit(T);
     this.persistView();
     if (merged) this.syncCompact(true);
-    this.emit('change');
+    this.notify('change');
   }
   append(kind, text) {
     const chunks = kind === 'echo' ? [capResult(text)] : splitText(text);
@@ -178,86 +184,114 @@ export class Memory extends EventEmitter {
         const key = `${l}:${i}`;
         if (l === 0 && i - this.first() - [...this.builtAhead].filter(index => index < i).length >= this.jobs) break;
         queue.pop(); this.queued.delete(key);
-        const controller = new AbortController();
-        this.busy.set(key, { controller });
-        const promise = this.build(l, i, controller.signal).then(() => {
-          this.busy.delete(key); this.failures.delete(key); this.fit(); this.pump();
-        }).catch(error => {
-          if (this.stopped) { this.busy.delete(key); return; }
-          this.busy.delete(key); this.failures.add(key);
-          this.report(`Compactor ${key}: ${error.message}; retrying at the next message.`);
-          this.emit('change'); this.pump();
+        this.supervisor.launch(key, signal => this.build === Memory.prototype.build
+          ? this.buildEffect(l, i, signal)
+          : toolPromise(actual => this.build(l, i, actual), signal), exit => {
+          if (this.stopped) return;
+          let error;
+          if (Exit.isSuccess(exit)) {
+            try { this.failures.delete(key); this.fit(); this.pump(); return; }
+            catch (cause) { error = cause; this.supervisor.lastFailure = Cause.fail(cause); }
+          } else error = Cause.squash(exit.cause);
+          this.failures.add(key);
+          try { this.report(`Compactor ${key}: ${error instanceof Error ? error.message : 'Compaction failed'}; retrying at the next message.`); }
+          catch (cause) { this.observerFailure = cause; }
+          this.notify('change'); this.pump();
         });
-        const entry = this.busy.get(key);
-        if (entry) entry.promise = promise;
       }
     }
   }
-  async build(l, i, signal) {
-    const started = performance.now();
-    const source = l === 0
-      ? `${this.storage.root[i].kind}: ${this.storage.root[i].text}`
-      : `${this.node(l - 1, 2 * i).text}\n${this.node(l - 1, 2 * i + 1).text}`;
-    if (bytes(source) <= this.nodeBudget) {
-      this.saveNode(l, i, source);
-      this.emit('node', { l, i, generated: false, attempts: 0, source_bytes: bytes(source), summary_bytes: bytes(source), duration_ms: performance.now() - started });
-      return;
+  // Event adapters are synchronous for existing consumers, but each observer
+  // is isolated: audit/metrics failures cannot invalidate an immutable summary.
+  notify(event, value) {
+    for (const listener of this.rawListeners(event)) {
+      try {
+        const receipt = listener.call(this, value);
+        if (receipt && typeof receipt.then === 'function') void Promise.resolve(receipt).catch(cause => { this.observerFailure = cause; });
+      } catch (cause) { this.observerFailure = cause; }
     }
-    const contextEnd = l === 0 ? i : (i + 1) * 2 ** l;
-    this.syncCompact();
-    const contextParts = this.compactView.prefix(Math.min(contextEnd, this.first())).map(part => ({ ...part }));
-    const stepSource = l === 0 ? source : [this.node(l - 1, 2 * i).text, this.node(l - 1, 2 * i + 1).text].map(text => text.replace(/\r?\n/g, ' ')).join('\n');
-    const start = i * 2 ** l, n = 2 ** l;
-    const instruction = l === 0
-      ? `Compaction: compress message ${i} into one line of at most ${this.nodeBudget} bytes\n(about 70 words), the length of this ruler:\n${'-'.repeat(this.nodeBudget)}`
-      : `Compaction: merge lines ${start}+${n / 2} and ${start + n / 2}+${n / 2}, adjacent, into one line of at most\n${this.nodeBudget} bytes (about 70 words), the length of this ruler:\n${'-'.repeat(this.nodeBudget)}\n<chat> may hold their messages, ${start} to ${start + n - 1}, in more detail: take details\nof them from there too.`;
-    const step = `${instruction}\n<input>\n${stepSource}\n</input>`;
-    const messages = [
-      { role: 'system', content: this.system },
-      { role: 'user', content: [...viewBlocks(this.compactView.render(contextParts)), { type: 'text', text: step }] },
-    ];
-    const attempts = [];
-    for (let t = 0; t < TRIES; t++) {
-      const result = await this.model.chat(messages, { tools: this.tools, signal });
-      const line = result.message.content?.filter(block => block.type === 'text').map(block => block.text).join('').trim();
-      if (!line) throw new Error('Empty compactor response.');
-      if (result.finish_reason !== 'COMPLETE') throw new Error(`Incomplete compactor response: ${result.finish_reason}`);
-      attempts.push(line);
-      if (bytes(line) <= this.nodeBudget) break;
-      messages.push(result.message, { role: 'user', content: `Too long: your line is ${bytes(line)} bytes, over the ${this.nodeBudget}-byte limit. Write\nthe whole line again for the same <input>, cutting just enough of the\nleast valuable items to fit before this cut:\n${cutBytes(line, this.nodeBudget)}| ← LIMIT` });
-    }
-    if (signal.aborted) throw signal.reason;
-    const summary = attempts.reduce((a, b) => bytes(a) <= bytes(b) ? a : b);
-    this.saveNode(l, i, summary);
-    this.emit('node', { l, i, generated: true, context_parts: contextParts, attempts: attempts.length, source_bytes: bytes(source), summary_bytes: bytes(summary), duration_ms: performance.now() - started });
   }
-  settle(signal) {
-    this.retryFailed();
-    this.pump();
-    return new Promise(resolve => {
-      const check = () => {
-        const failed = !this.busy.size && this.failures.size && this.first() < this.storage.root.length;
-        if (signal?.aborted || this.stopped || failed || this.first() === this.storage.root.length) {
-          this.off('change', check); signal?.removeEventListener('abort', check);
-          resolve(!signal?.aborted && !this.stopped && !failed);
-        }
-      };
-      this.on('change', check); signal?.addEventListener('abort', check, { once: true }); check();
+  /** @returns {import('effect/Effect').Effect<void, unknown>} */
+  pumpEffect() {
+    return this.supervisor.borrow().pipe(Effect.andThen(Effect.try({ try: () => this.pump(), catch: cause => cause })));
+  }
+  build(l, i, signal) { return runToolEffect(this.buildEffect(l, i, signal), signal); }
+  /** @returns {import('effect/Effect').Effect<void, unknown>} */
+  buildEffect(l, i, signal) {
+    return Effect.gen({ self: this }, function*() {
+      const started = performance.now();
+      const source = l === 0
+        ? `${this.storage.root[i].kind}: ${this.storage.root[i].text}`
+        : `${this.node(l - 1, 2 * i).text}\n${this.node(l - 1, 2 * i + 1).text}`;
+      if (bytes(source) <= this.nodeBudget) {
+        this.saveNode(l, i, source);
+        this.notify('node', { l, i, generated: false, attempts: 0, source_bytes: bytes(source), summary_bytes: bytes(source), duration_ms: performance.now() - started });
+        return;
+      }
+      const contextEnd = l === 0 ? i : (i + 1) * 2 ** l;
+      this.syncCompact();
+      const contextParts = this.compactView.prefix(Math.min(contextEnd, this.first())).map(part => ({ ...part }));
+      const stepSource = l === 0 ? source : [this.node(l - 1, 2 * i).text, this.node(l - 1, 2 * i + 1).text].map(text => text.replace(/\r?\n/g, ' ')).join('\n');
+      const start = i * 2 ** l, n = 2 ** l;
+      const instruction = l === 0
+        ? `Compaction: compress message ${i} into one line of at most ${this.nodeBudget} bytes\n(about 70 words), the length of this ruler:\n${'-'.repeat(this.nodeBudget)}`
+        : `Compaction: merge lines ${start}+${n / 2} and ${start + n / 2}+${n / 2}, adjacent, into one line of at most\n${this.nodeBudget} bytes (about 70 words), the length of this ruler:\n${'-'.repeat(this.nodeBudget)}\n<chat> may hold their messages, ${start} to ${start + n - 1}, in more detail: take details\nof them from there too.`;
+      const step = `${instruction}\n<input>\n${stepSource}\n</input>`;
+      const messages = [
+        { role: 'system', content: this.system },
+        { role: 'user', content: [...viewBlocks(this.compactView.render(contextParts)), { type: 'text', text: step }] },
+      ];
+      const attempts = [];
+      for (let t = 0; t < TRIES; t++) {
+        const result = yield* compactorChat(this.model, messages, this.tools, signal);
+        const line = result.message.content?.filter(block => block.type === 'text').map(block => block.text).join('').trim();
+        if (!line) throw new Error('Empty compactor response.');
+        if (result.finish_reason !== 'COMPLETE') throw new Error(`Incomplete compactor response: ${result.finish_reason}`);
+        attempts.push(line);
+        if (bytes(line) <= this.nodeBudget) break;
+        messages.push(result.message, { role: 'user', content: `Too long: your line is ${bytes(line)} bytes, over the ${this.nodeBudget}-byte limit. Write\nthe whole line again for the same <input>, cutting just enough of the\nleast valuable items to fit before this cut:\n${cutBytes(line, this.nodeBudget)}| ← LIMIT` });
+      }
+      signal?.throwIfAborted();
+      const summary = attempts.reduce((a, b) => bytes(a) <= bytes(b) ? a : b);
+      this.saveNode(l, i, summary);
+      this.notify('node', { l, i, generated: true, context_parts: contextParts, attempts: attempts.length, source_bytes: bytes(source), summary_bytes: bytes(summary), duration_ms: performance.now() - started });
     });
   }
-  async drain(signal) {
-    while (!this.stopped && !signal?.aborted) {
-      this.pump();
-      if (this.remaining === 0) return true;
-      if (!this.busy.size && this.failures.size) return false;
-      await new Promise(resolve => {
-        const done = () => { this.off('change', done); signal?.removeEventListener('abort', done); resolve(); };
-        this.once('change', done); signal?.addEventListener('abort', done, { once: true });
-        if (this.stopped || signal?.aborted) done();
-      });
-    }
-    return false;
+  /** @returns {import('effect/Effect').Effect<boolean, unknown>} */
+  settleEffect(signal) {
+    return Effect.gen({ self: this }, function*() {
+      this.retryFailed(); yield* this.pumpEffect();
+      return yield* this.waitEffect(() => {
+        const failed = !this.busy.size && this.failures.size && this.first() < this.storage.root.length;
+        return signal?.aborted || this.stopped || failed || this.first() === this.storage.root.length
+          ? !signal?.aborted && !this.stopped && !failed : undefined;
+      }, signal);
+    });
   }
+  /** @returns {import('effect/Effect').Effect<boolean, unknown>} */
+  drainEffect(signal) {
+    return Effect.gen({ self: this }, function*() {
+      if (this.stopped || signal?.aborted) return false;
+      yield* this.pumpEffect();
+      return yield* this.waitEffect(() => {
+        if (this.stopped || signal?.aborted) return false;
+        if (this.remaining === 0) return true;
+        if (!this.busy.size && this.failures.size) return false;
+        return undefined;
+      }, signal);
+    });
+  }
+  /** @returns {import('effect/Effect').Effect<boolean>} */
+  waitEffect(ready, signal) {
+    return Effect.callback(resume => {
+      const check = () => { const value = ready(); if (value !== undefined) { remove(); resume(Effect.succeed(Boolean(value))); } };
+      const remove = () => { this.off('change', check); signal?.removeEventListener('abort', check); };
+      this.on('change', check); signal?.addEventListener('abort', check, { once: true }); check();
+      return Effect.sync(remove);
+    });
+  }
+  settle(signal) { return Effect.runPromise(this.settleEffect(signal)); }
+  drain(signal) { return Effect.runPromise(this.drainEffect(signal)); }
   zoom(id, n, page = 0) {
     if (!Number.isSafeInteger(id) || id < 0 || !Number.isSafeInteger(n) || n < 1 || !Number.isInteger(Math.log2(n)) || id % n || id + n > this.storage.root.length) return `No line ${id}+${n}.`;
     if (!Number.isSafeInteger(page) || page < 0 || (n !== 1 && page)) return 'Pages are nonnegative integers for single messages only.';
@@ -274,12 +308,8 @@ export class Memory extends EventEmitter {
     return `${id}+${n / 2}|${a.text.replace(/\r?\n/g, ' ')}\n${id + n / 2}+${n / 2}|${b.text.replace(/\r?\n/g, ' ')}`;
   }
   date(id) { return this.storage.root[id] ? new Date(this.storage.root[id].date).toLocaleString() : `No message ${id}.`; }
-  async stop() {
-    this.stopped = true;
-    const promises = [];
-    for (const entry of this.busy.values()) { entry.controller.abort(); if (entry.promise) promises.push(entry.promise); }
-    this.emit('change');
-    await Promise.allSettled(promises);
-    this.busy.clear();
+  stop() {
+    this.stopped = true; this.notify('change');
+    return this.supervisor.close();
   }
 }

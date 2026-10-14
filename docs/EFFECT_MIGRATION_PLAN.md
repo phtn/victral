@@ -5,11 +5,11 @@ configuration and Schema-guide changes. This is an implementation backlog.
 
 ## Implementation status
 
-Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0–9 are complete,
+Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0–10 are complete,
 including MCP configuration, task plans, audio settings and tool registries for
 browsing, file/Git reads, mutations, commands, workers/MCP and the batch envelope.
 These boundaries use the pinned published Effect 4.0.2 dependency. The latest
-change passes 366 tests across 39 files, typecheck and build; legacy rendering,
+change passes 383 tests across 41 files, typecheck and build; legacy rendering,
 browsing/read/mutation output, file bytes/modes, Git/command arguments and
 provider request/tool fixtures match unchanged.
 Worker prompts/reports and MCP requests/redaction match their legacy fixtures.
@@ -52,7 +52,15 @@ judgments, restart recovery and the exact two-retry transient-status policy.
 Borrowed TestClock tests prove 1/2-second backoff and per-attempt deadlines;
 shutdown drains native cleanup and leaves canceled jobs recoverable. Evaluation
 workflow events share the isolated audio observer; the Session default is silent.
-Next: step 10a, persistence, followed by 10b, memory scheduling.
+Step 10a converts storage to TypeScript with extensible record/view schemas,
+scoped lock ownership and synchronous durable commit adapters. Fault-injection tests
+verify write/fsync/publish ordering, failed writes and atomic view replacement.
+Step 10b supervises compactions and settle/drain coordination in scoped Effects.
+The indexed scheduler, eight-slot window, complete prompts, shortest summaries,
+immutable nodes and new-input retry policy retain their existing behavior. Native
+waiter cancellation leaves background jobs alive; stop drains cleanup before restart.
+Node/change adapters isolate audit/metrics observers from compaction.
+Next: step 11, final composition and removal of obsolete scaffolding.
 
 See the [baseline and frozen fixtures](EFFECT_MIGRATION_BASELINE.md),
 [Schema patterns](../agent-patterns/effect-schema.md) and
@@ -351,15 +359,15 @@ Split this phase into two reviewable changes and complete them in order.
 
 ### 10a. Persistence
 
-- [ ] Convert storage to TypeScript with schemas for message/tree records, view
+- [x] Convert storage to TypeScript with schemas for message/tree records, view
       state, plans, and telemetry. Retain compatibility with legitimate older
       records and explicitly distinguish required fields from extensible metadata.
-- [ ] Preserve append-only logs, immutable nodes, file permissions, short-write
+- [x] Preserve append-only logs, immutable nodes, file permissions, short-write
       failures, fsync ordering, atomic view replacement, lock recovery, and backups.
-- [ ] Define durable commit sections carefully: interruption must not strand a
+- [x] Define durable commit sections carefully: interruption must not strand a
       partially committed in-memory/disk state. Do not make every storage
       operation uninterruptible; limit it to the required commit boundary.
-- [ ] Keep synchronous adapters until callers have migrated. Replacing fsync
+- [x] Keep synchronous adapters until callers have migrated. Replacing fsync
       persistence with async platform APIs is a separate design decision.
 
 **Gate:** legacy restart, corrupt-state handling, lock contention, backup,
@@ -367,14 +375,14 @@ short/failed writes, and commit-order tests demonstrate identical guarantees.
 
 ### 10b. Memory
 
-- [ ] Move compactor jobs, settle/drain coordination, and shutdown to supervised
+- [x] Move compactor jobs, settle/drain coordination, and shutdown to supervised
       effects while keeping the memory algorithm and ready-queue ordering intact.
-- [ ] Preserve eight concurrent compactions, exact-copy handling, shortest-summary
+- [x] Preserve eight concurrent compactions, exact-copy handling, shortest-summary
       selection, byte budgets, immutable committed nodes, and retries triggered
       by a new message rather than a background timer.
-- [ ] Keep main/compaction view ranges, four-line cache blocks, complete source
+- [x] Keep main/compaction view ranges, four-line cache blocks, complete source
       context, prompt bytes, UTF-8 splitting, and zoom paging unchanged.
-- [ ] Convert event delivery through adapters without making audits/metrics part
+- [x] Convert event delivery through adapters without making audits/metrics part
       of the agent memory or blocking compaction on observers.
 
 **Gate:** memory and upstream-alignment tests pass; baseline fixtures show the

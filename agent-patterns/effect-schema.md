@@ -668,3 +668,40 @@ metadata. Its job envelope remains compatible with queued/running legacy records
 Keep HTTP status as a typed failure field; parsing diagnostic text is confined to
 the compatibility adapter for injected legacy Promise audits. Schema failures,
 timeouts, network failures and cleanup defects must not become transient retries.
+
+## Durable storage schemas preserve legacy metadata
+
+[Storage schemas](../src/storage-schema.ts) adapt the vendored `StructWithRest`,
+`Tuple` and `optional` patterns. Message records require a safe nonnegative ID,
+known message kind and string text. Tree records require safe nonnegative
+coordinates and string text. Legacy size/date fields remain optional; tree sizes
+are recomputed from UTF-8 bytes exactly as before. Unknown metadata and native
+usage counters remain intact through check-only parsing of the original object.
+
+```ts
+const Index = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+const Message = Schema.StructWithRest(Schema.Struct({
+  i: Index,
+  kind: Schema.Literals(['user', 'talk', 'tool', 'echo', 'work', 'note']),
+  text: Schema.String,
+  date: Schema.optional(Schema.String)
+}), [Schema.Record(Schema.String, Schema.Unknown)])
+const Pair = Schema.Tuple([Index.check(Schema.isLessThanOrEqualTo(52)), Index])
+const View = Schema.Array(Pair)
+```
+
+This is adapted from the storage implementation and vendored Schema examples.
+Schema checks a view's pair syntax; `restoreParts` still checks contiguous coverage,
+history bounds and required saved nodes. Storage validates plan field shapes without
+trimming strings or moving project-specific semantic/revision validation out of
+TaskPlans. Usage payloads remain opaque dictionaries and support the previous
+nullable usage field. Telemetry envelopes have consumed fields plus extension
+metadata; [evaluation schemas](../src/evaluation-schema.ts) are shared by storage
+and the evaluation scheduler instead of duplicated.
+
+Distinguish torn JSON from valid JSON with invalid fields. Torn lines retain the
+existing report/skip and newline repair; structurally corrupt records fail visibly
+with backup instructions, rather than being silently projected or dropped. Keep
+schema diagnostics free of record text. Never encode a normalized projection over
+a legacy log record, manufacture missing metadata, or accept new shape requirements
+without checking real legacy fixtures.

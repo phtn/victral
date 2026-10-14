@@ -538,3 +538,57 @@ Tests borrow `effect/testing/TestClock` using `pumpEffect`; this follows vendore
 second testing package. Advancing 999/1/1999/1ms verifies both delay boundaries
 and the exact three-call ceiling. Offline fixtures also verify worker capacity,
 shutdown/restart, cancellation during backoff, deadlines and probability bounds.
+
+## Synchronous durable commits and scoped storage
+
+[Storage](../src/storage.ts) keeps the synchronous adapter required by memory,
+plan and telemetry callbacks. `Storage.acquire` follows the vendored acquire/release
+pattern and the SessionStorage service owns it in the session layer. Construction
+rollback releases the lock, preserving both construction and cleanup errors if both
+fail. Closing is cached. The socket lock retains live-contention rejection, stale
+socket probing and inode-change protection.
+
+Native append/node/view effects wrap only the synchronous durable operation as an
+uninterruptible section. There is no yield between writing, fsync, closing the file,
+fsyncing a newly created parent entry, and publishing the record in memory. Views
+write/fsync/close a private temporary file, rename, then fsync the directory. Reads
+remain interruptible Effect operations; no async filesystem/fsync replacement is
+introduced. Fault-injection tests verify exact order, permissions, short writes,
+failed fsync/rename, immutable nodes and an interruption requested during fsync.
+
+Do not publish before a durable write succeeds, put an interruptible Promise between
+write and publish, or make an entire session uninterruptible. A failed append can
+leave bytes requiring the existing restart recovery; this migration does not turn
+append-only logs into transactional rewrites. View coverage and compaction ranges
+still belong to the original pure restore/view algorithms.
+
+## Supervised compactions preserve the indexed scheduler
+
+[MemoryJobs](../src/memory-effects.ts) owns compactor fibers in a parallel scope.
+[Memory](../src/memory.js) keeps its existing level/index heaps, source eligibility,
+early-message admission window and eight default active slots. Effect is responsible
+for job lifetimes, not for selecting a different candidate order. Both native and
+legacy compactor models retain the same prompt/tools/context and five attempts with
+byte feedback, selecting the shortest complete summary. Native output limits retain
+the legacy incomplete-response diagnostic; compound cleanup failures never become
+successful partial summaries.
+
+Session calls native `pumpEffect` only after Runner configuration installs the
+complete system prompt and tool schema. The owner borrows runtime services once;
+completed turns and canceled settle/drain waiters leave compactions alive. Native
+provider effects use the owner scope directly. Injected legacy Promise models and
+build overrides use the draining `toolPromise` adapter, with native signal policy
+restored before job execution. Slots stay occupied until native cleanup finishes.
+
+Settle/drain use scoped callback subscriptions, remove listeners on every exit and
+retain their existing Boolean Promise adapters. Stop requests interruption of all
+active fibers, awaits them and is cached; canceled jobs are reconstructed from the
+unchanged saved history/node set after restart. Ordinary failures retry on new input
+or an explicit settle request, with no background retry timer. Full Causes remain
+in owner diagnostics rather than chat or persisted memory.
+
+Node/change event adapters retain synchronous delivery and once-listener behavior,
+but isolate each observer and observe rejected async receipts without waiting for
+them. Audit/metrics failures cannot invalidate a committed immutable node or prevent
+another observer from running. Summary bytes, view folding, four-line cache blocks,
+UTF-8 splitting and zoom paging remain in their original pure implementations.
