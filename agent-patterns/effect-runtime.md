@@ -1,6 +1,6 @@
 # Effect runtime patterns for Victral
 
-The initial dependency is pinned to `effect@4.0.2`. Consult the read-only v4
+The dependency is pinned to `effect@4.0.2`. Consult the read-only v4
 checkout under `repos/effect`, then compile against the installed package.
 Import from `effect` or its public modules, never from the checkout. Prefer
 public module imports such as `effect/Schema` in production boundaries to limit
@@ -11,13 +11,13 @@ cold module loading with the application's external-package Bun build.
 Follow the vendored [service example](../repos/effect/ai-docs/src/01_effect/03_services/01_service.ts):
 extend `Context.Service` with a package-qualified identifier, implement traced
 methods with `Effect.fn`, and provide implementations through `Layer`. Keep
-pure helpers as ordinary functions. `src/core/legacy-ports.ts` is the initial
-compiled application example; its tests provide a fake layer with existing
-`ModelPort` and `AgentTools` implementations.
+pure helpers as ordinary functions. The production examples are
+[ProviderModel](../src/providers/core.ts), [Session services](../src/core/session-services.ts),
+and the Schema-backed [tool registry](../src/tool-registry.ts). Tests exercise fake
+implementations of these actual boundaries rather than a parallel migration-only
+service.
 
-`LegacyPorts.layer` borrows ports and adapts methods only. It does not acquire
-ownership or call `close()`. Session now owns one `ManagedRuntime`, following the
-vendored
+Session owns one `ManagedRuntime`, following the vendored
 [integration example](../repos/effect/ai-docs/src/04_integration/10_managed-runtime.ts).
 Do not add a runtime per turn, tool call, model switch or worker request.
 
@@ -64,7 +64,7 @@ The runtime and these resources live for the entire session. Runner cancellation
 still controls the originating turn's AbortSignal. Completed turns do not dispose
 the runtime, close integrations or stop allowed background commands. Worker
 Runners and command jobs retain their existing step limits, deadlines and session
-cleanup. Their Effect supervision belongs to later migration steps.
+cleanup. Their scoped Effect owners drain native cleanup before releasing capacity.
 
 `Session.close()` marks the session closed immediately, disposes the runtime,
 emits `closed` once after finalization, and returns the same promise on every call,
@@ -117,21 +117,21 @@ the service does not listen to Runner/UI events or parse their display strings.
 
 ## Promise and AbortSignal boundaries
 
-`fromAbortablePromise` adapts a possibly failing Promise through
-`Effect.tryPromise({ try, catch })`. It is lazy and catches both synchronous
-throws and Promise rejections. Always pass its supplied AbortSignal into the
-actual operation. An interrupted waiting fiber cannot stop an SDK, stream or
-process that ignores cancellation. Resource-owning adapters also need scoped
-finalizers; `tryPromise` does not acquire ownership or wait for arbitrary
-legacy cleanup to finish.
+Use `Effect.tryPromise({ try, catch })` for plain Promise acquisition/reads only
+when its scope already owns all required cleanup. Pass Effect's supplied signal
+into actual I/O. It does not drain arbitrary pending native work on interruption.
+Resource-owning Promise bridges use [toolPromise](../src/tool-effects.ts), whose
+interruption finalizer aborts and awaits native cleanup. Provider/HTTP/MCP boundaries
+own their acquisition and body readers in scopes.
 
-`toLegacyPromise` runs already-provided effects outside a Session. It
-checks a pre-aborted signal before executing any side effects, and uses
-`runPromiseExit` so structured causes survive. It rejects only after Effect
-scope finalizers finish. Session edges use their ManagedRuntime runners and
-the shared `legacyExitValue` cause handling. Runtime disposal is executed outside
-the runtime itself, as `ManagedRuntime.dispose()` does, so it can finish closing
-the managed scope and interrupt/await any runtime-owned fibers.
+`runToolEffect` and provider public adapters run already-provided effects outside a
+Session. They check pre-aborted signals, use `runPromiseExit` and preserve complete
+Causes. Native session effects execute in the session ManagedRuntime, including
+settle/drain coordination; its only external disposal runner closes the runtime
+itself, as `ManagedRuntime.dispose()` does. No new runtime is allocated per call.
+The removed `LegacyPorts` service and generic foundation Promise helpers had no
+remaining application consumers. Intentional `cli.js`/`runner.js` entry points,
+Promise APIs, synchronous durable writes and injected-model/tool bridges remain.
 
 The adapters preserve callbacks, result objects, provider definitions, selected
 models and call counts. They add no retries, deadlines, fallback models or
@@ -143,17 +143,15 @@ use Effect's signal inside operations.
 `src/core/errors.ts` defines `ValidationError`, `IOError`, `TimeoutError`,
 `ProtocolError`, `ToolAccessDenied` and `ToolExecutionError`. Use tagged errors
 for expected outcomes that callers need to distinguish. A validation error
-retains its Schema cause and an application-owned safe message. The temporary
-legacy model/tool adapters retain unclassified Promise failures as `IOError`
-or `ToolExecutionError`; do not classify legacy failures by matching display
-strings. Add domain-specific failures when the implementations migrate.
+retains its Schema cause and an application-owned safe message. Providers, storage,
+turns, commands and other external boundaries define their domain failures. Do not
+classify failures by matching display strings, except the documented compatibility
+adapter for externally injected legacy Jev HTTP errors.
 
-The temporary `sessionExitValue` adapter preserves a lone legacy startup/model
-failure's original Promise error and message; instruction, model and saved-plan
-diagnostics therefore remain compatible. It never classifies errors by matching
-their messages. Combined failures use fixed application messages and retain the
-complete Cause. Provider/storage acquisition failure types will migrate at their
-own boundaries rather than being guessed during this ownership change.
+`sessionExitValue` is an intentional public-boundary adapter. It preserves lone
+startup/model failures and compatible instruction/model/plan diagnostics. Combined
+failures use fixed application messages and retain the complete Cause. Native
+provider/storage error classification remains at its own boundary.
 
 `releaseSessionResource` wraps cleanup causes in `IOError` with a constant
 operation name and uses `orDie` for the finalizer's non-failing type. A cleanup
@@ -332,9 +330,10 @@ An expected abort rejection belongs to interruption; a different failure during
 drain remains a cleanup defect. Promise edges retain existing domain messages;
 compound causes must never be squashed into a nominally successful tool result.
 
-`AgentTools.executeEffect` is optional for legacy/fake ports. `LegacyPorts` prefers
-it, maps typed failures with `catchCause`/`Cause.map`, and keeps defects and
-interruption. It continues borrowing toolset ownership. Apply read-only guards
+`AgentTools.executeEffect` is optional for legacy/fake ports. Runner and Session
+prefer it within their existing runtime; injected Promise ports retain the draining
+adapter. Typed failure translation uses `catchCause`/`Cause.map` and preserves
+defects and interruption. The toolset owner remains unchanged. Apply read-only guards
 to both public entry points, and keep MCP permission checks inside execution.
 
 [parallelTools](../src/parallel-tools.ts) prepares every nested invocation before
@@ -592,3 +591,51 @@ but isolate each observer and observe rejected async receipts without waiting fo
 them. Audit/metrics failures cannot invalidate a committed immutable node or prevent
 another observer from running. Summary bytes, view folding, four-line cache blocks,
 UTF-8 splitting and zoom paging remain in their original pure implementations.
+
+
+## Final session composition and contributor example
+
+The session layer publishes the same acquired objects as SessionStorage,
+SessionMemory, SessionEvaluations and SessionMetrics, alongside settings, model
+construction, the silent audio layer and the UI Session instance. Context bindings
+do not acquire duplicate owners. The existing handoff flags are deliberate: the
+resource factories can fail between integration/worker acquisition and ownership
+transfer to the toolset. Removing those guards would double-close shared resources
+or leak a partial acquisition; startup-failure tests cover every transfer point.
+
+Use native operations within that runtime after its layer is acquired:
+
+```ts
+import * as Effect from 'effect/Effect'
+import { SessionMemory } from './core/session-services.js'
+
+const settledView = Effect.gen(function*() {
+  const memory = yield* SessionMemory
+  yield* memory.settleEffect()
+  return memory.render()
+})
+// Execute from the existing session runtime; do not construct another runtime.
+```
+
+Session settle composes worker drain, late parent handling, memory settle and a
+60-second audit-drain wait. The wait deadline unsubscribes without canceling audit
+jobs. Caller interruption still cancels/drains workers, while memory/audit waiters
+leave their background owners alive until session shutdown. Evaluation's own
+per-attempt 60-second deadline remains independent.
+
+CLI EOF finishes pending input and late reports before settling. Explicit piped
+`/exit` finishes previously accepted input and ignores later lines before closing.
+Its pending-input Set is an intentional external adapter receipt tracker, not a
+second resource owner. Slash-command native tools execute in the session runtime. SIGINT cancels
+an ask and retains exit status 130 even when its canceled-turn diagnostic arrives
+later. SIGTERM requests the cached close; CLI finally awaits it and reports cleanup
+failure once. The TUI uses the small snapshot/event interface and observes close
+rejections before exiting; unmount removes listeners and restores raw input.
+
+Metrics aggregation/formatting remain ordinary incremental code. Their synchronous
+persistence callbacks already use validated, durable Storage methods; wrapping each
+callback in a new asynchronous fiber would break publish/write ordering. UI batching,
+copy-feedback/demo timers and native process/player/regex watchdogs remain deliberate
+presentation/native-boundary mechanisms, not superseded workflow retry timers.
+Origin AbortControllers also remain where public signals and background-job
+cancellation require them. Never remove these merely because a fiber also exists.

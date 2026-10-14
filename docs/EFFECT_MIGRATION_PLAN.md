@@ -1,15 +1,15 @@
 # Effect integration plan
 
 Prepared October 10, 2026 for Victral at `ba82ad30e`, including the pending
-configuration and Schema-guide changes. This is an implementation backlog.
+configuration and Schema-guide changes. This records the completed implementation backlog.
 
 ## Implementation status
 
-Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0–10 are complete,
+Migration began October 10, 2026 from `c0f9a7d3e`. Steps 0–11 are complete,
 including MCP configuration, task plans, audio settings and tool registries for
 browsing, file/Git reads, mutations, commands, workers/MCP and the batch envelope.
 These boundaries use the pinned published Effect 4.0.2 dependency. The latest
-change passes 383 tests across 41 files, typecheck and build; legacy rendering,
+change passes 387 tests across 41 files, typecheck and build; legacy rendering,
 browsing/read/mutation output, file bytes/modes, Git/command arguments and
 provider request/tool fixtures match unchanged.
 Worker prompts/reports and MCP requests/redaction match their legacy fixtures.
@@ -60,7 +60,12 @@ The indexed scheduler, eight-slot window, complete prompts, shortest summaries,
 immutable nodes and new-input retry policy retain their existing behavior. Native
 waiter cancellation leaves background jobs alive; stop drains cleanup before restart.
 Node/change adapters isolate audit/metrics observers from compaction.
-Next: step 11, final composition and removal of obsolete scaffolding.
+Step 11 publishes memory/evaluation/metrics owners alongside the other session
+services and composes native session/command drain operations in that runtime.
+The unused LegacyPorts foundation adapter is removed; intentional JS entry points,
+public Promise adapters and synchronous commits remain. CLI cancellation retains
+status 130, piped exit drains accepted input, and TUI close errors are observed.
+All migration steps are complete. See the [final architecture](ARCHITECTURE.md).
 
 See the [baseline and frozen fixtures](EFFECT_MIGRATION_BASELINE.md),
 [Schema patterns](../agent-patterns/effect-schema.md) and
@@ -391,15 +396,15 @@ within the agreed limits. Any algorithm change needs a separate proposal.
 
 ## 11. Finish composition and remove obsolete scaffolding
 
-- [ ] Compose the migrated services in Session and simplify CLI startup,
+- [x] Compose the migrated services in Session and simplify CLI startup,
       cancellation, and shutdown around runtime ownership.
-- [ ] Retain a small event/snapshot adapter for Octane/Ink. Convert metrics I/O
+- [x] Retain a small event/snapshot adapter for Octane/Ink. Convert metrics I/O
       where useful, while keeping pure aggregation and formatting ordinary code.
-- [ ] Remove superseded AbortControllers, timers, manual resource tracking, and
+- [x] Remove superseded AbortControllers, timers, manual resource tracking, and
       broad error casts only after their replacement is covered by tests.
-- [ ] Remove temporary compatibility shims once all consumers migrate. Preserve
+- [x] Remove temporary compatibility shims once all consumers migrate. Preserve
       any intentional public JS re-export entry points used by integrations.
-- [ ] Update architecture documentation, the Schema guide, and contributor
+- [x] Update architecture documentation, the Schema guide, and contributor
       examples to describe the final service boundaries and lifetime rules.
 
 **Gate:** application checks, build, benchmark comparison, and CLI/TUI scenarios

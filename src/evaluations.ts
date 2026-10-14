@@ -156,18 +156,22 @@ export class Evaluations extends EventEmitter {
       self.event(job, canceled ? 'canceled' : 'failed', signal);
     })), Effect.catchCause(() => Effect.void));
   }
-  async drain(signal?: AbortSignal): Promise<boolean> {
-    if (!this.enabled || this.closed) return false;
-    this.pump();
-    while (this.queue.length || this.active.size) {
-      if (signal?.aborted || this.closed) return false;
-      await new Promise<void>(resolve => {
-        const done = () => { this.off('idle', done); signal?.removeEventListener('abort', done); resolve(); };
-        this.once('idle', done); signal?.addEventListener('abort', done, { once: true });
+  drainEffect(signal?: AbortSignal): Effect.Effect<boolean> {
+    return Effect.gen({ self: this }, function*() {
+      if (!this.enabled || this.closed) return false;
+      yield* this.pumpEffect();
+      return yield* Effect.callback<boolean>(resume => {
+        const remove = () => { this.off('idle', check); signal?.removeEventListener('abort', check); };
+        const check = () => {
+          if (signal?.aborted || this.closed) { remove(); resume(Effect.succeed(false)); }
+          else if (!this.queue.length && !this.active.size) { remove(); resume(Effect.succeed(true)); }
+        };
+        this.on('idle', check); signal?.addEventListener('abort', check, { once: true }); check();
+        return Effect.sync(remove);
       });
-    }
-    return true;
+    });
   }
+  drain(signal?: AbortSignal): Promise<boolean> { return Effect.runPromise(this.drainEffect(signal)); }
   close(): Promise<void> {
     if (this.closing) return this.closing;
     this.closed = true; this.memory.off('node', this.nodeListener);

@@ -7,7 +7,6 @@ import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import * as Schema from 'effect/Schema';
 import { CommandTools, readCommandOutput } from '../src/command-tools.js';
-import { LegacyPorts } from '../src/core/legacy-ports.js';
 import { ToolExecutionError, ValidationError } from '../src/core/errors.js';
 import { parallelTools } from '../src/parallel-tools.js';
 import { toolPromise } from '../src/tool-effects.js';
@@ -148,18 +147,16 @@ test('native worker execution enforces write restrictions before I/O', async () 
   expect(await fs.readdir(root)).toEqual([]);
 });
 
-test('the borrowed tool service prefers native execution and retains typed failures', async () => {
+test('the registry prefers native execution and retains typed failures', async () => {
   let native = 0, legacy = 0;
-  const tools: AgentTools = { definitions: [], async execute() { legacy++; return 'legacy'; },
-    executeEffect() { native++; return Effect.fail(new Error('private execution detail')); } };
-  const model = { model: 'fake', async stream() { return { message: { role: 'assistant', content: '' } }; } };
-  const exit = await Effect.runPromiseExit(Effect.gen(function*() {
-    const ports = yield* LegacyPorts; return yield* ports.tools.execute('read_file', {});
-  }).pipe(Effect.provide(LegacyPorts.layer(model, tools))));
+  const failure = new ToolExecutionError({ tool: 'read_file', cause: new Error('private execution detail') });
+  const registry = new ToolRegistry([schemaTool({ name: 'read_file', schema: Schema.Record(Schema.String, Schema.Unknown), capabilities: ['read'],
+    execute: () => { legacy++; return 'legacy'; }, executeEffect: () => { native++; return Effect.fail(failure); },
+  })], ['read']);
+  const exit = await Effect.runPromiseExit(registry.executeEffect('read_file', {}));
   expect(native).toBe(1); expect(legacy).toBe(0);
-  expect(Exit.isFailure(exit) && Cause.squash(exit.cause) instanceof ToolExecutionError).toBe(true);
+  expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBe(failure);
 });
-
 
 test('native blocked-write interruption returns only after process and stdin cleanup', async () => {
   const tools = projectTools(memory, await directory(), { allowShell: true }); owners.push({ close: () => tools.close!() });

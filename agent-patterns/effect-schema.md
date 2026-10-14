@@ -705,3 +705,32 @@ with backup instructions, rather than being silently projected or dropped. Keep
 schema diagnostics free of record text. Never encode a normalized projection over
 a legacy log record, manufacture missing metadata, or accept new shape requirements
 without checking real legacy fixtures.
+
+## Final service boundaries
+
+Use the production service keys in [Session composition](../src/core/session-services.ts)
+and the [tool registry](../src/tool-registry.ts). The unused foundation LegacyPorts
+service has been removed. Validate unknown input once before acquisition/execution;
+then pass inferred domain values into the native Effect handler. A minimal registry
+entry illustrates the same binding used by production tools:
+
+```ts
+import * as Effect from 'effect/Effect'
+import * as Schema from 'effect/Schema'
+import { schemaTool, ToolRegistry } from './tool-registry.js'
+
+const Echo = Schema.Struct({ text: Schema.String })
+const registry = new ToolRegistry([schemaTool({
+  name: 'echo', schema: Echo, capabilities: ['read'],
+  execute: args => args.text,
+  executeEffect: args => Effect.succeed(args.text)
+})], ['read'])
+const invocation = registry.executeEffect('echo', { text: 'literal data' })
+```
+
+This example uses application-owned literal data, not an instruction interpreter.
+Real tool names/capabilities must follow the existing allowlists. Do not build a
+second generic port service, cast unknown arguments after decoding, or normalize
+opaque wire/storage metadata while composing layers. The final
+[architecture](../docs/ARCHITECTURE.md) and [runtime examples](effect-runtime.md)
+describe the ownership rules that accompany these typed boundaries.

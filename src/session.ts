@@ -20,12 +20,12 @@ import { projectTools, readOnlyProjectTools } from './tools.js';
 import { errorMessage, type ModelPort, type ToolActivity, type TurnRecord } from './types.js';
 import type { JevStatus } from './jev-status.js';
 import { COMMANDS } from './session-commands.js';
-import { SessionSettings, SessionModels, SessionStorage, releaseSessionResource, sessionExitValue, type ModelOptions } from './core/session-services.js';
+import { SessionSettings, SessionModels, SessionStorage, SessionMemory, SessionEvaluations, SessionMetrics, releaseSessionResource, sessionExitValue, type ModelOptions } from './core/session-services.js';
 import { AudioNotifications } from './sfx/notifications.js';
 import { workflowAudioObserver } from './sfx/workflow.js';
 export { COMMANDS } from './session-commands.js';
 
-type SessionEnvironment = SessionSettings | SessionModels | SessionStorage | SessionInstance | AudioNotifications;
+type SessionEnvironment = SessionSettings | SessionModels | SessionStorage | SessionMemory | SessionEvaluations | SessionMetrics | SessionInstance | AudioNotifications;
 type SessionRuntime = ManagedRuntime.ManagedRuntime<SessionEnvironment, unknown>;
 export interface SessionOptions {
   project: string; chatDir: string; model: string; compactorModel: string;
@@ -105,7 +105,6 @@ export class Session extends EventEmitter {
           if (record.kind === 'user' || record.kind === 'talk') self.add(record.kind === 'user' ? 'you' : 'victral', record.text, false);
         }
         evaluations.on('update', self.evaluationListener);
-        evaluations.pump();
       }, catch: cause => cause });
       yield* memory.pumpEffect();
     });
@@ -137,7 +136,8 @@ export class Session extends EventEmitter {
       const metrics = yield* Effect.try({ try: () => ownedMetrics = new Metrics(storage, memory, evaluations), catch: cause => cause });
       const session = new Session(options, storage, memory, evaluations, metrics, runtime);
       yield* session.initialize(model, integrations, () => { integrationsTransferred = true; });
-      return Context.make(SessionInstance, session).pipe(Context.add(SessionStorage, storage));
+      return Context.make(SessionInstance, session).pipe(Context.add(SessionStorage, storage),
+        Context.add(SessionMemory, memory), Context.add(SessionEvaluations, evaluations), Context.add(SessionMetrics, metrics));
     })).pipe(Layer.provideMerge(Layer.mergeAll(Layer.succeed(SessionSettings, options), SessionModels.layer, AudioNotifications.layerSilent)));
     const runtime: SessionRuntime = ManagedRuntime.make(layer);
     const exit = await runtime.runPromiseExit(SessionInstance);
@@ -186,13 +186,18 @@ export class Session extends EventEmitter {
     this.phase = this.turn?.status === 'error' ? 'Turn failed' : this.turn?.status === 'canceled' ? 'Canceled' : 'Ready';
     this.update(); this.emit('idle');
   }
+  private executeTool(name: string, args: unknown): Promise<string> {
+    // Slash commands share the session runtime and cancellation/cleanup owner.
+    const effect = this.runner.tools.executeEffect?.(name, args);
+    return effect ? this.runtime.runPromise(effect) : this.runner.tools.execute(name, args);
+  }
   private async command(line: string): Promise<string | undefined> {
     const [name, ...rest] = line.split(/\s+/); const arg = rest.join(' ');
     if (name === '/exit') { await this.close(); return; }
     if (name === '/cancel') { this.cancel(); return; }
     if (name === '/help') return COMMANDS.map(([cmd, description]) => `${cmd.padEnd(10)} ${description}`).join('\n') + '\n\nType / for suggestions · Tab completes a word · ↑↓ selects suggestions · Esc cancels · Ctrl+P commands · Ctrl+O metrics · Wheel / Shift+↑↓ / PgUp/PgDn scroll · Home/End jump · Ctrl+C cancel / close';
     if (name === '/tools') return this.runner.tools.definitions.map(t => `${t.function.name.padEnd(14)} ${t.function.description}`).join('\n') + `\n\nCommand execution: ${this.options.allowShell ? 'enabled' : 'disabled (start with --allow-shell)'}`;
-    if (name === '/integrations') return this.runner.tools.execute(arg ? 'list_integration_tools' : 'list_integrations', arg ? { server: arg } : {});
+    if (name === '/integrations') return this.executeTool(arg ? 'list_integration_tools' : 'list_integrations', arg ? { server: arg } : {});
     if (name === '/subagents') {
       if (!arg) return this.subagents.list();
       if (rest[0] === 'stop' && rest.length === 2) return this.subagents.stop({ subagent_id: rest[1] });
@@ -203,8 +208,8 @@ export class Session extends EventEmitter {
     if (name === '/jev') return this.metrics.jevDetails();
     if (name === '/usage') return JSON.stringify(this.storage.load('usage').slice(-10), null, 2);
     if (name === '/view') return this.memory.render() || 'No saved messages yet.';
-    if (name === '/plan') return this.runner.tools.execute('get_plan', {});
-    if (name === '/jobs') return this.options.allowShell ? this.runner.tools.execute('list_commands', {}) : 'Command execution is disabled (start with --allow-shell).';
+    if (name === '/plan') return this.executeTool('get_plan', {});
+    if (name === '/jobs') return this.options.allowShell ? this.executeTool('list_commands', {}) : 'Command execution is disabled (start with --allow-shell).';
     if (name === '/model') {
       if (!arg || PROVIDERS.includes(arg.toLowerCase())) return `Agent: ${this.runner.model.model}\nCompactor: ${this.options.compactorModel} (fixed at startup)\nAvailable models:\n${formatModelsList(arg || undefined)}\n\nSwitch with /model <provider> <short name or ID>, e.g. /model openai luna6. Numbers and model-only shortcuts also work. Switching is session-local and keeps saved memory.`;
       if (this.runner.active) throw new Error('Switch models between turns; /cancel ends the current turn.');
@@ -245,15 +250,22 @@ export class Session extends EventEmitter {
     }
     throw new Error('Unknown command. Use /help or Ctrl+P.');
   }
-  async settle(signal: AbortSignal): Promise<void> {
+  private settleEffect(): Effect.Effect<void, unknown> {
+    return Effect.gen({ self: this }, function*() {
+      if (this.closed || this.closing) return;
+      do {
+        yield* this.subagents.drainEffect();
+        yield* Effect.promise(() => this.runner.running ?? Promise.resolve());
+      } while (this.subagents.active || this.runner.active);
+      yield* this.memory.settleEffect();
+      // Ending this wait never cancels an audit or changes its saved job status.
+      yield* this.evaluations.drainEffect().pipe(Effect.timeoutOrElse({ duration: 60_000, orElse: () => Effect.succeed(false) }));
+    });
+  }
+  async settle(signal?: AbortSignal): Promise<void> {
     if (this.closed || this.closing) return;
-    do {
-      await this.subagents.drain(signal);
-      await this.runner.running;
-    } while (this.subagents.active || this.runner.active);
-    signal.throwIfAborted();
-    await this.memory.settle(signal);
-    await this.evaluations.drain(AbortSignal.any([signal, AbortSignal.timeout(60_000)]));
+    signal?.throwIfAborted();
+    return sessionExitValue(await this.runtime.runPromiseExit(this.settleEffect(), { signal }), 'Session drain');
   }
   close(): Promise<void> {
     if (!this.closing) this.closing = this.shutdown();

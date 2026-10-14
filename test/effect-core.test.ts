@@ -1,9 +1,21 @@
 import { expect, test } from 'bun:test';
 import { Cause, Effect, Exit } from 'effect';
-import { EffectAdapterError, fromAbortablePromise, toLegacyPromise } from '../src/core/async.js';
+import { EffectAdapterError, legacyExitValue } from '../src/core/async.js';
 import { IOError, ProtocolError, TimeoutError, ToolAccessDenied, ToolExecutionError, ValidationError, publicFailureMessage } from '../src/core/errors.js';
-import { LegacyPorts } from '../src/core/legacy-ports.js';
+import { ProviderModel } from '../src/providers/core.js';
+import { toolPromise } from '../src/tool-effects.js';
+import { schemaTool, ToolRegistry } from '../src/tool-registry.js';
+import * as Schema from 'effect/Schema';
 import type { AgentTools, ModelPort } from '../src/types.js';
+
+// The public Cause adapter remains shared; this service-free harness only runs
+// fully provided examples, rather than exporting a second application runtime API.
+async function toLegacyPromise<A, E>(effect: Effect.Effect<A, E>, signal?: AbortSignal): Promise<A> {
+  if (signal?.aborted) throw new EffectAdapterError('The operation was canceled.', 'interruption', Cause.interrupt());
+  return legacyExitValue(await Effect.runPromiseExit(effect, { signal }));
+}
+const fromAbortablePromise = <A, E>(run: (signal: AbortSignal) => PromiseLike<A>, onError: (cause: unknown) => E) =>
+  Effect.tryPromise({ try: run, catch: onError });
 
 const callbacks = { tools: [], onText: (_text: string) => {}, onThought: (_text: string) => {}, onEntry: () => {} };
 
@@ -19,12 +31,17 @@ test('Effect v4 service/layer example preserves model results, callbacks, defini
     calls++; expect(name).toBe('parallel_tools'); expect(args).toEqual({ calls: [] }); expect(signal?.aborted).toBe(false);
     onNestedCall?.('zoom'); return 'unchanged result';
   }, async close() { closed++; } };
+  const registry = new ToolRegistry([schemaTool({ name: 'parallel_tools', schema: Schema.Record(Schema.String, Schema.Unknown), capabilities: ['read'],
+    execute: () => '', executeEffect: args => toolPromise(signal => tools.execute('parallel_tools', args, signal, name => nested.push(name))),
+  })], ['read']);
   const program = Effect.gen(function*() {
-    const ports = yield* LegacyPorts;
-    expect(ports.model.model).toBe(model.model); expect(ports.tools.definitions).toBe(tools.definitions);
-    expect(yield* ports.model.stream(messages, callbacks)).toBe(result);
-    return yield* ports.tools.execute('parallel_tools', { calls: [] }, name => nested.push(name));
-  }).pipe(Effect.provide(LegacyPorts.layer(model, tools)));
+    const provider = yield* ProviderModel;
+    expect(provider.model).toBe(model.model);
+    expect(yield* provider.stream(messages, callbacks)).toBe(result);
+    return yield* registry.executeEffect('parallel_tools', { calls: [] });
+  }).pipe(Effect.provide(ProviderModel.layer({ model: model.model, chat: () => Effect.succeed(result),
+    stream: (input, options) => toolPromise(signal => model.stream(input, { ...callbacks, ...options, signal })).pipe(Effect.orDie),
+  })));
   expect(calls).toBe(0);
   expect(await toLegacyPromise(program)).toBe('unchanged result');
   expect(calls).toBe(1); expect(nested).toEqual(['zoom']); expect(closed).toBe(0);
@@ -82,9 +99,8 @@ test('pre-canceled work never starts and defects are distinct from expected fail
   expect(Cause.hasDies(rejection.cause)).toBe(true);
 });
 
-test('legacy tool adapters retain typed failures and propagate interruption to the port', async () => {
+test('registry Promise boundaries retain typed failures and propagate interruption to the port', async () => {
   const secret = new Error('fixture-secret');
-  const model: ModelPort = { model: 'selected-model', async stream() { throw secret; } };
   let ioSignal: AbortSignal | undefined, started!: () => void;
   const ready = new Promise<void>(resolve => { started = resolve; });
   const tools: AgentTools = { definitions: [], async execute(name, _args, signal) {
@@ -92,20 +108,18 @@ test('legacy tool adapters retain typed failures and propagate interruption to t
     ioSignal = signal; started();
     return new Promise<string>((_resolve, reject) => { signal?.addEventListener('abort', () => reject(signal.reason), { once: true }); });
   } };
-  const layer = LegacyPorts.layer(model, tools);
-  const failed = await Effect.runPromiseExit(Effect.gen(function*() {
-    const ports = yield* LegacyPorts;
-    return yield* ports.tools.execute('fail', {});
-  }).pipe(Effect.provide(layer)));
+  const registry = new ToolRegistry(['fail', 'wait'].map(name => schemaTool({ name, schema: Schema.Record(Schema.String, Schema.Unknown), capabilities: ['read'],
+    execute: () => '', executeEffect: args => toolPromise(signal => tools.execute(name, args, signal)).pipe(
+      Effect.catchCause(cause => Effect.failCause(Cause.map(cause, error => new ToolExecutionError({ tool: name, cause: error }))))),
+  })), ['read']);
+  const failed = await Effect.runPromiseExit(registry.executeEffect('fail', {}));
   if (Exit.isFailure(failed)) {
     const reason = failed.cause.reasons.find(Cause.isFailReason);
-    expect(reason?.error).toBeInstanceOf(ToolExecutionError); expect(reason?.error.cause).toBe(secret);
+    expect(reason?.error).toBeInstanceOf(ToolExecutionError);
+    if (reason?.error instanceof ToolExecutionError) expect(reason.error.cause).toBe(secret);
   } else throw new Error('Tool must fail.');
   const controller = new AbortController();
-  const pending = toLegacyPromise(Effect.gen(function*() {
-    const ports = yield* LegacyPorts;
-    return yield* ports.tools.execute('wait', {});
-  }).pipe(Effect.provide(layer)), controller.signal).catch(error => error);
+  const pending = toLegacyPromise(registry.executeEffect('wait', {}), controller.signal).catch(error => error);
   await ready; controller.abort();
   expect((await pending).kind).toBe('interruption'); expect(ioSignal?.aborted).toBe(true);
 });

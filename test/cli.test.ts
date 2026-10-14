@@ -92,3 +92,35 @@ test('sound lab requires a terminal before credentials or session storage are ne
   const error = await new Response(child.stderr).text();
   expect(await child.exited).toBe(1); expect(error).toContain('--sfx-test requires an interactive TUI'); expect(error).not.toContain('API_KEY');
 });
+
+test('SIGINT cancels an offline ask, preserves exit status 130 and releases the chat lock', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'victral-cancel-cli-'));
+  const marker = path.join(directory, 'started'), aborted = path.join(directory, 'aborted'), chat = path.join(directory, 'chat');
+  const preload = path.join(directory, 'offline.js');
+  await fs.writeFile(preload, `import fs from 'node:fs';
+globalThis.fetch = async (_url, init) => {
+  fs.writeFileSync(${JSON.stringify(marker)}, 'started');
+  return new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => {
+    fs.writeFileSync(${JSON.stringify(aborted)}, 'aborted'); reject(init.signal.reason);
+  }, { once: true }));
+};`);
+  const child = Bun.spawn([process.execPath, '--preload', preload, cli, '--ask', 'cancel this request', '--project', directory, '--chat-dir', chat, '--model', 'ms1.3', '--no-jev', '--no-metrics'],
+    { env: { ...process.env, META_API_KEY: 'offline-cancellation-fixture' }, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
+  const stdout = new Response(child.stdout).text(), stderr = new Response(child.stderr).text();
+  try {
+    const deadline = Date.now() + 5000;
+    while (!await fs.access(marker).then(() => true, () => false)) {
+      if (Date.now() > deadline) throw new Error('Offline CLI request did not start.');
+      await Bun.sleep(10);
+    }
+    child.kill('SIGINT'); expect(await child.exited).toBe(130);
+    expect(await fs.readFile(aborted, 'utf8')).toBe('aborted');
+    expect(await stderr).not.toContain('Unhandled'); await stdout;
+    const storage = await Storage.open(chat); try { expect(storage.root[0]?.text).toBe('cancel this request'); } finally { await storage.close(); }
+  } finally { child.kill(); await child.exited; await fs.rm(directory, { recursive: true, force: true }); }
+}, 15_000);
+
+test('the intentional JS CLI entry point remains usable', async () => {
+  const child = Bun.spawn([process.execPath, path.resolve(import.meta.dir, '../src/cli.js'), '--version'], { stdout: 'pipe', stderr: 'pipe' });
+  expect((await new Response(child.stdout).text()).trim()).toBe('0.2.0'); expect(await child.exited).toBe(0);
+});

@@ -41,7 +41,7 @@ export function render(session: WorkspaceSession, copyResponse?: CopyResponse) {
     debug: true, interactive: true, exitOnCtrlC: false, patchConsole: false,
   }, copyResponse ?? (async (text) => { copied.push(text); return 'copied'; }));
   instances.add(instance);
-  return { ...instance, stdout, stderr, stdin, copied, frames: stdout.frames, lastFrame: stdout.lastFrame };
+  return { ...instance, cleanup() { instances.delete(instance); instance.cleanup(); }, stdout, stderr, stdin, copied, frames: stdout.frames, lastFrame: stdout.lastFrame };
 }
 
 export function renderLab(lab: SoundLabModel) {

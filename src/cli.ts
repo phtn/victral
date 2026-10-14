@@ -104,7 +104,8 @@ async function main(): Promise<void> {
     metrics: !values['no-metrics']
   })
   const terminate = () => {
-    void session.close()
+    // The finally block awaits this cached close and reports any cleanup failure.
+    void session.close().catch(() => {})
   }
   process.on('SIGTERM', terminate)
   try {
@@ -112,7 +113,7 @@ async function main(): Promise<void> {
       session.on('text', (text) => process.stdout.write(text))
       session.on('errorText', (text) => {
         console.error(`\n${text}`)
-        process.exitCode = 1
+        if (process.exitCode !== 130) process.exitCode = 1
       })
       const controller = new AbortController()
       const cancel = () => {
@@ -126,6 +127,8 @@ async function main(): Promise<void> {
         console.log()
         await session.settle(controller.signal)
         if (!values['no-metrics']) console.log(session.metrics.detailed())
+      } catch (error) {
+        if (!controller.signal.aborted) throw error
       } finally {
         process.off('SIGINT', cancel)
       }
@@ -165,11 +168,15 @@ async function main(): Promise<void> {
       session.on('closed', () => rl.close())
       rl.on('SIGINT', () => {
         if (session.snapshot().active) session.cancel()
-        else void session.close()
+        else terminate()
       })
       const pending = new Set<Promise<void>>()
+      let ending = false
       rl.on('line', (line) => {
-        const work = session.submit(line)
+        if (ending) return
+        ending = line.trim() === '/exit'
+        // Explicit exit, like EOF, finishes input already accepted by the adapter.
+        const work = ending ? Promise.allSettled([...pending]).then(() => session.submit(line)) : session.submit(line)
         pending.add(work)
         void work
           .catch((error) => {
@@ -187,7 +194,7 @@ async function main(): Promise<void> {
       })
       // EOF is normal input completion: finish queued requests before closing.
       await Promise.allSettled([...pending])
-      await session.settle(new AbortController().signal)
+      await session.settle()
     }
   } finally {
     process.off('SIGTERM', terminate)

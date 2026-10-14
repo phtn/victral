@@ -5,6 +5,9 @@ import * as Exit from 'effect/Exit';
 import * as Layer from 'effect/Layer';
 import { createModel } from '../models.js';
 import { Storage } from '../storage.js';
+import type { Memory } from '../memory.js';
+import type { Evaluations } from '../evaluations.js';
+import type { Metrics } from '../metrics.js';
 import type { SessionOptions } from '../session.js';
 import type { ProviderPurpose } from '../providers/types.js';
 import type { ModelPort } from '../types.js';
@@ -13,8 +16,14 @@ import { IOError } from './errors.js';
 
 export class SessionSettings extends Context.Service<SessionSettings, Readonly<SessionOptions>>()('victral/session/Settings') {}
 
+// These keys expose the already-acquired session owners, without acquiring a
+// second instance or changing durable callback/cleanup ordering.
+export class SessionMemory extends Context.Service<SessionMemory, Memory>()('victral/session/Memory') {}
+export class SessionEvaluations extends Context.Service<SessionEvaluations, Evaluations>()('victral/session/Evaluations') {}
+export class SessionMetrics extends Context.Service<SessionMetrics, Metrics>()('victral/session/Metrics') {}
+
 export interface ModelOptions { purpose?: ProviderPurpose; webSearch?: boolean; usage: (record: unknown) => void }
-// Keep the Promise-based model API while the session/runner callers migrate.
+// Model construction is synchronous; its native provider effects run in the owner scopes.
 const modelFactory = createModel;
 export class SessionModels extends Context.Service<SessionModels, {
   readonly create: (id: string, options: ModelOptions) => Effect.Effect<ModelPort, unknown>;

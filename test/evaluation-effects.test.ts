@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import * as Effect from 'effect/Effect';
+import * as Fiber from 'effect/Fiber';
 import * as TestClock from 'effect/testing/TestClock';
 import { Evaluations, type EvaluationOptions, type EvaluationRecord } from '../src/evaluations.js';
 import { auditSummary, validateAuditResult } from '../src/jev.js';
@@ -110,4 +111,19 @@ test('shutdown retains cleanup diagnostics privately while the canceled job rema
   owner.pump(); await Bun.sleep(0); await owner.close();
   expect(owner.latest.get('0:0')?.status).toBe('queued');
   expect(owner.latest.get('0:0')?.error).toBeUndefined(); expect(owner.lastFailure).toBeDefined();
+});
+
+test('native evaluation drain timeout removes its subscription and leaves audits owned by their job scope', async () => {
+  let aborted = false;
+  const { owner } = fixture(1, { audit: async (_source, _summary, { signal }) => new Promise((_resolve, reject) => {
+    signal!.addEventListener('abort', () => { aborted = true; reject(signal!.reason); }, { once: true });
+  }) });
+  await Effect.runPromise(Effect.gen(function*() {
+    yield* owner.pumpEffect(); yield* flush();
+    const waiter = yield* owner.drainEffect().pipe(Effect.timeoutOrElse({ duration: 1000, orElse: () => Effect.succeed(false) }), Effect.forkChild);
+    yield* flush(); expect(owner.listenerCount('idle')).toBe(1);
+    yield* TestClock.adjust(1000);
+    expect(yield* Fiber.join(waiter)).toBe(false); expect(owner.listenerCount('idle')).toBe(0);
+    expect(owner.active.size).toBe(1); expect(aborted).toBe(false); expect(owner.latest.get('0:0')?.status).toBe('running');
+  }).pipe(Effect.provide(TestClock.layer())));
 });

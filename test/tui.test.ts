@@ -271,3 +271,16 @@ test('unmount releases subscriptions and raw input, and remount owns fresh state
   expect(session.listenerCount('update')).toBe(0);
   expect(session.listenerCount('closed')).toBe(0);
 });
+
+test('TUI close failure is observed and unmount still releases subscriptions and raw input', async () => {
+  const session = new DemoSession();
+  session.close = async () => { throw new Error('fixture close failure'); };
+  const view = render(session); const exited = view.waitUntilExit().catch(error => error); await flush();
+  try {
+    view.stdin.write('\x03');
+    const error = await exited; expect(error).toBeInstanceOf(Error);
+    if (!(error instanceof Error)) throw new Error('Expected observed cleanup failure.');
+    expect(error.message).toBe('Session cleanup failed.');
+    expect(session.listenerCount('update')).toBe(0); expect(session.listenerCount('closed')).toBe(0); expect(view.stdin.rawMode).toBe(false);
+  } finally { view.cleanup(); }
+});

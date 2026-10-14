@@ -840,3 +840,50 @@ measurements stay within the agreed baseline regression limits; the benchmark
 makes no API requests or filesystem writes and does not measure model throughput.
 
 Next is step 11, final composition and removal of obsolete scaffolding.
+
+## Final composition verification — October 14, 2026
+
+Step 11 is complete. `bun run check` passes typecheck and 387 tests across 41 files
+with 6,888 assertions. `bun run build` succeeds with 78 modules and a 1.20 MB CLI
+bundle. No vendored or frozen fixture files were changed and no live API requests
+were made. The Effect migration backlog is complete.
+
+- Session publishes the existing memory/evaluation/metrics owners as context
+  services alongside storage, settings/model construction and audio. Tests prove
+  all service values are the same session-owned objects and only one runtime and
+  storage instance are acquired. Partial-startup transfer/cleanup ordering remains
+  covered, including preservation of every simultaneous cleanup Cause.
+- Session settle now composes native worker, parent-report, memory and evaluation
+  drain operations in the session runtime. The native audit wait deadline replaces
+  the superseded AbortSignal timeout. A borrowed-clock test verifies a timed-out
+  evaluation waiter removes its subscription without interrupting the audit owner.
+- Slash-command native tools use that runtime too. Piped `/exit` finishes previously
+  accepted input before disposing it and ignores later lines; EOF still finishes
+  late worker reports and parent handling. Existing plain-command, plan/backup,
+  model-switch and both ask/piped-worker subprocess scenarios pass.
+- A real CLI subprocess with an offline pending fetch verifies SIGINT reaches
+  native I/O, preserves status 130 despite the later canceled-turn diagnostic,
+  saves the original input and releases the lock for reopening. No live model is
+  called. The intentional `cli.js` entry point remains usable; `runner.js` remains
+  the intentional integration re-export.
+- TUI close rejections are observed before exit. A component test verifies cleanup
+  failure still releases subscriptions and raw input. Existing terminal rendering,
+  resize, mount/unmount, clipboard, Markdown and audio scenarios all pass.
+- The unused LegacyPorts service and application-wide foundation Promise helpers
+  were removed after all production callers had native boundaries. Foundation
+  tests now exercise the production ProviderModel layer and Schema tool registry;
+  Cause formatting and intentional public/injected-port adapters remain covered.
+- Metrics persistence already flows through validated synchronous Storage APIs;
+  its pure incremental calculations and formatting remain ordinary code. Origin
+  signals, native watchdogs, UI feedback timers and input receipt tracking remain
+  where they have intentional ownership/presentation contracts. No resource cleanup
+  was removed merely because a fiber exists.
+- [Architecture](ARCHITECTURE.md), README contributor links and the Schema/runtime
+  guides now describe final services and lifetime rules rather than retired scaffolding.
+
+The independent CPU benchmark (10,000 messages, 200 iterations, five rounds)
+reports median snapshot 0.001858750 ms; initialization 775.893958 ms; saved-view
+restore 3.263500 ms; pending-view restore 8.631125 ms; idle pump 0.000053540 ms.
+Nodes/view parts remain 19,995/156 and idle-pump node reads remain zero. These
+measurements meet the recorded regression budget and make no API requests or
+filesystem writes.

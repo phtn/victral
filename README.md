@@ -25,6 +25,19 @@ saved history. Subsequent launches load it directly, recovering only messages
 appended after its last write. Keep the view files with the logs when backing
 up or moving a chat; `/backup` includes them automatically.
 
+## Architecture and contributing
+
+One Effect runtime owns each session and its scoped turns, tools and background
+jobs. Schema validates external and saved data; durable writes remain synchronous,
+and memory/view algorithms and terminal formatting remain ordinary code. The UI
+uses the snapshot/event adapter and live audio stays silent by default.
+
+See [architecture and lifetimes](docs/ARCHITECTURE.md),
+[Schema examples](agent-patterns/effect-schema.md) and
+[runtime contributor examples](agent-patterns/effect-runtime.md).
+Run `bun run check` and `bun run build`; orchestration changes also need the
+CPU-only `bun run benchmark` and the existing offline CLI/TUI scenarios.
+
 ## Start
 
 Requires Bun 1.4 or later; development type checking also needs Node.js

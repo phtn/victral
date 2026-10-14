@@ -60,6 +60,7 @@ export class Metrics {
     };
     memory.on('node', this.nodeListener);
   }
+  // Storage validates durable envelopes; keep write-before-publication synchronous.
   usage(record) { this.storage.usage(record); this.requests.push(record); }
   record(record) { this.storage.telemetry('metrics', record); this.events.push(record); }
   // Saved streams are append-only. Process each record once, including replayed
