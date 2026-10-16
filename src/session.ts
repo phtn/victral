@@ -13,6 +13,7 @@ import { Memory } from './memory.js';
 import { formatModelsList, resolveModelId, PROVIDERS } from './models.js';
 import { Evaluations } from './evaluations.js';
 import { Metrics } from './metrics.js';
+import { FallbackModel } from './fallback-model.js';
 import { Runner } from './runner.js';
 import { Integrations, loadIntegrations } from './integrations.js';
 import { Subagents } from './subagents.js';
@@ -49,7 +50,7 @@ export class Session extends EventEmitter {
   private subagents!: Subagents;
   private evaluationListener = () => this.scheduleUpdate();
 
-  private constructor(readonly options: SessionOptions, readonly storage: Storage, readonly memory: Memory, readonly evaluations: Evaluations, readonly metrics: Metrics, private readonly runtime: SessionRuntime) {
+  private constructor(readonly options: SessionOptions, readonly storage: Storage, readonly memory: Memory, readonly evaluations: Evaluations, readonly metrics: Metrics, private readonly runtime: SessionRuntime, private readonly compactor: ModelPort) {
     super();
   }
   private initialize(model: ModelPort, integrations: Integrations, transferIntegrations: () => void): Effect.Effect<void, unknown, Scope.Scope | AudioNotifications> {
@@ -119,12 +120,19 @@ export class Session extends EventEmitter {
       }, catch: cause => cause });
       let ownedMetrics: Metrics | undefined, ownedEvaluations: Evaluations | undefined, integrationsTransferred = false;
       const usage = (record: unknown) => ownedMetrics?.usage(record);
-      const model = yield* models.create(settings.model, { usage, webSearch: settings.webSearch });
+      let session: Session | undefined;
+      const notices: string[] = [];
+      const fallbackNotice = (role: string) => () => {
+        const text = `${role} switched to ms1.3c fallback.`;
+        if (session) { session.add('system', text); session.emit('notice', text); }
+        else notices.push(text);
+      };
+      const model = yield* models.create(settings.model, { usage, webSearch: settings.webSearch, fallback: true, onFallback: fallbackNotice('Main agent') });
       const integrations = yield* Effect.acquireRelease(Effect.tryPromise({
         try: async () => settings.mcpConfig ? loadIntegrations(path.resolve(settings.mcpConfig), settings.project) : new Integrations({}, settings.project),
         catch: cause => cause,
       }), integrations => integrationsTransferred ? Effect.void : releaseSessionResource('Integrations cleanup', () => integrations.close()));
-      const compactor = yield* models.create(settings.compactorModel, { purpose: 'compactor', usage });
+      const compactor = yield* models.create(settings.compactorModel, { purpose: 'compactor', usage, fallback: true, onFallback: fallbackNotice('Compactor') });
       const storage = yield* SessionStorage.acquire(settings.chatDir);
       // Register these before memory so its final work and evaluation shutdown
       // still reach metrics. Values are assigned inside synchronous construction.
@@ -134,7 +142,8 @@ export class Session extends EventEmitter {
         memory => releaseSessionResource('Memory cleanup', () => memory.stop()));
       const evaluations = yield* Effect.try({ try: () => ownedEvaluations = new Evaluations(memory, { enabled: settings.jev }), catch: cause => cause });
       const metrics = yield* Effect.try({ try: () => ownedMetrics = new Metrics(storage, memory, evaluations), catch: cause => cause });
-      const session = new Session(options, storage, memory, evaluations, metrics, runtime);
+      session = new Session(options, storage, memory, evaluations, metrics, runtime, compactor);
+      for (const notice of notices) session.add('system', notice, false);
       yield* session.initialize(model, integrations, () => { integrationsTransferred = true; });
       return Context.make(SessionInstance, session).pipe(Context.add(SessionStorage, storage),
         Context.add(SessionMemory, memory), Context.add(SessionEvaluations, evaluations), Context.add(SessionMetrics, metrics));
@@ -148,7 +157,7 @@ export class Session extends EventEmitter {
     return sessionExitValue(exit, 'Session startup');
   }
   private createModel(id: string, options: ModelOptions): ModelPort {
-    return sessionExitValue(this.runtime.runSyncExit(Effect.flatMap(SessionModels, models => models.create(id, options))), 'Model creation');
+    return sessionExitValue(this.runtime.runSyncExit(Effect.flatMap(SessionModels, models => models.create(id, { ...options, fallback: options.purpose !== 'subagent', onFallback: () => { this.add('system', 'Main agent switched to ms1.3c fallback.'); this.emit('notice', 'Main agent switched to ms1.3c fallback.'); } }))), 'Model creation');
   }
   private instructions(): string {
     const filename = this.options.instructions ?? path.join(this.options.project, 'AGENTS.md');
@@ -211,12 +220,12 @@ export class Session extends EventEmitter {
     if (name === '/plan') return this.executeTool('get_plan', {});
     if (name === '/jobs') return this.options.allowShell ? this.executeTool('list_commands', {}) : 'Command execution is disabled (start with --allow-shell).';
     if (name === '/model') {
-      if (!arg || PROVIDERS.includes(arg.toLowerCase())) return `Agent: ${this.runner.model.model}\nCompactor: ${this.options.compactorModel} (fixed at startup)\nAvailable models:\n${formatModelsList(arg || undefined)}\n\nSwitch with /model <provider> <short name or ID>, e.g. /model openai luna6. Numbers and model-only shortcuts also work. Switching is session-local and keeps saved memory.`;
+      if (!arg || PROVIDERS.includes(arg.toLowerCase())) return `Agent: ${this.runner.model.model}\nCompactor: ${this.compactor.model}${this.compactor instanceof FallbackModel && this.compactor.fallbackActive ? ' (fallback)' : ' (fixed at startup)'}\nAvailable models:\n${formatModelsList(arg || undefined)}\n\nSwitch with /model <provider> <short name or ID>, e.g. /model openai luna6. Numbers and model-only shortcuts also work. Switching is session-local and keeps saved memory.`;
       if (this.runner.active) throw new Error('Switch models between turns; /cancel ends the current turn.');
       const selected = resolveModelId(arg);
       if (selected === this.runner.model.model) return `Already using ${selected}.`;
       this.runner.model = this.createModel(selected, { webSearch: this.options.webSearch, usage: record => this.metrics.usage(record) }); this.update();
-      return `Switched agent to ${selected}. Session-local; saved memory kept. Compactor unchanged (${this.options.compactorModel}).`;
+      return `Switched agent to ${this.runner.model.model}. Session-local; saved memory kept. Compactor unchanged (${this.compactor.model}).`;
     }
     if (name === '/zoom' || name === '/date') {
       if (!/^\d+$/.test(rest[0] ?? '')) throw new Error(`Usage: ${name} ID${name === '/zoom' ? ' N' : ''}`);

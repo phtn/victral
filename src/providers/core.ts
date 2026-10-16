@@ -15,6 +15,9 @@ export class ProviderFailure extends Schema.TaggedError<ProviderFailure>()('Prov
   provider: Schema.String, reason: Schema.Literals(['transport', 'http', 'malformed', 'truncated', 'provider']),
   message: Schema.String, status: Schema.optional(Schema.Int), cause: Schema.Defect(),
 }) {}
+// Consumer callbacks are not model failures and must never trigger failover.
+export class ProviderCallbackFailure extends ProviderFailure {}
+
 // A limit retains partial/native output. Current Promise callers recover the
 // result as MAX_TOKENS; no retry or fallback is performed at this boundary.
 export class ProviderOutputLimit extends Schema.TaggedError<ProviderOutputLimit>()('ProviderOutputLimit', {
@@ -81,7 +84,7 @@ export abstract class ProviderAdapter {
       : this.failure('malformed', `${this.provider} response is malformed.`, cause) });
   }
   protected textCallback(run: () => void): Effect.Effect<void, ProviderFailure> {
-    return Effect.try({ try: run, catch: cause => this.failure('provider', `${this.provider} response callback failed.`, cause) });
+    return Effect.try({ try: run, catch: cause => new ProviderCallbackFailure({ provider: this.provider, reason: 'provider', message: `${this.provider} response callback failed.`, cause }) });
   }
   protected callback(run: () => unknown): Effect.Effect<void, ProviderFailure> {
     return Effect.scoped(Effect.gen({ self: this }, function*() {
@@ -92,7 +95,7 @@ export abstract class ProviderAdapter {
         if (work) await work.catch(() => {});
       }));
       yield* Effect.tryPromise({ try: () => work = Promise.resolve().then(run),
-        catch: cause => this.failure('provider', `${this.provider} response callback failed.`, cause) });
+        catch: cause => new ProviderCallbackFailure({ provider: this.provider, reason: 'provider', message: `${this.provider} response callback failed.`, cause }) });
     }));
   }
   chat(messages: Message[], options: RequestOptions = {}): Promise<ProviderResult> { return this.run(messages, options, false); }

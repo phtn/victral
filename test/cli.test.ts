@@ -124,3 +124,15 @@ test('the intentional JS CLI entry point remains usable', async () => {
   const child = Bun.spawn([process.execPath, path.resolve(import.meta.dir, '../src/cli.js'), '--version'], { stdout: 'pipe', stderr: 'pipe' });
   expect((await new Response(child.stdout).text()).trim()).toBe('0.2.0'); expect(await child.exited).toBe(0);
 });
+
+test('invalid startup agent and compactor configurations use ms1.3c without API requests', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'victral-config-fallback-'));
+  try {
+    const child = Bun.spawn([process.execPath, cli, '--plain', '--model', 'invalid-agent', '--compactor-model', 'invalid-compactor', '--project', directory, '--chat-dir', path.join(directory, 'chat'), '--no-jev'], {
+      env: { ...process.env, META_API_KEY: 'offline-fallback-key' }, stdin: new TextEncoder().encode('/model\n/exit\n'), stdout: 'pipe', stderr: 'pipe',
+    });
+    const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    expect(errors).toBe(''); expect(code).toBe(0);
+    expect(output).toContain('Agent: muse-spark-1.3-contributor'); expect(output).toContain('Compactor: muse-spark-1.3-contributor (fallback)');
+  } finally { await fs.rm(directory, { recursive: true, force: true }); }
+});

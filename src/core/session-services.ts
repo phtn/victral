@@ -4,6 +4,7 @@ import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import * as Layer from 'effect/Layer';
 import { createModel } from '../models.js';
+import { FallbackModel } from '../fallback-model.js';
 import { Storage } from '../storage.js';
 import type { Memory } from '../memory.js';
 import type { Evaluations } from '../evaluations.js';
@@ -22,7 +23,7 @@ export class SessionMemory extends Context.Service<SessionMemory, Memory>()('vic
 export class SessionEvaluations extends Context.Service<SessionEvaluations, Evaluations>()('victral/session/Evaluations') {}
 export class SessionMetrics extends Context.Service<SessionMetrics, Metrics>()('victral/session/Metrics') {}
 
-export interface ModelOptions { purpose?: ProviderPurpose; webSearch?: boolean; usage: (record: unknown) => void }
+export interface ModelOptions { purpose?: ProviderPurpose; webSearch?: boolean; usage: (record: unknown) => void; fallback?: boolean; onFallback?: () => void }
 // Model construction is synchronous; its native provider effects run in the owner scopes.
 const modelFactory = createModel;
 export class SessionModels extends Context.Service<SessionModels, {
@@ -30,7 +31,7 @@ export class SessionModels extends Context.Service<SessionModels, {
 }>()('victral/session/Models') {
   static readonly layer = Layer.succeed(SessionModels, {
     create: Effect.fn('SessionModels.create')((id: string, options: ModelOptions) =>
-      Effect.try({ try: () => modelFactory(id, options), catch: cause => cause })),
+      Effect.try({ try: () => options.fallback ? new FallbackModel(id, options, options.onFallback, modelFactory) : modelFactory(id, options), catch: cause => cause })),
   });
 }
 

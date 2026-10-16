@@ -105,8 +105,8 @@ short name, or full ID: `--model ms1.3` and `--model 1` work like
 current agent, the compactor, and the numbered choices; `/model meta ms1.3` or
 `/model openai sol6.1` switches the main agent between turns while retaining saved
 memory. `/model openai` lists only OpenAI models. Model-only shortcuts such as
-`/model ms1.3` and `/model luna6` also work. The compactor stays
-on its startup selection. Model switches are session-local;
+`/model ms1.3` and `/model luna6` also work. Switching the main model does not
+change the configured compactor. Model switches are session-local;
 set `VICTRAL_MODEL` and `VICTRAL_COMPACTOR_MODEL` for defaults. Explicit CLI
 flags take precedence. The numbered choices are 1 for `muse-spark-1.3` and
 2 for `muse-spark-1.3-contributor`, 3 for `gpt-6-luna`, and 4 for `gpt-6.1-sol`.
@@ -114,6 +114,21 @@ Short names also work in the environment
 settings and smoke scripts, and are case-insensitive. API requests and saved
 usage retain the full model IDs. The status bar shows the selected model's short
 name and updates when switching with `/model`.
+
+Both the main agent and compactor try their configured model first. If startup
+configuration/credentials are invalid, or a provider request fails, that role
+switches to `ms1.3c` for the rest of the session. Set `META_API_KEY` (or
+`MODEL_API_KEY`) so the fallback can authenticate. `/model` and the status bar
+report the active models; fallback notices appear in the workspace. Restarting or
+explicitly switching the main model starts a new configured selection.
+
+Each failed request can make one replacement request to `ms1.3c`; fallback failures
+remain visible and do not loop. Cancellation, response-cleanup defects and consumer
+callback/persistence errors do not trigger fallback. Partial output already saved
+from a failed main request remains saved; only the successful response's tool calls
+execute. Oversized compactor summaries retain their normal shortening attempts.
+Usage records include the failed primary and actual fallback model calls. Research
+worker selection and optional Jev evaluations keep their existing policies.
 
 The status bar suggests matching command words as you type. `/m` shows `/metrics`
 and `/model`; `/mo` narrows to `/model`. Tab completes the selected word and adds

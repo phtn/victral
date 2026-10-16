@@ -887,3 +887,40 @@ restore 3.263500 ms; pending-view restore 8.631125 ms; idle pump 0.000053540 ms.
 Nodes/view parts remain 19,995/156 and idle-pump node reads remain zero. These
 measurements meet the recorded regression budget and make no API requests or
 filesystem writes.
+
+## Requested agent/compactor fallback — October 16, 2026
+
+After migration completion, the user explicitly requested automatic ms1.3c fallback
+for both configured session models. This is a separate behavior change, not an
+Effect migration side effect. `bun run check` passes 400 tests across 42 files with
+6,959 assertions; typecheck and build pass (79 modules, 1.20 MB CLI bundle).
+The focused CLI check also passes after updating the active-model startup heading.
+
+- Main agent and compactor independently try configured selections first, including
+  CLI/environment configuration. Startup construction errors and lone typed provider
+  errors can select ms1.3c. Healthy requests do not construct/request fallback.
+- Once selected, fallback remains active for that role until restart or an explicit
+  main-model switch. Replacement requests are bounded to one per failed primary
+  call. A failing replacement does not recursively retry; both Causes are retained.
+- Meta fallback obtains META_API_KEY or MODEL_API_KEY from the environment rather
+  than reusing a primary OpenAI API key. Both native providers retain their actual
+  purpose, model, usage and error/completion records. Integration tests verify
+  compactor failover leaves the main selection intact until its own request fails.
+- Cancellation, compound cleanup failures and ProviderCallbackFailure never cause
+  replacement calls. Existing provider callback diagnostics/envelopes stay compatible.
+  Primary HTTP scopes release before failover. Partial main output remains saved;
+  only the successful fallback result's tool calls execute. A Runner test verifies
+  exactly one tool execution and preservation of each partial/completed entry.
+- Complete oversized summaries retain normal byte-feedback attempts. Empty/incomplete
+  compactor results and typed native output limits may fall back without treating
+  partial results as completed summaries. No memory algorithms, audit policy,
+  research-worker policy or frozen fixtures changed.
+- The native createModel factory remains strict for standalone callers. Session
+  wrappers implement the explicit new policy, while interactive /model argument
+  validation remains strict. Startup bad-config CLI tests make no model requests.
+
+All verification uses injected/offline transports; no live API calls were made.
+The CPU-only benchmark remains within budget: median snapshot 0.002718125 ms;
+initialization 1,020.432542 ms; saved-view restore 4.568500 ms; pending-view restore
+11.772542 ms; idle pump 0.000069170 ms. Nodes/view parts remain 19,995/156 and
+idle-pump node reads remain zero.

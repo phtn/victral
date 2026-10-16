@@ -639,3 +639,23 @@ copy-feedback/demo timers and native process/player/regex watchdogs remain delib
 presentation/native-boundary mechanisms, not superseded workflow retry timers.
 Origin AbortControllers also remain where public signals and background-job
 cancellation require them. Never remove these merely because a fiber also exists.
+
+
+## Explicit session fallback policy
+
+The user-requested [FallbackModel](../src/fallback-model.ts) wraps only session
+agent/compactor selections. Healthy calls retain the configured provider and exact
+messages/options. On a lone typed provider failure, the original response scope
+must finish before constructing/requesting ms1.3c. Cache the replacement per role
+and keep it active for the session; never recursively retry the replacement.
+Construction failure can also select it before any request. Native createModel and
+research-worker/Jev policies remain unchanged.
+
+Use catchCause and inspect a single FailReason before replay. Preserve compound
+Causes, interruption and cleanup defects rather than treating their first failure
+as recoverable. ProviderCallbackFailure is an intentional ProviderFailure subclass:
+consumer/persistence callbacks must not replay model requests. Keep full Causes
+when both primary and replacement fail, and report only model IDs in notices.
+Fallback consumes Meta environment credentials; do not forward a primary OpenAI
+API key into a Meta request. Usage instrumentation remains on each native provider,
+so both requests retain their actual model, purpose and outcome.

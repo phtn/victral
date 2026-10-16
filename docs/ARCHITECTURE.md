@@ -52,6 +52,28 @@ CLI, UI, scripts and injected ports. The unused foundation `LegacyPorts` service
 and its generic Promise helpers were removed. Intentional `cli.js` and `runner.js`
 entry points remain usable. Runtime disposal runs outside the runtime it closes.
 
+## Session model fallback
+
+The main agent and compactor have independent configured-model-first wrappers.
+Configuration/credential construction errors and lone typed provider failures switch
+that role to `ms1.3c` for the session. This policy was explicitly requested after
+the migration, on October 16, 2026. Native `createModel` remains strict for standalone
+callers; research workers and Jev keep their existing selection/retry policies.
+
+Fallback initialization uses Meta environment credentials, never an OpenAI key from
+the primary options. Healthy requests do not initialize the fallback or make extra
+calls. A failed primary request can be replaced once; failure of the replacement
+retains both Causes without a retry loop. Provider response scopes finish cleanup
+before replacement. Interruptions, compound cleanup failures and typed consumer
+callback errors never cause failover. A session stays on the fallback until restart
+or an explicit main-model switch. Active model IDs and usage remain accurate.
+
+Primary stream entries already saved are retained. The failed request's pending
+result is discarded, so its tool calls cannot execute; Runner executes only the
+successful fallback result's calls. No memory, storage or callback failure is
+reclassified as a model outage. Oversized complete compactor output still follows
+its original five-attempt byte-feedback conversation.
+
 ## Durable data and presentation
 
 Storage validates required fields without stripping metadata from legitimate older

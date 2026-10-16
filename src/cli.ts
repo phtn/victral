@@ -5,7 +5,8 @@ import path from 'node:path'
 import readline from 'node:readline'
 import { parseArgs } from 'node:util'
 import { MODEL } from './constants.js'
-import { formatModelsList, resolveModelId } from './models.js'
+import { formatModelsList } from './models.js'
+import { configuredModelId } from './fallback-model.js'
 import { Session } from './session.js'
 import { errorMessage } from './types.js'
 import { commandCompletion, completeCommand } from './command-completion.js'
@@ -17,7 +18,7 @@ Usage: victral [options]
   --project PATH          Project root (default: current directory)
   --chat-dir PATH         Persistent chat directory
   --model ID              Main agent model (number, short name, or full ID; see --models)
-  --compactor-model ID    Background memory model (same format; defaults to --model)
+  --compactor-model ID    Background memory model (defaults to --model; fallback ms1.3c)
   --instructions FILE     Load custom instructions instead of AGENTS.md
   --allow-shell           Enable CLI, shell and background command tools
   --web-search            Enable provider web search (additional provider charges)
@@ -89,12 +90,12 @@ async function main(): Promise<void> {
   }
   const project = fs.realpathSync(values.project)
   if (!fs.statSync(project).isDirectory()) throw new Error('--project must select a directory.')
-  const model = resolveModelId(values.model ?? process.env.VICTRAL_MODEL ?? MODEL)
+  const model = configuredModelId(values.model ?? process.env.VICTRAL_MODEL ?? MODEL)
   const session = await Session.open({
     project,
     chatDir: path.resolve(values['chat-dir']),
     model,
-    compactorModel: resolveModelId(
+    compactorModel: configuredModelId(
       values['compactor-model'] ?? process.env.VICTRAL_COMPACTOR_MODEL ?? model),
     instructions: values.instructions,
     allowShell: values['allow-shell'],
@@ -149,7 +150,7 @@ async function main(): Promise<void> {
       const prompt = () => {
         if (interactive) rl.prompt()
       }
-      console.log(`Victral · ${model}\nProject: ${project}\nType /help for commands.\n`)
+      console.log(`Victral · ${session.snapshot().model}\nProject: ${project}\nType /help for commands.\n`)
       session.on('text', (text) => process.stdout.write(text))
       session.on('notice', (text) => {
         console.log(text)

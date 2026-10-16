@@ -24,10 +24,13 @@ import { NativeSoundPlayer } from '../src/sfx/player.js';
 
 const directories: string[] = [], sessions: Session[] = [];
 const previousKey = process.env.META_API_KEY;
+const previousModelKey = process.env.MODEL_API_KEY, previousOpenAIKey = process.env.OPENAI_API_KEY;
 afterEach(async () => {
   await Promise.allSettled(sessions.splice(0).map(session => session.close()));
   mock.restore();
   if (previousKey === undefined) delete process.env.META_API_KEY; else process.env.META_API_KEY = previousKey;
+  if (previousModelKey === undefined) delete process.env.MODEL_API_KEY; else process.env.MODEL_API_KEY = previousModelKey;
+  if (previousOpenAIKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previousOpenAIKey;
   await Promise.all(directories.splice(0).map(directory => fs.rm(directory, { recursive: true, force: true })));
 });
 // Exercise native Effect providers through offline transport, rather than spying
@@ -113,7 +116,10 @@ for (const scenario of startupCases) test(`startup failure at ${scenario.name} c
   const configured = await options(), releases = cleanup(), failure = new Error(`Fixture ${scenario.name} failure.`);
   const load = Storage.prototype.load;
   if (scenario.name === 'instructions') configured.instructions = path.join(configured.project, 'missing');
-  else if (scenario.name === 'compactor') configured.compactorModel = 'unsupported-fixture';
+  else if (scenario.name === 'compactor') {
+    configured.model = 'gpt-6-luna'; configured.compactorModel = 'unsupported-fixture';
+    process.env.OPENAI_API_KEY = 'offline-fixture'; delete process.env.META_API_KEY; delete process.env.MODEL_API_KEY;
+  }
   else if (scenario.name === 'memory') spyOn(Storage.prototype, 'loadView').mockImplementation(() => { throw failure; });
   else if (['evaluations', 'metrics', 'plans'].includes(scenario.name)) spyOn(Storage.prototype, 'load').mockImplementation(function(this: Storage, stream) {
     if (stream === scenario.name) throw failure; return load.call(this, stream);
@@ -122,7 +128,7 @@ for (const scenario of startupCases) test(`startup failure at ${scenario.name} c
   else spyOn(Memory.prototype, 'pump').mockImplementation(() => { throw failure; });
   const error: unknown = await Session.open(configured).catch(error => error);
   if (scenario.name === 'instructions') expect(error instanceof Error && error.message).toBe('The instructions file does not exist.');
-  else if (scenario.name === 'compactor') expect(error instanceof Error && error.message).toContain('Unsupported model: unsupported-fixture.');
+  else if (scenario.name === 'compactor') expect(error instanceof Error && error.message).toContain('ms1.3c fallback');
   else expect(error).toBe(failure);
   for (const [name, spy] of Object.entries(releases.spies)) {
     expect(spy.mock.calls.length).toBe(scenario.acquired.some(resource => resource === name) ? 1 : 0);
@@ -213,4 +219,27 @@ test('completed turns retain background commands until session scope closes', as
   expect(session.snapshot().entries.at(-1)?.text).toContain('running'); expect(releases.events).toEqual([]);
   await session.close(); expect(releases.spies.commands).toHaveBeenCalledTimes(1); expect(releases.spies.storage).toHaveBeenCalledTimes(1);
   await reopen(configured.chatDir);
+});
+
+test('main and compactor independently fall back to ms1.3c with accurate usage and active model reporting', async () => {
+  const configured = await options(); configured.model = 'gpt-6-luna'; configured.compactorModel = 'gpt-6-luna';
+  process.env.OPENAI_API_KEY = 'offline-primary-key';
+  let primaryCalls = 0;
+  spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async (url: URL | RequestInfo, init?: RequestInit) => {
+    if (String(url).includes('api.openai.com')) { primaryCalls++; return new Response('unavailable', { status: 503 }); }
+    expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer offline-runtime-fixture');
+    return offlineMeta(init, [{ type: 'text', text: 'fallback answer' }]);
+  }, { preconnect() {} }));
+  const session = await Session.open(configured); sessions.push(session);
+  session.memory.append('user', 'source decision '.repeat(100)); expect(await session.memory.drain()).toBe(true);
+  expect(session.snapshot().model).toBe('gpt-6-luna');
+  await session.submit('/model'); expect(session.entries.at(-1)?.text).toContain('muse-spark-1.3-contributor (fallback)');
+  await session.submit('do task'); await session.settle();
+  expect(session.snapshot().model).toBe('muse-spark-1.3-contributor'); expect(primaryCalls).toBe(2);
+  await session.submit('next task'); await session.settle(); expect(primaryCalls).toBe(2);
+  const usage = session.storage.load('usage');
+  for (const purpose of ['agent', 'compactor']) {
+    expect(usage.some(record => record.purpose === purpose && record.model === 'gpt-6-luna' && record.status === 'error')).toBe(true);
+    expect(usage.some(record => record.purpose === purpose && record.model === 'muse-spark-1.3-contributor' && record.status === 'completed')).toBe(true);
+  }
 });

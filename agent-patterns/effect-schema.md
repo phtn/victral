@@ -734,3 +734,11 @@ second generic port service, cast unknown arguments after decoding, or normalize
 opaque wire/storage metadata while composing layers. The final
 [architecture](../docs/ARCHITECTURE.md) and [runtime examples](effect-runtime.md)
 describe the ownership rules that accompany these typed boundaries.
+
+
+ProviderCallbackFailure inherits the existing ProviderFailure Schema envelope.
+Its in-process subtype distinguishes consumer callback errors from model outages
+without changing the saved provider wire contract. The session fallback policy
+checks this subtype and the complete Cause before making a replacement request;
+do not classify callback errors by parsing their display messages or serialize
+private failure causes into the conversation.
