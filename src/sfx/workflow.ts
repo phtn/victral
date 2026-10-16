@@ -9,7 +9,7 @@ const sounds: Record<WorkflowEvent['status'], SoundName> = {
 };
 // Audio observes typed turn outcomes; it never parses presentation or saved text.
 // Model/tool events remain available to other observers without producing a cue
-// on every request or nested read. The installed Session layer remains silent.
+// on every request or nested read. Session audio is enabled explicitly with /sfx.
 export function workflowAudioObserver(audio: AudioNotificationService, scope: Scope.Scope, now = () => performance.now()): WorkflowObserver {
   const seen = new Set<string>();
   let lastOnset = -Infinity;

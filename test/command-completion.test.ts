@@ -47,3 +47,12 @@ test('suggestion footer keeps the selected option visible within narrow terminal
     expect(stringWidth(footer)).toBeLessThanOrEqual(40);
   }
 });
+
+
+test('SFX command and on/off arguments support completion', () => {
+  expect(commandCompletion('/sf').suggestions).toEqual(['/sfx']);
+  expect(commandCompletion('/sfx ').suggestions).toEqual(['on', 'off']);
+  expect(commandCompletion('/sfx of').suggestions).toEqual(['off']);
+  expect(completeCommand('/sfx of', commandCompletion('/sfx of'))?.input).toBe('/sfx off ');
+  expect(commandCompletion('/sfx off ').suggestions).toEqual([]);
+});

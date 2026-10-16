@@ -3,7 +3,9 @@
 Run `bun run sfx` in an interactive terminal, or use `bun run start --sfx-test`.
 This is a standalone TUI audition page. It uses no model calls, integrations,
 conversation storage, or browser window. It starts silently and does not yet
-add audio to the main chat.
+change the main chat’s audio setting. In chat, `/sfx on` enables workflow
+notifications, `/sfx off` disables them and stops active cues, and `/sfx`
+reports the setting. The setting is session-local and starts disabled.
 
 ## Preview controls
 
@@ -31,8 +33,8 @@ numeric strings, out-of-range values and unknown setting keys fail. The lab's
 current preview. Invalid settings leave playback and state untouched. Keyboard
 volume adjustments still clamp and round to whole percentages. Native playback
 also validates volume before locating assets or spawning the player. These
-settings are reused by the notification service; live chat audio still
-requires the audition and opt-in service described below.
+settings are reused by the notification service; live chat audio requires
+explicit opt-in with `/sfx on`.
 
 ## Conversion from the browser component
 
@@ -77,7 +79,7 @@ playback is separate from the agent's optional command-execution tools.
 - `test/audio-notifications.test.ts`: layer ownership, volume, failure isolation
   and cancellation checks with fake players and a silent subprocess.
 
-## Before live workflow integration
+## Live workflow integration
 
 Audition the sounds at comfortable volume on the actual output device. Review
 processing frequency, distinction between retry and warning, and whether
@@ -86,7 +88,10 @@ non-silent signal, PCM format and no clipping; they cannot judge the sound's
 perceived quality.
 
 `AudioNotifications` now provides `layerSilent` and an opt-in `layerLive` with
-immutable volume/mute settings. The Session runtime installs only `layerSilent`.
+immutable volume/mute settings. The Session runtime installs `layerControlled`, initially disabled. `/sfx on`
+enables playback and acquires a player lazily on the next cue; `/sfx off`
+aborts active playback and waits for cleanup. The player is reused until
+session shutdown.
 The live layer acquires one native player without starting playback, and owns
 its cleanup and all active cues. Each `play()` effect observes its caller's
 cancellation and waits for playback cleanup. Muted/zero-volume settings skip

@@ -21,3 +21,10 @@ Include:
 - Error handling patterns
 - Examples copied or adapted from the Effect codebase
 - Notes about what to avoid
+
+## Stock and securities research
+
+- Prefer TIKR for stocks and securities research.
+- The user maintains `TIKR_UN` and `TIKR_PW` in the local `.env`. Never print their values, include them in prompts or tool results, or commit them.
+- These are account credentials, not API credentials. Victral's optional browser research tools use them locally; see [TIKR setup and limitations](docs/TIKR.md). TIKR currently [does not offer an API and warns against automated access](https://support.tikr.com/hc/en-us/articles/38745028283931-Does-TIKR-offer-an-API). Do not promise real-time or complete coverage; use the returned page's dates, units and currency.
+- Clearly identify the source and date of financial data, and say when TIKR data is unavailable rather than silently substituting another source.

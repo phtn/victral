@@ -243,3 +243,20 @@ test('main and compactor independently fall back to ms1.3c with accurate usage a
     expect(usage.some(record => record.purpose === purpose && record.model === 'muse-spark-1.3-contributor' && record.status === 'completed')).toBe(true);
   }
 });
+
+
+test('/sfx reports and changes session audio without playing sound or calling the model', async () => {
+  const play = spyOn(NativeSoundPlayer.prototype, 'play');
+  const close = spyOn(NativeSoundPlayer.prototype, 'close');
+  const session = await Session.open(await options()); sessions.push(session);
+  const output = () => session.snapshot().entries.at(-1)?.text;
+  await session.submit('/sfx'); expect(output()).toContain('SFX disabled.');
+  await session.submit('/sfx on'); expect(output()).toContain('SFX enabled.');
+  await session.submit('/sfx on'); expect(output()).toContain('SFX enabled.');
+  await session.submit('/sfx wrong'); expect(output()).toBe('Usage: /sfx [on | off]');
+  await session.submit('/sfx off extra'); expect(output()).toBe('Usage: /sfx [on | off]');
+  await session.submit('/sfx'); expect(output()).toContain('SFX enabled.');
+  await session.submit('/sfx off'); expect(output()).toContain('SFX disabled.');
+  await session.submit('/help'); expect(output()).toContain('/sfx [on | off]');
+  await session.close(); expect(play).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled();
+});

@@ -7,8 +7,7 @@ Never import from or edit `repos/effect` when implementing application features.
 
 The reference checkout identifies itself as Effect **4.0.3**. Victral pins the
 published **4.0.2** package, with application compilation and runtime tests
-verifying the v4 APIs used here. The reference version is not yet published at
-the initial migration check. See the [baseline](../docs/EFFECT_MIGRATION_BASELINE.md)
+verifying the v4 APIs used here. See the [baseline](../docs/EFFECT_MIGRATION_BASELINE.md)
 for verification and the [runtime conventions](effect-runtime.md) for errors
 and adapters. Do not assume that a v3 package implements these signatures.
 
@@ -20,13 +19,16 @@ Review these files before writing related code:
   optional fields, codecs, transformations, and error handling.
 - [Schema implementation](../repos/effect/packages/effect/src/Schema.ts):
   signatures, supported services, and JSDoc examples.
-- [Schema runtime tests](../repos/effect/packages/effect/test/Schema/Schema.test.ts):
+- [Schema runtime tests](../repos/effect/packages/effect/test/schema/Schema.test.ts):
   success, rejection, parse options, round trips, and formatted errors.
 - [Schema basics](../repos/effect/ai-docs/src/01_effect/02_schema/10_schema-basics.ts):
   domain classes, reusable parsers, and typed application errors.
-- [SchemaGetter tests](../repos/effect/packages/effect/test/Schema/SchemaGetter.test.ts)
+- [SchemaGetter tests](../repos/effect/packages/effect/test/schema/SchemaGetter.test.ts)
   and [implementation](../repos/effect/packages/effect/src/SchemaGetter.ts):
   pure, optional, and effectful transformation getters.
+- [Schema migration guide](../repos/effect/migration/schema.md): v3-to-v4
+  signatures and behavior changes; check the installed dependency before using
+  an API added to the newer reference checkout.
 
 ## Constructors and combinators
 
@@ -110,6 +112,25 @@ encoding boundary. Schemas with asynchronous work or required services need
 appropriate Effect/Promise adapters and supplied services; synchronous adapters
 must not be used to bypass those requirements.
 
+For a JSON string boundary, compose parsing and validation with
+`fromJsonString`, adapted from the reference guide's JSON Support examples:
+
+```ts
+import { Schema } from "effect"
+
+const Payload = Schema.fromJsonString(Schema.Struct({ count: Schema.FiniteFromString }))
+const decodePayload = Schema.decodeUnknownSync(Payload)
+const encodePayload = Schema.encodeSync(Payload)
+
+decodePayload('{"count":"42"}') // { count: 42 }
+encodePayload({ count: 42 }) // '{"count":"42"}'
+```
+
+Both malformed JSON and invalid fields fail decoding. Encoding runs the inner
+codec before serializing. Unknown keys are still ignored by default; set parse
+options explicitly when the boundary requires rejection. Do not use this codec
+to rewrite durable logs that must retain their original bytes and metadata.
+
 For strict configuration, select parse options explicitly:
 
 ```ts
@@ -163,6 +184,39 @@ services. Report expected validation failures through schema issues rather
 than throwing arbitrary exceptions inside a pure getter. Optional-field
 transformations require the optional getter patterns in the reference guide;
 do not substitute missing fields with unchecked defaults.
+
+For a transformation that can fail, return a `SchemaIssue.Issue` through
+`SchemaGetter.transformEffect`. This adapts the URL example in `SCHEMA.md` and
+the failure example in `SchemaGetter.ts`:
+
+```ts
+import { Effect, Schema, SchemaGetter, SchemaIssue } from "effect"
+
+const WebUrlValue = Schema.URL.check(Schema.makeFilter(
+  (url) => url.protocol === "http:" || url.protocol === "https:",
+  { message: "Expected an HTTP(S) URL" }
+))
+const WebUrl = Schema.String.pipe(Schema.decodeTo(WebUrlValue, {
+  decode: SchemaGetter.transformEffect((input, options) => Effect.try({
+    try: () => new URL(input),
+    catch: () => new SchemaIssue.InvalidValue(
+      { message: "Invalid URL string" }, input, options
+    )
+  })),
+  encode: SchemaGetter.transform((url) => url.toString())
+}))
+
+const decodeWebUrl = Schema.decodeUnknownEffect(WebUrl, { reportInput: false })
+const url = await Effect.runPromise(decodeWebUrl("https://example.com"))
+```
+
+The target check applies to decoding and encoding. Passing input and effective
+parse options to the issue constructor preserves the caller's `reportInput`
+policy. Use fixed diagnostic messages; custom messages are not automatically
+sanitized. Prefer built-in transformations and the project's existing URL codec
+when their credential and protocol rules apply. A getter that needs asynchronous
+work or services still uses this pattern, with the Effect decoder providing the
+required environment.
 
 The [task-plan schemas](../src/task-plan-schema.ts) adapt the vendored trim and
 `StructWithRest` examples. Keep limits on raw text before trimming when that is
@@ -494,7 +548,7 @@ annotations and custom filter messages must not interpolate private input.
 ## Typed external I/O failures
 
 [HTTP](../src/core/http.ts) and [MCP](../src/core/mcp.ts) follow the vendored
-[`TaggedError` tests](../repos/effect/packages/effect/test/Schema/Schema.test.ts)
+[`TaggedError` tests](../repos/effect/packages/effect/test/schema/Schema.test.ts)
 and [Schema basics](../repos/effect/ai-docs/src/01_effect/02_schema/10_schema-basics.ts).
 Use `Schema.Literals` for a closed set of failure reasons and `Schema.Defect()`
 for a diagnostic cause whose native shape is not part of the wire contract:

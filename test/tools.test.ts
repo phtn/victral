@@ -83,3 +83,17 @@ test('CLI subprocesses do not inherit credential-like environment variables', as
     expect(output).toContain('removed'); expect(output).not.toContain('present');
   } finally { if (previous === undefined) delete process.env.VICTRAL_TEST_TOKEN; else process.env.VICTRAL_TEST_TOKEN = previous; }
 });
+test('CLI subprocesses exclude TIKR username and password variables', async () => {
+  const { tools } = await fixture(true);
+  const names = ['TIKR_UN', 'TIKR_PW'] as const;
+  const previous = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  for (const name of names) process.env[name] = 'offline-tikr-sentinel';
+  try {
+    const output = await tools.execute('run_command', { program: process.execPath,
+      args: ['--no-env-file', '-e', 'console.log([process.env.TIKR_UN, process.env.TIKR_PW].every(value => value === undefined) ? "removed" : "present")'] });
+    expect(output).toContain('removed'); expect(output).not.toContain('present');
+  } finally {
+    for (const name of names) { if (previous[name] === undefined) delete process.env[name]; else process.env[name] = previous[name]; }
+    await tools.close?.();
+  }
+});

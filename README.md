@@ -59,7 +59,12 @@ bun run start --project /absolute/path/to/your/project
 
 ## Sound notification TUI lab
 
-Preview the sound design before connecting it to agent workflows:
+In a running chat, use `/sfx on` to enable workflow sounds, `/sfx off` to
+stop and disable them, and `/sfx` to check the current setting. Audio starts
+disabled each session. Enabling uses 50% volume and requires macOS `afplay` or
+`ffplay`. Playback failures do not interrupt agent work.
+
+Preview the sound design separately:
 
 ```sh
 bun run sfx
@@ -273,6 +278,16 @@ For a single turn:
 ```sh
 bun run start --project /absolute/path/to/your/project --ask "Inspect this project and tell me what you find."
 ```
+
+## TIKR stock research
+
+With `TIKR_UN` and `TIKR_PW` in the launching environment or `.env`, Victral
+prefers TIKR for stocks and securities research. Install Google Chrome locally;
+the agent's `tikr_search` and `tikr_open` tools use a separate browser session,
+and `tikr_read_page` / `tikr_find_in_page` inspect retained snapshots.
+TIKR warns that automated access can permanently close accounts. Read
+[setup, account risk and coverage limits](docs/TIKR.md) before use.
+Use `/tools` to confirm availability after restarting Victral.
 
 ## Terminal workspace
 

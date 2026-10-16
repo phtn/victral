@@ -18,15 +18,16 @@ import { Runner } from './runner.js';
 import { Integrations, loadIntegrations } from './integrations.js';
 import { Subagents } from './subagents.js';
 import { projectTools, readOnlyProjectTools } from './tools.js';
+import { TikrResearch } from './tikr.js';
 import { errorMessage, type ModelPort, type ToolActivity, type TurnRecord } from './types.js';
 import type { JevStatus } from './jev-status.js';
 import { COMMANDS } from './session-commands.js';
 import { SessionSettings, SessionModels, SessionStorage, SessionMemory, SessionEvaluations, SessionMetrics, releaseSessionResource, sessionExitValue, type ModelOptions } from './core/session-services.js';
-import { AudioNotifications } from './sfx/notifications.js';
+import { AudioNotifications, AudioNotificationControls } from './sfx/notifications.js';
 import { workflowAudioObserver } from './sfx/workflow.js';
 export { COMMANDS } from './session-commands.js';
 
-type SessionEnvironment = SessionSettings | SessionModels | SessionStorage | SessionMemory | SessionEvaluations | SessionMetrics | SessionInstance | AudioNotifications;
+type SessionEnvironment = SessionSettings | SessionModels | SessionStorage | SessionMemory | SessionEvaluations | SessionMetrics | SessionInstance | AudioNotifications | AudioNotificationControls;
 type SessionRuntime = ManagedRuntime.ManagedRuntime<SessionEnvironment, unknown>;
 export interface SessionOptions {
   project: string; chatDir: string; model: string; compactorModel: string;
@@ -75,7 +76,7 @@ export class Session extends EventEmitter {
         },
       }), catch: cause => cause }), agents => tools ? Effect.void : releaseSessionResource('Research workers cleanup', () => agents.close()));
       const ports = yield* Effect.acquireRelease(Effect.try({ try: () => {
-        const ports = projectTools(memory, options.project, { allowShell: options.allowShell, planStore, integrations, subagents: self.subagents });
+        const ports = projectTools(memory, options.project, { allowShell: options.allowShell, planStore, integrations, subagents: self.subagents, tikr: TikrResearch.fromEnv() });
         // Handoff occurs inside uninterruptible acquisition, before publication.
         tools = ports; transferIntegrations(); return ports;
       }, catch: cause => cause }), ports => releaseSessionResource('Agent tools cleanup', () => self.runner ? self.runner.close() : ports.close?.()));
@@ -147,7 +148,7 @@ export class Session extends EventEmitter {
       yield* session.initialize(model, integrations, () => { integrationsTransferred = true; });
       return Context.make(SessionInstance, session).pipe(Context.add(SessionStorage, storage),
         Context.add(SessionMemory, memory), Context.add(SessionEvaluations, evaluations), Context.add(SessionMetrics, metrics));
-    })).pipe(Layer.provideMerge(Layer.mergeAll(Layer.succeed(SessionSettings, options), SessionModels.layer, AudioNotifications.layerSilent)));
+    })).pipe(Layer.provideMerge(Layer.mergeAll(Layer.succeed(SessionSettings, options), SessionModels.layer, AudioNotifications.layerControlled())));
     const runtime: SessionRuntime = ManagedRuntime.make(layer);
     const exit = await runtime.runPromiseExit(SessionInstance);
     if (Exit.isFailure(exit)) {
@@ -205,6 +206,15 @@ export class Session extends EventEmitter {
     if (name === '/exit') { await this.close(); return; }
     if (name === '/cancel') { this.cancel(); return; }
     if (name === '/help') return COMMANDS.map(([cmd, description]) => `${cmd.padEnd(10)} ${description}`).join('\n') + '\n\nType / for suggestions · Tab completes a word · ↑↓ selects suggestions · Esc cancels · Ctrl+P commands · Ctrl+O metrics · Wheel / Shift+↑↓ / PgUp/PgDn scroll · Home/End jump · Ctrl+C cancel / close';
+    if (name === '/sfx') {
+      if (rest.length > 1 || (arg && arg !== 'on' && arg !== 'off')) throw new Error('Usage: /sfx [on | off]');
+      return this.runtime.runPromise(Effect.gen(function*() {
+        const controls = yield* AudioNotificationControls;
+        if (arg) yield* controls.setEnabled(arg === 'on');
+        const enabled = yield* controls.enabled;
+        return `SFX ${enabled ? 'enabled' : 'disabled'}. Session-local. Use /sfx on or /sfx off.`;
+      }));
+    }
     if (name === '/tools') return this.runner.tools.definitions.map(t => `${t.function.name.padEnd(14)} ${t.function.description}`).join('\n') + `\n\nCommand execution: ${this.options.allowShell ? 'enabled' : 'disabled (start with --allow-shell)'}`;
     if (name === '/integrations') return this.executeTool(arg ? 'list_integration_tools' : 'list_integrations', arg ? { server: arg } : {});
     if (name === '/subagents') {

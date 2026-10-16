@@ -47,7 +47,7 @@ export class CommandTools {
     if (this.closed) throw new Error('Command tools are closed.');
     signal?.throwIfAborted();
     const env = { ...process.env };
-    for (const key of Object.keys(env)) if (/(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTHORIZATION)$/i.test(key)) delete env[key];
+    for (const key of Object.keys(env)) if (/(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTHORIZATION)$/i.test(key) || /^TIKR_(?:UN|PW)$/i.test(key)) delete env[key];
     const child = Bun.spawn(argv, { cwd: this.project, env, detached: process.platform !== 'win32', stdin: interactive ? 'pipe' : 'ignore', stdout: 'pipe', stderr: 'pipe' });
     // Kill the entire process group, including children that keep output pipes open.
     const kill = () => {

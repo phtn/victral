@@ -8,7 +8,7 @@ import * as Exit from 'effect/Exit';
 import * as Layer from 'effect/Layer';
 import * as ManagedRuntime from 'effect/ManagedRuntime';
 import { IOError, ValidationError, publicFailureMessage } from '../src/core/errors.js';
-import { AudioNotifications } from '../src/sfx/notifications.js';
+import { AudioNotifications, AudioNotificationControls } from '../src/sfx/notifications.js';
 import { NativeSoundPlayer, type SoundPlayer } from '../src/sfx/player.js';
 import type { SoundName } from '../src/sfx/patch.js';
 
@@ -228,4 +228,42 @@ test('live-layer interruption terminates a real native subprocess without playin
     const audio = await owner.runPromise(AudioNotifications); expect(await owner.runPromise(audio.lastFailure)).toBeUndefined();
     await owner.dispose();
   } finally { controller.abort(); await work; await owner.dispose(); await fs.rm(directory, { recursive: true, force: true }); }
+});
+
+test('controlled notifications start silent, enable lazily, and reuse one scoped player', async () => {
+  const fake = fixture(), owner = ManagedRuntime.make(AudioNotifications.layerControlled({}, fake.make));
+  try {
+    const audio = await owner.runPromise(AudioNotifications), controls = await owner.runPromise(AudioNotificationControls);
+    expect(await owner.runPromise(controls.enabled)).toBe(false);
+    expect(await owner.runPromise(audio.play('success'))).toEqual({ status: 'skipped', reason: 'silent' });
+    expect(fake.acquired()).toBe(0);
+    await owner.runPromise(controls.setEnabled(true));
+    await owner.runPromise(controls.setEnabled(true));
+    expect(fake.acquired()).toBe(0);
+    expect(await owner.runPromise(audio.play('success'))).toEqual({ status: 'played' });
+    await owner.runPromise(controls.setEnabled(false));
+    expect(await owner.runPromise(audio.play('error'))).toEqual({ status: 'skipped', reason: 'silent' });
+    await owner.runPromise(controls.setEnabled(true));
+    expect(await owner.runPromise(audio.play('processing'))).toEqual({ status: 'played' });
+    expect(fake.acquired()).toBe(1); expect(fake.played).toHaveLength(2);
+    await owner.dispose(); expect(fake.closed()).toBe(1);
+    await Effect.runPromise(controls.setEnabled(true));
+    expect(Effect.runSync(controls.enabled)).toBe(false);
+  } finally { await owner.dispose(); }
+});
+
+test('disabling notifications aborts active cues and waits for their cleanup', async () => {
+  const held = heldCue(), fake = fixture((_sound, _volume, signal) => held.play(signal));
+  const owner = ManagedRuntime.make(AudioNotifications.layerControlled({}, fake.make));
+  try {
+    const audio = await owner.runPromise(AudioNotifications), controls = await owner.runPromise(AudioNotificationControls);
+    await owner.runPromise(controls.setEnabled(true));
+    const work = owner.runPromiseExit(audio.play('processing')); await held.started.promise;
+    let disabled = false;
+    const disabling = owner.runPromise(controls.setEnabled(false)).then(() => { disabled = true; });
+    await held.aborted.promise; expect(disabled).toBe(false);
+    expect(await owner.runPromise(audio.play('success'))).toEqual({ status: 'skipped', reason: 'silent' });
+    held.finish.resolve(); expect(Exit.hasInterrupts(await work)).toBe(true);
+    await disabling; expect(disabled).toBe(true); expect(fake.played).toHaveLength(1);
+  } finally { held.finish.resolve(); await owner.dispose(); }
 });

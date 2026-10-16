@@ -21,6 +21,7 @@ export function commandCompletion(input: string, cursor = Array.from(input).leng
   const lowered = fragment.toLowerCase();
   if (before.startsWith('/') && !/[\r\n]/.test(input)) {
     if (tokens.length === 1) suggestions = COMMANDS.map(([name]) => name).filter(name => name.startsWith(lowered));
+    else if (tokens[0] === '/sfx' && tokens.length === 2) suggestions = ['on', 'off'].filter(value => value.startsWith(lowered));
     else if (tokens[0] === '/model') {
       if (tokens.length === 2) suggestions = PROVIDERS.filter(provider => provider.startsWith(lowered));
       if (tokens.length === 3 && PROVIDERS.includes(tokens[1]!.toLowerCase())) {

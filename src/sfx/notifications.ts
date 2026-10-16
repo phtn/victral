@@ -19,6 +19,11 @@ export interface AudioNotificationService {
   readonly lastFailure: Effect.Effect<IOError | undefined>;
 }
 
+export class AudioNotificationControls extends Context.Service<AudioNotificationControls, {
+  readonly enabled: Effect.Effect<boolean>;
+  readonly setEnabled: (enabled: boolean) => Effect.Effect<void>;
+}>()('victral/sfx/AudioNotificationControls') {}
+
 export class AudioNotifications extends Context.Service<AudioNotifications, AudioNotificationService>()('victral/sfx/AudioNotifications') {
   // Selecting a live layer is a separate opt-in; unmuting cannot enable audio.
   static readonly layerSilent = Layer.succeed(AudioNotifications, {
@@ -28,7 +33,16 @@ export class AudioNotifications extends Context.Service<AudioNotifications, Audi
   });
 
   static layerLive(settings: unknown = {}, makePlayer: () => SoundPlayer = () => new NativeSoundPlayer()): Layer.Layer<AudioNotifications, ValidationError> {
-    return Layer.effect(AudioNotifications, Effect.gen(function*() {
+    return Layer.effect(AudioNotifications, AudioNotifications.make(settings, makePlayer, true));
+  }
+
+  static layerControlled(settings: unknown = {}, makePlayer: () => SoundPlayer = () => new NativeSoundPlayer()): Layer.Layer<AudioNotifications | AudioNotificationControls, ValidationError> {
+    return Layer.effectContext(Effect.map(AudioNotifications.make(settings, makePlayer, false), audio =>
+      Context.make(AudioNotifications, audio).pipe(Context.add(AudioNotificationControls, audio))));
+  }
+
+  private static make(settings: unknown, makePlayer: () => SoundPlayer, initiallyEnabled: boolean) {
+    return Effect.gen(function*() {
       // Decode before acquiring native resources, including for muted settings.
       const configured = Object.freeze(yield* Effect.try({
         try: () => parseAudioSettings(settings),
@@ -36,31 +50,46 @@ export class AudioNotifications extends Context.Service<AudioNotifications, Audi
           boundary: 'Audio settings', message: 'Audio settings are invalid.', cause,
         }),
       }));
-      let closed = false, lastFailure: IOError | undefined;
+      let enabled = initiallyEnabled, closed = false, lastFailure: IOError | undefined;
       const active = new Map<AbortController, Promise<void>>();
       const failed = (operation: string, cause: unknown): IOError => {
         const error = new IOError({ operation, cause }); lastFailure = error; return error;
       };
-      const resource = yield* Effect.acquireRelease(
-        // Device discovery failure degrades audio, without failing the session.
-        Effect.result(Effect.try({ try: makePlayer, catch: cause => failed('Audio player startup', cause) })),
-        resource => Effect.promise(async () => {
+      // The controlled layer acquires no native player until the first enabled cue.
+      const acquire = () => {
+        try { return Result.succeed(makePlayer()); }
+        catch (cause) { return Result.fail(failed('Audio player startup', cause)); }
+      };
+      const owner = yield* Effect.acquireRelease(
+        Effect.sync(() => ({ resource: initiallyEnabled ? acquire() : undefined })),
+        owner => Effect.promise(async () => {
           closed = true;
           for (const controller of active.keys()) controller.abort();
-          if (Result.isSuccess(resource)) {
-            try { await resource.success.close(); } catch (cause) { failed('Audio player cleanup', cause); }
+          if (owner.resource && Result.isSuccess(owner.resource)) {
+            try { await owner.resource.success.close(); } catch (cause) { failed('Audio player cleanup', cause); }
           }
           // close() may only stop the device; await every playback's own cleanup.
           await Promise.allSettled(active.values());
         }),
       );
       return {
+        enabled: Effect.sync(() => enabled && !closed),
+        setEnabled: (value: boolean) => Effect.suspend(() => {
+          if (closed) return Effect.void;
+          enabled = value;
+          if (value) return Effect.void;
+          const pending = [...active.values()];
+          for (const controller of active.keys()) controller.abort();
+          return Effect.promise(async () => { await Promise.allSettled(pending); });
+        }),
         settings: configured,
         lastFailure: Effect.sync(() => lastFailure),
         play: Effect.fn('AudioNotifications.play')((sound: SoundName) => Effect.suspend(() => {
           if (closed) return Effect.succeed<AudioPlayback>({ status: 'skipped', reason: 'closed' });
+          if (!enabled) return Effect.succeed<AudioPlayback>({ status: 'skipped', reason: 'silent' });
           if (configured.muted) return Effect.succeed<AudioPlayback>({ status: 'skipped', reason: 'muted' });
           if (configured.volume === 0) return Effect.succeed<AudioPlayback>({ status: 'skipped', reason: 'zero-volume' });
+          const resource = owner.resource ??= acquire();
           if (Result.isFailure(resource)) return Effect.succeed<AudioPlayback>({ status: 'failed', error: resource.failure });
           const player = resource.success;
           if (!player.available) return Effect.succeed<AudioPlayback>({ status: 'skipped', reason: 'unavailable' });
@@ -85,7 +114,7 @@ export class AudioNotifications extends Context.Service<AudioNotifications, Audi
             return Effect.promise(() => work);
           });
         })),
-      } satisfies AudioNotificationService;
-    }));
+      };
+    });
   }
 }
