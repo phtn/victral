@@ -646,8 +646,8 @@ cancellation require them. Never remove these merely because a fiber also exists
 The user-requested [FallbackModel](../src/fallback-model.ts) wraps only session
 agent/compactor selections. Healthy calls retain the configured provider and exact
 messages/options. On a lone typed provider failure, the original response scope
-must finish before constructing/requesting ms1.3c. Cache the replacement per role
-and keep it active for the session; never recursively retry the replacement.
+must finish before constructing/requesting `muse-wonder-full`. Cache the replacement
+per role and keep it active for the session; never recursively retry the replacement.
 Construction failure can also select it before any request. Native createModel and
 research-worker/Jev policies remain unchanged.
 

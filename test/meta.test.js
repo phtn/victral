@@ -17,7 +17,7 @@ test('Meta request groups tool results and preserves encrypted reasoning exactly
     { role: 'assistant', content: [], _metaContent: native },
     { role: 'tool', tool_call_id: 'call1', content: [{ type: 'text', text: 'decision' }] },
     { role: 'tool', tool_call_id: 'call2', content: [{ type: 'text', text: 'date' }] },
-  ], [{ function: { name: 'zoom', description: 'retrieve', parameters: { type: 'object' } } }], 'muse-spark-1.3', undefined, 'compactor');
+  ], [{ function: { name: 'zoom', description: 'retrieve', parameters: { type: 'object' } } }], 'muse-wonder-1.0', undefined, 'compactor');
   assert.equal(request.system, 'stable instructions');
   assert.deepEqual(request.messages[1].content, native);
   assert.equal(request.messages.length, 3);
@@ -54,7 +54,7 @@ test('Meta streaming retains signatures and encrypted blocks without logging rea
   assert.equal(logs[0].kind, 'tool');
 });
 test('model selection supports Meta and only the two requested OpenAI models', () => {
-  assert.deepEqual(MODELS, ['muse-spark-1.3', 'muse-spark-1.3-contributor', 'gpt-6-luna', 'gpt-6.1-sol']);
+  assert.deepEqual(MODELS, ['muse-wonder-1.0', 'muse-wonder-full', 'gpt-6-luna', 'gpt-6.1-sol']);
   for (const model of MODELS) {
     const provider = createModel(model, { apiKey: 'test-key' });
     assert.equal(provider.model, model);
@@ -62,18 +62,18 @@ test('model selection supports Meta and only the two requested OpenAI models', (
   }
   assert.throws(() => createModel('unknown'), /Unsupported model/);
 });
-test('default model is the Meta contributor tier', () => {
-  assert.equal(MODEL, 'muse-spark-1.3-contributor');
+test('default model is Meta Muse Wonder 1.0', () => {
+  assert.equal(MODEL, 'muse-wonder-1.0');
   assert.ok(createModel(MODEL, { apiKey: 'test-key' }) instanceof Meta);
 });
 test('model input accepts numbers, case variants, and unambiguous short names', () => {
   assert.equal(MODEL_INFO.length, 4);
-  assert.ok(formatModelsList().includes('1. muse-spark-1.3'));
-  assert.ok(formatModelsList().includes('2. muse-spark-1.3-contributor'));
+  assert.ok(formatModelsList().includes('1. muse-wonder-1.0'));
+  assert.ok(formatModelsList().includes('2. muse-wonder-full'));
   assert.equal(resolveModelId('1'), MODELS[0]);
   assert.equal(resolveModelId('2'), MODELS[1]);
-  assert.equal(resolveModelId('MUSE-SPARK-1.3'), 'muse-spark-1.3');
-  assert.equal(resolveModelId('contributor'), 'muse-spark-1.3-contributor');
+  assert.equal(resolveModelId('MUSE-WONDER-1.0'), 'muse-wonder-1.0');
+  assert.equal(resolveModelId('full'), 'muse-wonder-full');
   for (const { id, shortName } of MODEL_INFO) {
     assert.equal(resolveModelId(shortName), id);
     assert.equal(resolveModelId(` ${shortName.toUpperCase()} `), id);
@@ -84,12 +84,12 @@ test('model input accepts numbers, case variants, and unambiguous short names', 
   assert.equal(resolveModelId('4'), 'gpt-6.1-sol');
   assert.equal(resolveModelId('OPENAI luna6'), 'gpt-6-luna');
   assert.equal(resolveModelId('openai gpt-6.1-sol'), 'gpt-6.1-sol');
-  assert.equal(resolveModelId('meta ms1.3'), 'muse-spark-1.3');
+  assert.equal(resolveModelId('meta mw1.0'), 'muse-wonder-1.0');
   assert.equal(resolveModelId('openai 3'), 'gpt-6-luna');
   assert.throws(() => resolveModelId('meta luna6'), /Unknown model/);
   assert.throws(() => resolveModelId('openai 1'), /belong to openai/);
   assert.throws(() => resolveModelId('5'), /between 1 and 4/);
-  assert.throws(() => resolveModelId('muse-spark'), /several models/);
+  assert.throws(() => resolveModelId('muse-wonder'), /several models/);
   assert.throws(() => resolveModelId('unknown'), /Unknown model/);
   assert.throws(() => resolveModelId(''), /Choose a model/);
 });

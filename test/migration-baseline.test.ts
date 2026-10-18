@@ -13,7 +13,7 @@ import { baselineTools, baselineMessages } from './migration-fixtures.js';
 
 const fixture = (name: string) => Bun.file(new URL(`./fixtures/effect-migration/${name}`, import.meta.url));
 const options = (directory: string): SessionOptions => ({ project: directory, chatDir: path.join(directory, 'chat'),
-  model: 'muse-spark-1.3', compactorModel: 'muse-spark-1.3', allowShell: false, jev: false, metrics: false });
+  model: 'muse-wonder-1.0', compactorModel: 'muse-wonder-1.0', allowShell: false, jev: false, metrics: false });
 
 test('migration baseline preserves prompt, tool-schema and native provider request bytes', async () => {
   const tools = baselineTools();

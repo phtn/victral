@@ -8,7 +8,7 @@ import type { ProviderOptions, ProviderResult, RequestOptions, StreamOptions } f
 import type { Message } from './types.js';
 import { toolExitValue } from './tool-effects.js';
 
-export const FALLBACK_MODEL = 'muse-spark-1.3-contributor';
+export const FALLBACK_MODEL = 'muse-wonder-full';
 type Provider = { model: string; effects: ProviderService };
 export type ModelFactory = (model: string, options: ProviderOptions) => Provider;
 // Startup configuration may be invalid: let the owning model attempt fallback.
@@ -28,7 +28,7 @@ export class FallbackModel {
     catch (primary) {
       if (this.configuredModel === FALLBACK_MODEL) throw primary;
       try { this.current = this.getFallback(); }
-      catch (fallback) { throw new AggregateError([primary, fallback], 'Unable to initialize configured model or ms1.3c fallback. Check model configuration and Meta credentials.'); }
+      catch (fallback) { throw new AggregateError([primary, fallback], 'Unable to initialize configured model or muse-wonder-full fallback. Check model configuration and Meta credentials.'); }
       this.notify();
     }
     const owner = this;
@@ -63,7 +63,7 @@ export class FallbackModel {
           || !(reason.error instanceof ProviderFailure || reason.error instanceof ProviderOutputLimit)) return Effect.failCause(cause);
         return Effect.gen({ self: this }, function*() {
           const fallback = yield* Effect.try({ try: () => this.getFallback(), catch: error => new ProviderFailure({
-            provider: FALLBACK_MODEL, reason: 'provider', message: 'Unable to initialize ms1.3c fallback. Check Meta credentials.', cause: error,
+            provider: FALLBACK_MODEL, reason: 'provider', message: 'Unable to initialize muse-wonder-full fallback. Check Meta credentials.', cause: error,
           }) }).pipe(Effect.catchCause(fallbackCause => Effect.failCause(Cause.combine(cause, fallbackCause))));
           const changed = this.current.model !== FALLBACK_MODEL;
           this.current = fallback;

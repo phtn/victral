@@ -8,7 +8,7 @@ export const JOBS = 8
 export const TRIES = 5
 export const CAP = 30_000
 export const BLOCK_LINES = 4
-export const MODEL = 'muse-spark-1.3-contributor'
+export const MODEL = 'muse-wonder-1.0'
 export const bytes = (text) => Buffer.byteLength(text, 'utf8')
 export function cutBytes(text, limit) {
   const data = Buffer.from(text)

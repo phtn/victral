@@ -18,7 +18,7 @@ Usage: victral [options]
   --project PATH          Project root (default: current directory)
   --chat-dir PATH         Persistent chat directory
   --model ID              Main agent model (number, short name, or full ID; see --models)
-  --compactor-model ID    Background memory model (defaults to --model; fallback ms1.3c)
+  --compactor-model ID    Background memory model (defaults to --model; fallback muse-wonder-full)
   --instructions FILE     Load custom instructions instead of AGENTS.md
   --allow-shell           Enable CLI, shell and background command tools
   --web-search            Enable provider web search (additional provider charges)
@@ -69,7 +69,7 @@ async function main(): Promise<void> {
     return
   }
   if (values.models) {
-    console.log(`Available models:\n${formatModelsList()}\n\nSelect with --model <number, short name, or ID>, e.g. --model ms1.3c.`)
+    console.log(`Available models:\n${formatModelsList()}\n\nSelect with --model <number, short name, or ID>, e.g. --model mwfull.`)
     return
   }
   if (values.plain && values.tui) throw new Error('Choose either --plain or --tui.')

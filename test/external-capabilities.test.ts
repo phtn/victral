@@ -140,13 +140,13 @@ test('session receives late research reports, saves them as work and drains the 
   }) as unknown as typeof fetch;
   let session: Awaited<ReturnType<typeof Session.open>> | undefined;
   try {
-    session = await Session.open({ project: directory, chatDir: path.join(directory, 'chat'), model: 'muse-spark-1.3', compactorModel: 'muse-spark-1.3', allowShell: false, jev: false, metrics: true, webSearch: true });
+    session = await Session.open({ project: directory, chatDir: path.join(directory, 'chat'), model: 'muse-wonder-1.0', compactorModel: 'muse-wonder-1.0', allowShell: false, jev: false, metrics: true, webSearch: true });
     await session.submit('Use a subagent to research files');
     expect(parentCalls).toBe(2); expect(session.snapshot().active).toBe(false);
     release(); await session.settle(new AbortController().signal);
     expect(parentCalls).toBe(3);
     expect(JSON.stringify(requests.at(-1))).toContain('Research finding from worker');
-    expect(session.storage.root.some((entry: { kind: string; text: string }) => entry.kind === 'work' && entry.text.includes('[Subagent inspect; completed; muse-spark-1.3]'))).toBe(true);
+    expect(session.storage.root.some((entry: { kind: string; text: string }) => entry.kind === 'work' && entry.text.includes('[Subagent inspect; completed; muse-wonder-1.0]'))).toBe(true);
     expect(session.storage.load('usage').filter((record: { purpose?: string }) => record.purpose === 'subagent')).toHaveLength(1);
     expect(session.snapshot().entries.at(-1)?.text).toContain('Parent reviewed');
   } finally {

@@ -14,7 +14,7 @@ test('status bar filters commands and Tab completes command, provider, and model
   const submitted: string[] = [];
   const session: WorkspaceSession & EventEmitter = Object.assign(new EventEmitter(), {
     options: { project: '/tmp/completion', allowShell: false }, metrics: { detailed: () => 'Usage' },
-    snapshot: () => ({ entries: [], model: 'muse-spark-1.3', active: false, phase: 'Ready', metrics: '', jev: { state: 'disabled', completed: 0, pending: 0, errors: 0, skipped: 0 } }),
+    snapshot: () => ({ entries: [], model: 'muse-wonder-1.0', active: false, phase: 'Ready', metrics: '', jev: { state: 'disabled', completed: 0, pending: 0, errors: 0, skipped: 0 } }),
     submit: async (input: string) => { submitted.push(input); }, cancel: () => {}, close: async () => {},
   });
   const view = render(session); await flush();
@@ -33,7 +33,7 @@ test('status bar filters commands and Tab completes command, provider, and model
   view.stdin.write('s'); await flush();
   expect(footer()).toContain('[sol6.1]'); expect(footer()).not.toContain('luna6');
   view.stdin.write('\t'); await flush();
-  expect(footer()).toContain('ms1.3'); expect(footer()).toContain('Jev');
+  expect(footer()).toContain('mw1.0'); expect(footer()).toContain('Jev');
   expect(submitted).toEqual([]);
   view.stdin.write('\r'); await flush();
   expect(submitted).toEqual(['/model openai sol6.1 ']);
@@ -58,19 +58,19 @@ test('workspace renders Codex layout, opens command menu and metrics, and submit
   const empty = {
     options: { project: '/tmp/victral-empty', allowShell: false },
     metrics: { detailed: () => 'empty' },
-    snapshot: () => ({ entries: [], model: 'muse-spark-1.3', active: false, phase: 'Ready', metrics: '' }),
+    snapshot: () => ({ entries: [], model: 'muse-wonder-1.0', active: false, phase: 'Ready', metrics: '' }),
     submit: async () => {}, cancel: () => {}, close: async () => {},
     on: () => {}, off: () => {},
   } as unknown as DemoSession;
   const emptyView = render(empty); await flush();
   expect(emptyView.lastFrame()).toContain('Victral'); expect(emptyView.lastFrame()).toContain('(v0.2.0)');
   expect(emptyView.lastFrame()).toContain('A half-formed idea will do.');
-  expect(emptyView.lastFrame()).toContain('ms1.3 · /tmp/victral-empty');
+  expect(emptyView.lastFrame()).toContain('mw1.0 · /tmp/victral-empty');
   emptyView.unmount();
   const session = new DemoSession();
   const view = render(session); await flush();
   expect(view.lastFrame()).toContain('Victral'); expect(view.lastFrame()).toContain('(v0.2.0)');
-  expect(view.lastFrame()).toContain('ms1.3c ·');
+  expect(view.lastFrame()).toContain('mw1.0 ·');
   view.stdin.write('\x10'); await flush(); expect(view.lastFrame()).toContain('/help'); expect(view.lastFrame()).toContain('COMMANDS');
   view.stdin.write('\x1b'); await flush();
   view.stdin.write('\x0f'); await flush(); expect(view.lastFrame()).toContain('DEMO METRICS'); expect(view.lastFrame()).toContain('METRICS');
@@ -90,7 +90,7 @@ test('clicking response controls copies the original Markdown and respects scrol
   const markdown = '# Hello 🦓\n\n**bold** and [link](https://example.com)\n\n```ts\nconst value = 1;\n```';
   const state: SessionState = {
     entries: [{ id: 1, role: 'victral', text: markdown }, { id: 2, role: 'victral', text: Array.from({ length: 50 }, (_, i) => `Later line ${i}`).join('  \n') }],
-    model: 'muse-spark-1.3', active: false, phase: 'Ready', metrics: '',
+    model: 'muse-wonder-1.0', active: false, phase: 'Ready', metrics: '',
   };
   const session: WorkspaceSession & EventEmitter = Object.assign(new EventEmitter(), {
     options: { project: '/tmp/copy', allowShell: false }, metrics: { detailed: () => 'Usage' },
@@ -147,7 +147,7 @@ test('clipboard errors remain in the response control and allow retry', async ()
 test('thread scrolls by wheel and keyboard, holds its place during streaming, and follows again at the bottom', async () => {
   const state: SessionState = {
     entries: [{ id: 0, role: 'victral', text: Array.from({ length: 60 }, (_, i) => `Thread line ${i.toString().padStart(2, '0')}`).join('  \n') }],
-    model: 'muse-spark-1.3', active: false, phase: 'Ready', metrics: '',
+    model: 'muse-wonder-1.0', active: false, phase: 'Ready', metrics: '',
   };
   const session: WorkspaceSession & EventEmitter = Object.assign(new EventEmitter(), {
     options: { project: '/tmp/scroll', allowShell: false }, metrics: { detailed: () => 'Usage' },
@@ -194,7 +194,7 @@ test('thread scrolls by wheel and keyboard, holds its place during streaming, an
 test('workspace renders incremental Markdown and keeps work visible through panels and tool phases', async () => {
   const state: SessionState = {
     entries: [{ id: 0, role: 'you', text: 'Explain it' }, { id: 1, role: 'victral', text: '# Answer\n\n**Partial**' }],
-    model: 'muse-spark-1.3-contributor', active: true, phase: 'Responding', metrics: '',
+    model: 'muse-wonder-full', active: true, phase: 'Responding', metrics: '',
     jev: { state: 'enabled', completed: 0, pending: 1, errors: 0, skipped: 0 },
   };
   const session: WorkspaceSession & EventEmitter = Object.assign(new EventEmitter(), {
@@ -214,8 +214,8 @@ test('workspace renders incremental Markdown and keeps work visible through pane
   expect(view.lastFrame()).toContain('Usage'); expect(view.lastFrame()).toContain('Working · Running read_file');
   state.active = false; session.emit('update'); await flush();
   expect(view.lastFrame()).not.toContain('Working');
-  state.model = 'muse-spark-1.3'; session.emit('update'); await flush();
-  expect(view.lastFrame()).toContain('ms1.3 · /tmp/markdown');
+  state.model = 'muse-wonder-1.0'; session.emit('update'); await flush();
+  expect(view.lastFrame()).toContain('mw1.0 · /tmp/markdown');
   state.jev = { state: 'enabled', completed: 1, pending: 0, errors: 0, skipped: 0, risks: { unsupported: 0.02, omitted: 0.01, inflated: 0 } };
   session.emit('update'); await flush();
   expect(view.lastFrame()!.split('\n').findLast(line => line.includes('Jev'))!.trimEnd()).toEndWith('Jev 1✓ · U2% O1% P0%');
@@ -230,7 +230,7 @@ test('workspace adapts to narrow terminals and handles live resizing', async () 
   expect(view.lastFrame()!.split('\n').every(line => stringWidth(line) <= 44)).toBe(true);
   const footer = view.lastFrame()!.split('\n').findLast(line => line.includes('Jev'))!.trimEnd();
   expect(footer).toEndWith('Jev 12✓ 1… · U2% O1% P0%');
-  expect(footer).toContain('ms1.3c');
+  expect(footer).toContain('mw1.0');
   expect(stringWidth(footer)).toBe(43);
   Object.defineProperty(view.stdout, 'columns', { configurable: true, value: 30 });
   view.stdout.emit('resize'); await flush(); expect(view.lastFrame()).toContain('resize terminal');

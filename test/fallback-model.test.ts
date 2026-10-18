@@ -20,7 +20,7 @@ test('healthy requests preserve result identity and never construct or call the 
   expect(constructed).toEqual(['gpt-6-luna']); expect(model.model).toBe('gpt-6-luna'); expect(notices).toBe(0);
 });
 
-test.each(['chat', 'stream'] as const)('%s errors switch once and later requests stay on ms1.3c', async method => {
+test.each(['chat', 'stream'] as const)('%s errors switch once and later requests stay on muse-wonder-full', async method => {
   const calls: string[] = [], constructed: string[] = []; let notices = 0;
   const factory: ModelFactory = (id, options) => {
     constructed.push(id); expect(options.purpose).toBe('compactor');
@@ -44,8 +44,8 @@ test('invalid configuration falls back during construction without a request', (
 test('both initialization failures are retained and an already-selected fallback is not initialized twice', () => {
   let calls = 0;
   const factory: ModelFactory = () => { calls++; throw new Error('missing credential'); };
-  expect(() => new FallbackModel('luna6', {}, undefined, factory)).toThrow('ms1.3c fallback'); expect(calls).toBe(2);
-  calls = 0; expect(() => new FallbackModel('ms1.3c', {}, undefined, factory)).toThrow('missing credential'); expect(calls).toBe(1);
+  expect(() => new FallbackModel('luna6', {}, undefined, factory)).toThrow('muse-wonder-full fallback'); expect(calls).toBe(2);
+  calls = 0; expect(() => new FallbackModel('mwfull', {}, undefined, factory)).toThrow('missing credential'); expect(calls).toBe(1);
 });
 
 test('failed fallback requests stop without a loop and retain both causes', async () => {

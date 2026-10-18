@@ -25,7 +25,7 @@ const complete = (provider: 'Meta' | 'OpenAI') => provider === 'Meta'
 
 for (const Provider of [Meta, OpenAI]) {
   const name = Provider.name as 'Meta' | 'OpenAI';
-  const modelName = name === 'Meta' ? 'ms1.3' : 'luna6';
+  const modelName = name === 'Meta' ? 'mw1.0' : 'luna6';
   test(`${name} scoped service interruption drains a stalled reader, keeps partial text and reports once`, async () => {
     const visible = gate(), canceled = gate(), released = gate(), records: UsageRecord[] = [], texts: string[] = [];
     let requests = 0, signal!: AbortSignal, body!: ReadableStream<Uint8Array>, finished = false;
@@ -188,7 +188,7 @@ test('request attribution, ids and TTFT belong to the selected model and first n
 });
 
 for (const name of ['Meta', 'OpenAI'] as const) {
-  const modelName = name === 'Meta' ? 'ms1.3' : 'luna6';
+  const modelName = name === 'Meta' ? 'mw1.0' : 'luna6';
   test(`${name} cancellation drains an asynchronous entry callback before releasing the response`, async () => {
     const entered = gate(), release = gate(), aborted = gate(); let signal!: AbortSignal, finished = false;
     const records: UsageRecord[] = [];

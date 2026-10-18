@@ -1,6 +1,6 @@
 export const MODEL_INFO = [
-  { id: 'muse-spark-1.3', shortName: 'ms1.3', provider: 'Meta', credential: 'META_API_KEY or MODEL_API_KEY' },
-  { id: 'muse-spark-1.3-contributor', shortName: 'ms1.3c', provider: 'Meta', credential: 'META_API_KEY or MODEL_API_KEY' },
+  { id: 'muse-wonder-1.0', shortName: 'mw1.0', provider: 'Meta', credential: 'META_API_KEY or MODEL_API_KEY' },
+  { id: 'muse-wonder-full', shortName: 'mwfull', provider: 'Meta', credential: 'META_API_KEY or MODEL_API_KEY' },
   { id: 'gpt-6-luna', shortName: 'luna6', provider: 'OpenAI', credential: 'OPENAI_API_KEY' },
   { id: 'gpt-6.1-sol', shortName: 'sol6.1', provider: 'OpenAI', credential: 'OPENAI_API_KEY' },
 ];
@@ -14,8 +14,7 @@ export function formatModelsList(provider?: string) {
   return MODEL_INFO.flatMap((entry, index) => !provider || entry.provider.toLowerCase() === provider.toLowerCase()
     ? [`  ${index + 1}. ${entry.id} (${entry.provider}; alias ${entry.shortName}; needs ${entry.credential})`] : []).join('\n');
 }
-// Resolve exact aliases before partial IDs, so ms1.3 selects Standard even
-// though the Contributor alias starts with the same characters.
+// Resolve exact aliases before partial IDs so a shorter alias can share a prefix.
 export function resolveModelId(input: unknown) {
   let text = String(input ?? '').trim();
   const parts = text.split(/\s+/);

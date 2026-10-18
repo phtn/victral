@@ -143,7 +143,7 @@ test('provider instrumentation records measured latency, first text, tokens, and
     { type: 'message_stop' },
   ];
   const records = [];
-  const model = createModel('muse-spark-1.3-contributor', { apiKey: 'test-key', usage: r => records.push(r), fetchImpl: async () => new Response(events.map(e => `data: ${JSON.stringify(e)}\n\n`).join('')) });
+  const model = createModel('muse-wonder-full', { apiKey: 'test-key', usage: r => records.push(r), fetchImpl: async () => new Response(events.map(e => `data: ${JSON.stringify(e)}\n\n`).join('')) });
   await model.stream([]);
   expect(records).toHaveLength(1);
   expect(records[0].latency_ms).toBeGreaterThanOrEqual(0);

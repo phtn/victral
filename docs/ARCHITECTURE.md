@@ -56,8 +56,8 @@ entry points remain usable. Runtime disposal runs outside the runtime it closes.
 
 The main agent and compactor have independent configured-model-first wrappers.
 Configuration/credential construction errors and lone typed provider failures switch
-that role to `ms1.3c` for the session. This policy was explicitly requested after
-the migration, on October 16, 2026. Native `createModel` remains strict for standalone
+that role to `muse-wonder-full` for the session. This policy was explicitly requested
+after the migration, on October 16, 2026. Native `createModel` remains strict for standalone
 callers; research workers and Jev keep their existing selection/retry policies.
 
 Fallback initialization uses Meta environment credentials, never an OpenAI key from

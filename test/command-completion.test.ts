@@ -19,7 +19,7 @@ test('completion narrows commands, then providers, then models one word at a tim
   const third = completeCommand('/model openai s', model)!;
   expect(third.input).toBe('/model openai sol6.1 ');
   expect(commandCompletion(third.input).suggestions).toEqual([]);
-  expect(commandCompletion('/model meta ').suggestions).toEqual(['ms1.3', 'ms1.3c']);
+  expect(commandCompletion('/model meta ').suggestions).toEqual(['mw1.0', 'mwfull']);
   expect(commandCompletion('/model openai gpt-6.1').suggestions).toEqual(['sol6.1']);
   expect(commandCompletion('/model openai 3').suggestions).toEqual(['luna6']);
 });

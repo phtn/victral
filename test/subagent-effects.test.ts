@@ -221,7 +221,7 @@ globalThis.fetch = async (_url, init) => {
     { type: 'message_delta', delta: { stop_reason: content[0].type === 'tool_use' ? 'tool_use' : 'end_turn' }, usage: { output_tokens: 10 } }, { type: 'message_stop' }];
   return new Response(events.map(event => 'data: ' + JSON.stringify(event) + '\\n\\n').join(''));
 };`);
-  const argv = [process.execPath, '--preload', preload, path.resolve(import.meta.dir, '../src/cli.ts'), '--plain', '--model', 'ms1.3', '--project', directory, '--chat-dir', chat, '--no-jev', '--no-metrics', ...(mode === 'ask' ? ['--ask', 'Research files'] : [])];
+  const argv = [process.execPath, '--preload', preload, path.resolve(import.meta.dir, '../src/cli.ts'), '--plain', '--model', 'mw1.0', '--project', directory, '--chat-dir', chat, '--no-jev', '--no-metrics', ...(mode === 'ask' ? ['--ask', 'Research files'] : [])];
   const child = Bun.spawn(argv, { cwd: directory, env: { ...process.env, META_API_KEY: 'offline-worker-fixture' }, stdin: mode === 'pipe' ? new TextEncoder().encode('Research files\n') : 'ignore', stdout: 'pipe', stderr: 'pipe' });
   const timer = setTimeout(() => child.kill(), 4000);
   let output: string, error: string, code: number;
@@ -234,7 +234,7 @@ globalThis.fetch = async (_url, init) => {
   const { Storage } = await import('../src/storage.js');
   const storage = await Storage.open(chat);
   try {
-    expect(storage.root.filter((entry: { kind: string; text: string }) => entry.kind === 'work' && entry.text.includes('[Subagent inspect; completed; muse-spark-1.3]'))).toHaveLength(1);
+    expect(storage.root.filter((entry: { kind: string; text: string }) => entry.kind === 'work' && entry.text.includes('[Subagent inspect; completed; muse-wonder-1.0]'))).toHaveLength(1);
     expect(storage.load('usage').filter((record: { purpose?: string }) => record.purpose === 'subagent')).toHaveLength(1);
   } finally { await storage.close(); }
 });

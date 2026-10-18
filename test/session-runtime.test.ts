@@ -47,7 +47,7 @@ function offlineMeta(init: RequestInit | undefined, content: Array<Record<string
 async function options(): Promise<SessionOptions> {
   process.env.META_API_KEY = 'offline-runtime-fixture';
   const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'victral-runtime-'))); directories.push(directory);
-  return { project: directory, chatDir: path.join(directory, 'chat'), model: 'muse-spark-1.3', compactorModel: 'muse-spark-1.3', allowShell: false, jev: false, metrics: true };
+  return { project: directory, chatDir: path.join(directory, 'chat'), model: 'muse-wonder-1.0', compactorModel: 'muse-wonder-1.0', allowShell: false, jev: false, metrics: true };
 }
 type Resource = 'commands' | 'integrations' | 'workers' | 'runner' | 'memory' | 'evaluations' | 'metrics' | 'storage';
 function cleanup(failures: Partial<Record<Resource, Error>> = {}) {
@@ -89,8 +89,8 @@ test('one session runtime shares settings/storage across completed turns and syn
   expect(await runtime.runPromise(audio.play('success'))).toEqual({ status: 'skipped', reason: 'silent' });
   const legacyTool = spyOn(ToolRegistry.prototype, 'execute');
   await session.submit('/plan'); expect(legacyTool).not.toHaveBeenCalled();
-  await session.submit('First turn'); await session.submit('/model ms1.3c'); await session.submit('Second turn');
-  expect(session.snapshot().model).toBe('muse-spark-1.3-contributor'); expect(session.options.compactorModel).toBe('muse-spark-1.3');
+  await session.submit('First turn'); await session.submit('/model mwfull'); await session.submit('Second turn');
+  expect(session.snapshot().model).toBe('muse-wonder-full'); expect(session.options.compactorModel).toBe('muse-wonder-1.0');
   expect(runtimeSpy).toHaveBeenCalledTimes(1); expect(openSpy).toHaveBeenCalledTimes(1); expect(releases.events).toEqual([]);
   let closed = 0; session.on('closed', () => { closed++; });
   const closing = session.close(); expect(session.close()).toBe(closing); await closing; await session.close();
@@ -128,7 +128,7 @@ for (const scenario of startupCases) test(`startup failure at ${scenario.name} c
   else spyOn(Memory.prototype, 'pump').mockImplementation(() => { throw failure; });
   const error: unknown = await Session.open(configured).catch(error => error);
   if (scenario.name === 'instructions') expect(error instanceof Error && error.message).toBe('The instructions file does not exist.');
-  else if (scenario.name === 'compactor') expect(error instanceof Error && error.message).toContain('ms1.3c fallback');
+  else if (scenario.name === 'compactor') expect(error instanceof Error && error.message).toContain('muse-wonder-full fallback');
   else expect(error).toBe(failure);
   for (const [name, spy] of Object.entries(releases.spies)) {
     expect(spy.mock.calls.length).toBe(scenario.acquired.some(resource => resource === name) ? 1 : 0);
@@ -221,7 +221,7 @@ test('completed turns retain background commands until session scope closes', as
   await reopen(configured.chatDir);
 });
 
-test('main and compactor independently fall back to ms1.3c with accurate usage and active model reporting', async () => {
+test('main and compactor independently fall back to muse-wonder-full with accurate usage and active model reporting', async () => {
   const configured = await options(); configured.model = 'gpt-6-luna'; configured.compactorModel = 'gpt-6-luna';
   process.env.OPENAI_API_KEY = 'offline-primary-key';
   let primaryCalls = 0;
@@ -233,14 +233,14 @@ test('main and compactor independently fall back to ms1.3c with accurate usage a
   const session = await Session.open(configured); sessions.push(session);
   session.memory.append('user', 'source decision '.repeat(100)); expect(await session.memory.drain()).toBe(true);
   expect(session.snapshot().model).toBe('gpt-6-luna');
-  await session.submit('/model'); expect(session.entries.at(-1)?.text).toContain('muse-spark-1.3-contributor (fallback)');
+  await session.submit('/model'); expect(session.entries.at(-1)?.text).toContain('muse-wonder-full (fallback)');
   await session.submit('do task'); await session.settle();
-  expect(session.snapshot().model).toBe('muse-spark-1.3-contributor'); expect(primaryCalls).toBe(2);
+  expect(session.snapshot().model).toBe('muse-wonder-full'); expect(primaryCalls).toBe(2);
   await session.submit('next task'); await session.settle(); expect(primaryCalls).toBe(2);
   const usage = session.storage.load('usage');
   for (const purpose of ['agent', 'compactor']) {
     expect(usage.some(record => record.purpose === purpose && record.model === 'gpt-6-luna' && record.status === 'error')).toBe(true);
-    expect(usage.some(record => record.purpose === purpose && record.model === 'muse-spark-1.3-contributor' && record.status === 'completed')).toBe(true);
+    expect(usage.some(record => record.purpose === purpose && record.model === 'muse-wonder-full' && record.status === 'completed')).toBe(true);
   }
 });
 

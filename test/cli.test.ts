@@ -16,8 +16,8 @@ test('model listing names providers, credentials, and selection format', async (
   const models = Bun.spawn([process.execPath, cli, '--models'], { stdout: 'pipe', stderr: 'pipe' });
   const output = await new Response(models.stdout).text();
   expect(await models.exited).toBe(0);
-  expect(output).toContain('1. muse-spark-1.3 (Meta; alias ms1.3; needs META_API_KEY or MODEL_API_KEY)');
-  expect(output).toContain('2. muse-spark-1.3-contributor (Meta; alias ms1.3c; needs META_API_KEY or MODEL_API_KEY)');
+  expect(output).toContain('1. muse-wonder-1.0 (Meta; alias mw1.0; needs META_API_KEY or MODEL_API_KEY)');
+  expect(output).toContain('2. muse-wonder-full (Meta; alias mwfull; needs META_API_KEY or MODEL_API_KEY)');
   expect(output).toContain('3. gpt-6-luna (OpenAI; alias luna6; needs OPENAI_API_KEY)');
   expect(output).toContain('4. gpt-6.1-sol (OpenAI; alias sol6.1; needs OPENAI_API_KEY)');
   expect(output.match(/^  \d+\./gm)).toHaveLength(4);
@@ -45,17 +45,17 @@ test('plain piped commands close cleanly and release chat storage', async () => 
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'victral-cli-'));
   try {
     for (let i = 0; i < 2; i++) {
-      const child = Bun.spawn([process.execPath, cli, '--plain', ...(i === 0 ? ['--model', 'ms1.3', '--compactor-model', 'ms1.3c'] : []), '--project', directory, '--chat-dir', path.join(directory, 'chat'), '--no-jev'], {
-        cwd: directory, env: { ...process.env, META_API_KEY: 'offline-test', TYPESAFE_API_KEY: '', VICTRAL_MODEL: 'ms1.3', VICTRAL_COMPACTOR_MODEL: 'ms1.3c' },
-        stdin: new TextEncoder().encode('/tools\n/plan\n/jobs\n/model ms1.3c\n/exit\n'), stdout: 'pipe', stderr: 'pipe',
+      const child = Bun.spawn([process.execPath, cli, '--plain', ...(i === 0 ? ['--model', 'mw1.0', '--compactor-model', 'mwfull'] : []), '--project', directory, '--chat-dir', path.join(directory, 'chat'), '--no-jev'], {
+        cwd: directory, env: { ...process.env, META_API_KEY: 'offline-test', TYPESAFE_API_KEY: '', VICTRAL_MODEL: 'mw1.0', VICTRAL_COMPACTOR_MODEL: 'mwfull' },
+        stdin: new TextEncoder().encode('/tools\n/plan\n/jobs\n/model mwfull\n/exit\n'), stdout: 'pipe', stderr: 'pipe',
       });
       const output = await new Response(child.stdout).text();
       const error = await new Response(child.stderr).text();
       expect(error).toBe(''); expect(await child.exited).toBe(0); expect(output).toContain('search_files'); expect(output).toContain('glob_files'); expect(output).toContain('apply_patch'); expect(output).toContain('Command execution: disabled');
       expect(output).not.toContain('start_command');
       expect(output).toContain('parallel_tools'); expect(output).toContain('git_blame'); expect(output).toContain('No task plan');
-      expect(output).toContain('Victral · muse-spark-1.3');
-      expect(output).toContain('Switched agent to muse-spark-1.3-contributor');
+      expect(output).toContain('Victral · muse-wonder-1.0');
+      expect(output).toContain('Switched agent to muse-wonder-full');
     }
   } finally { await fs.rm(directory, { recursive: true, force: true }); }
 });
@@ -71,7 +71,7 @@ test('saved plans are visible through /plan and included in chat backups', async
     storage.saveView({ parts: [], shrinking: false }, 'compaction-view');
     await tools.close?.(); await storage.close(); storage = undefined;
     const child = Bun.spawn([process.execPath, cli, '--plain', '--allow-shell', '--project', directory, '--chat-dir', chat, '--no-jev'], {
-      cwd: directory, env: { ...process.env, META_API_KEY: 'offline-test', TYPESAFE_API_KEY: '', VICTRAL_MODEL: 'ms1.3c', VICTRAL_COMPACTOR_MODEL: 'ms1.3c' },
+      cwd: directory, env: { ...process.env, META_API_KEY: 'offline-test', TYPESAFE_API_KEY: '', VICTRAL_MODEL: 'mwfull', VICTRAL_COMPACTOR_MODEL: 'mwfull' },
       stdin: new TextEncoder().encode(`/plan\n/jobs\n/tools\n/backup ${backup}\n/exit\n`), stdout: 'pipe', stderr: 'pipe',
     });
     const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
@@ -104,7 +104,7 @@ globalThis.fetch = async (_url, init) => {
     fs.writeFileSync(${JSON.stringify(aborted)}, 'aborted'); reject(init.signal.reason);
   }, { once: true }));
 };`);
-  const child = Bun.spawn([process.execPath, '--preload', preload, cli, '--ask', 'cancel this request', '--project', directory, '--chat-dir', chat, '--model', 'ms1.3', '--no-jev', '--no-metrics'],
+  const child = Bun.spawn([process.execPath, '--preload', preload, cli, '--ask', 'cancel this request', '--project', directory, '--chat-dir', chat, '--model', 'mw1.0', '--no-jev', '--no-metrics'],
     { env: { ...process.env, META_API_KEY: 'offline-cancellation-fixture' }, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
   const stdout = new Response(child.stdout).text(), stderr = new Response(child.stderr).text();
   try {
@@ -125,7 +125,7 @@ test('the intentional JS CLI entry point remains usable', async () => {
   expect((await new Response(child.stdout).text()).trim()).toBe('0.2.0'); expect(await child.exited).toBe(0);
 });
 
-test('invalid startup agent and compactor configurations use ms1.3c without API requests', async () => {
+test('invalid startup agent and compactor configurations use muse-wonder-full without API requests', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'victral-config-fallback-'));
   try {
     const child = Bun.spawn([process.execPath, cli, '--plain', '--model', 'invalid-agent', '--compactor-model', 'invalid-compactor', '--project', directory, '--chat-dir', path.join(directory, 'chat'), '--no-jev'], {
@@ -133,6 +133,6 @@ test('invalid startup agent and compactor configurations use ms1.3c without API 
     });
     const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     expect(errors).toBe(''); expect(code).toBe(0);
-    expect(output).toContain('Agent: muse-spark-1.3-contributor'); expect(output).toContain('Compactor: muse-spark-1.3-contributor (fallback)');
+    expect(output).toContain('Agent: muse-wonder-full'); expect(output).toContain('Compactor: muse-wonder-full (fallback)');
   } finally { await fs.rm(directory, { recursive: true, force: true }); }
 });

@@ -6,8 +6,8 @@ The [alignment report](UPSTREAM_ALIGNMENT.md) records adaptations and verificati
 The previous recipe is archived in [OPTCHAT_SPEC_ORIGINAL.md](OPTCHAT_SPEC_ORIGINAL.md).
 
 Victral runs on Bun with a TypeScript CLI, tool layer and Beast/Octane terminal
-workspace. Meta `muse-spark-1.3-contributor` remains the default agent and compactor;
-`muse-spark-1.3` is also available. See [README](../README.md) for credentials,
+workspace. Meta `muse-wonder-1.0` is the default agent and compactor;
+`muse-wonder-full` is the fallback. See [README](../README.md) for credentials,
 commands, instructions and model selection. Jev evaluations and metrics remain
 separate from the conversation memory.
 

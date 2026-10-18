@@ -888,7 +888,7 @@ Nodes/view parts remain 19,995/156 and idle-pump node reads remain zero. These
 measurements meet the recorded regression budget and make no API requests or
 filesystem writes.
 
-## Requested agent/compactor fallback — October 16, 2026
+## Original agent/compactor fallback policy — October 16, 2026
 
 After migration completion, the user explicitly requested automatic ms1.3c fallback
 for both configured session models. This is a separate behavior change, not an
@@ -918,6 +918,13 @@ The focused CLI check also passes after updating the active-model startup headin
 - The native createModel factory remains strict for standalone callers. Session
   wrappers implement the explicit new policy, while interactive /model argument
   validation remains strict. Startup bad-config CLI tests make no model requests.
+
+## Meta model selection update — October 18, 2026
+
+The default Meta model is now `muse-wonder-1.0` (`mw1.0`); automatic agent and
+compactor failover uses `muse-wonder-full` (`mwfull`). Both remain selectable
+catalog entries. The October 16 fallback policy above records the original target;
+the fallback behavior is unchanged apart from its model ID.
 
 All verification uses injected/offline transports; no live API calls were made.
 The CPU-only benchmark remains within budget: median snapshot 0.002718125 ms;

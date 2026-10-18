@@ -2,7 +2,7 @@
 
 A persistent coding workspace with a TypeScript CLI and a full-screen terminal
 interface, implementing the latest OptChat / UniiChat memory design with Meta and OpenAI models.
-The default is Meta `muse-spark-1.3-contributor` for both the agent and the compactor.
+The default is Meta `muse-wonder-1.0` for both the agent and the compactor.
 The [upstream specification](docs/OPTCHAT_SPEC.md) is pinned to gist revision
 `3c190e06f34aba0c69f49042c526093269604935` (October 8, 2026).
 [Alignment notes](docs/UPSTREAM_ALIGNMENT.md) describe the implementation and
@@ -87,34 +87,34 @@ and [the Effect migration plan](docs/EFFECT_MIGRATION_PLAN.md) for integration t
 
 | Short name | Model ID | Provider | Credential |
 | --- | --- | --- | --- |
-| `ms1.3` | `muse-spark-1.3` | Meta | `META_API_KEY` or `MODEL_API_KEY` |
-| `ms1.3c` | `muse-spark-1.3-contributor` | Meta | `META_API_KEY` or `MODEL_API_KEY` |
+| `mw1.0` | `muse-wonder-1.0` | Meta | `META_API_KEY` or `MODEL_API_KEY` |
+| `mwfull` | `muse-wonder-full` | Meta | `META_API_KEY` or `MODEL_API_KEY` |
 | `luna6` | `gpt-6-luna` | OpenAI | `OPENAI_API_KEY` |
 | `sol6.1` | `gpt-6.1-sol` | OpenAI | `OPENAI_API_KEY` |
 
 ```sh
-bun run start --project /absolute/path/to/your/project --model ms1.3
+bun run start --project /absolute/path/to/your/project --model mw1.0
 bun run start --project /absolute/path/to/your/project --model luna6
 ```
 
 Choose the compactor separately if desired:
 
 ```sh
-bun run start --model ms1.3 --compactor-model ms1.3c
+bun run start --model mw1.0 --compactor-model mwfull
 ```
 
 `--models` lists the supported models with their providers and required
 credentials, without making API requests. Models can be named by list number,
-short name, or full ID: `--model ms1.3` and `--model 1` work like
-`--model muse-spark-1.3`. During an interactive session, `/model` shows the
-current agent, the compactor, and the numbered choices; `/model meta ms1.3` or
+short name, or full ID: `--model mw1.0` and `--model 1` work like
+`--model muse-wonder-1.0`. During an interactive session, `/model` shows the
+current agent, the compactor, and the numbered choices; `/model meta mw1.0` or
 `/model openai sol6.1` switches the main agent between turns while retaining saved
 memory. `/model openai` lists only OpenAI models. Model-only shortcuts such as
-`/model ms1.3` and `/model luna6` also work. Switching the main model does not
+`/model mw1.0` and `/model luna6` also work. Switching the main model does not
 change the configured compactor. Model switches are session-local;
 set `VICTRAL_MODEL` and `VICTRAL_COMPACTOR_MODEL` for defaults. Explicit CLI
-flags take precedence. The numbered choices are 1 for `muse-spark-1.3` and
-2 for `muse-spark-1.3-contributor`, 3 for `gpt-6-luna`, and 4 for `gpt-6.1-sol`.
+flags take precedence. The numbered choices are 1 for `muse-wonder-1.0` and
+2 for `muse-wonder-full`, 3 for `gpt-6-luna`, and 4 for `gpt-6.1-sol`.
 Short names also work in the environment
 settings and smoke scripts, and are case-insensitive. API requests and saved
 usage retain the full model IDs. The status bar shows the selected model's short
@@ -122,12 +122,12 @@ name and updates when switching with `/model`.
 
 Both the main agent and compactor try their configured model first. If startup
 configuration/credentials are invalid, or a provider request fails, that role
-switches to `ms1.3c` for the rest of the session. Set `META_API_KEY` (or
+switches to `muse-wonder-full` for the rest of the session. Set `META_API_KEY` (or
 `MODEL_API_KEY`) so the fallback can authenticate. `/model` and the status bar
 report the active models; fallback notices appear in the workspace. Restarting or
 explicitly switching the main model starts a new configured selection.
 
-Each failed request can make one replacement request to `ms1.3c`; fallback failures
+Each failed request can make one replacement request to `muse-wonder-full`; fallback failures
 remain visible and do not loop. Cancellation, response-cleanup defects and consumer
 callback/persistence errors do not trigger fallback. Partial output already saved
 from a failed main request remains saved; only the successful response's tool calls
@@ -161,9 +161,8 @@ reports incomplete generations instead of silently accepting them.
 The agent loop rejects failed or missing completion reasons before executing
 tools, and reports a failed turn if a tool step contains no calls.
 
-Meta's Contributor tier permits using prompts and completions for training;
-its Standard tier does not. See [Meta models](https://dev.meta.ai/docs/models)
-and [Messages API](https://dev.meta.ai/docs/protocols/messages).
+See [Meta models](https://dev.meta.ai/docs/models) and the
+[Messages API](https://dev.meta.ai/docs/protocols/messages) documentation.
 
 The runner defaults to one persistent chat at `~/.local/share/victral/chat`.
 Use that same chat directory across launches to retain history. Project file
@@ -442,8 +441,8 @@ directory, separate from your real chat.
 Run the same smoke test for a supported model:
 
 ```sh
-bun run smoke --model muse-spark-1.3
-bun run smoke --model muse-spark-1.3-contributor
+bun run smoke --model muse-wonder-1.0
+bun run smoke --model muse-wonder-full
 bun run smoke --model luna6
 bun run smoke --model sol6.1
 ```
@@ -572,7 +571,7 @@ remain in saved memory.
 
 ## Standalone Jev evaluation
 
-Jev produces typed judgments, rather than summary text. Meta `muse-spark-1.3-contributor`
+Jev produces typed judgments, rather than summary text. Meta `muse-wonder-1.0`
 is the default main agent and compactor. Jev observes the original memory algorithm without
 automatic filtering, deletion, rewriting, or gating.
 
