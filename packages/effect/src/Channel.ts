@@ -488,7 +488,7 @@ const asyncQueue = <A, E = never, R = never>(
     Effect.tap((queue) =>
       Scope.provide(f(queue), scope).pipe(
         Effect.catchCause((cause) => Queue.failCause(queue, cause)),
-        Effect.forkIn(scope)
+        Effect.forkIn(scope, { startImmediately: true })
       )
     )
   )
@@ -1701,6 +1701,12 @@ export const fromSchedule = <O, E, R>(
 /**
  * Creates a channel from a lazily supplied Web `ReadableStream`.
  *
+ * **Details**
+ *
+ * Read failures are mapped with `onError`. Finalization cancels the reader and
+ * releases its lock, or only releases the lock when `releaseLockOnEnd` is set.
+ * A rejected cancel hook becomes a defect.
+ *
  * **Example** (Reading from a Web stream)
  *
  * ```ts import.meta.vitest
@@ -1918,7 +1924,13 @@ const readableStreamToPullUnsafe = <A, E, E2 = never>(options: {
       options.scope,
       options.releaseLockOnEnd
         ? Effect.sync(() => reader.releaseLock())
-        : Effect.promise(() => reader.cancel().catch(constVoid))
+        : Effect.promise(() =>
+          reader.cancel().catch((error) =>
+            // `closed` resolves only when the cancel hook failed. An errored
+            // stream rejects it with an error that was already reported.
+            reader.closed.then(() => Promise.reject(error), constVoid)
+          )
+        ).pipe(Effect.ensuring(Effect.sync(() => reader.releaseLock())))
     ),
     pull
   )
@@ -1932,7 +1944,9 @@ const readableStreamToPullUnsafe = <A, E, E2 = never>(options: {
  * Each yielded value is emitted as an output element. The iterator's return
  * value becomes the channel's done value. Thrown or rejected iterator errors
  * are converted with `onError`. If the channel scope closes early and the
- * iterator has a `return` method, that method is called.
+ * iterator has a `return` method, that method is called. It is awaited unless
+ * a `next()` call is still pending, in which case its result is ignored and an
+ * async generator may not run its cleanup until that pull settles.
  *
  * @stability stable
  * @category constructors
@@ -1944,12 +1958,28 @@ export const fromAsyncIterable = <A, D, E>(
 ): Channel<A, E, D> =>
   fromTransform(Effect.fnUntraced(function*(_, scope) {
     const iter = iterable[Symbol.asyncIterator]()
+    let pulling = false
     if (iter.return) {
-      yield* Scope.addFinalizer(scope, Effect.promise(() => iter.return!()))
+      // `return()` may not settle until a pending `next()` does, so only
+      // await it when the iterator is idle.
+      yield* Scope.addFinalizer(
+        scope,
+        Effect.suspend(() =>
+          pulling
+            ? Effect.sync(() => void iter.return!().catch(constVoid))
+            : Effect.promise(() => iter.return!())
+        )
+      )
     }
     return Effect.flatMap(
       Effect.tryPromise({
-        try: () => iter.next(),
+        try: () => {
+          const promise = iter.next()
+          pulling = true
+          return promise.finally(() => {
+            pulling = false
+          })
+        },
         catch: onError
       }),
       (result) => result.done ? Cause.done(result.value) : Effect.succeed(result.value)
@@ -1965,6 +1995,9 @@ export const fromAsyncIterable = <A, D, E>(
  * The iterator's return value becomes the channel's done value. Thrown or
  * rejected iterator errors are converted with `onError`. If the channel scope
  * closes early and the iterator has a `return` method, that method is called.
+ * It is awaited unless a `next()` call is still pending, in which case its
+ * result is ignored and an async generator may not run its cleanup until that
+ * pull settles.
  *
  * @stability stable
  * @category constructors
@@ -2214,7 +2247,7 @@ const mapEffectConcurrent = <
       const pull = yield* toTransform(self)(upstream, scope)
       const concurrencyN = options.concurrency === "unbounded"
         ? Number.MAX_SAFE_INTEGER
-        : options.concurrency
+        : Math.min(options.concurrency, Number.MAX_SAFE_INTEGER)
       const queue = yield* Queue.bounded<OutElem2, OutErr | EX | Cause.Done<OutDone>>(0)
       yield* Scope.addFinalizer(forkedScope, Queue.shutdown(queue))
 
@@ -4909,7 +4942,7 @@ export const catchIf: {
     InDone2 = unknown,
     Env2 = never
   >(
-    refinement: Predicate.Refinement<OutErr, EB>,
+    refinement: Predicate.Refinement<NoInfer<OutErr>, EB>,
     f: (failure: EB) => Channel<OutElem1, OutErr1, OutDone1, InElem1, InErr1, InDone1, Env1>,
     orElse?:
       | ((
@@ -4997,7 +5030,7 @@ export const catchIf: {
     Env2 = never
   >(
     self: Channel<OutElem, OutErr, OutDone, InElem, InErr, InDone, Env>,
-    refinement: Predicate.Refinement<OutErr, EB>,
+    refinement: Predicate.Refinement<NoInfer<OutErr>, EB>,
     f: (failure: EB) => Channel<OutElem1, OutErr1, OutDone1, InElem1, InErr1, InDone1, Env1>,
     orElse?:
       | ((
@@ -6829,8 +6862,9 @@ export const splitLines = <Err, Done>(): Channel<
  * **Details**
  *
  * Input chunks are decoded with streaming enabled so multi-byte characters may
- * span `Uint8Array` boundaries. The optional `encoding` and `options` are
- * passed to `TextDecoder`.
+ * span `Uint8Array` boundaries. On normal completion, incomplete trailing
+ * characters become U+FFFD or, with `fatal: true`, a defect. The optional
+ * `encoding` and `options` are passed to `TextDecoder`.
  *
  * @stability stable
  * @category decoding
@@ -6851,7 +6885,15 @@ export const decodeText = <Err, Done>(
     Effect.sync(() => {
       const decoder = new TextDecoder(encoding, options)
       const streamOptions = { stream: true }
-      return Effect.map(upstream, Arr.map((line) => decoder.decode(line, streamOptions)))
+      let pull: Pull.Pull<Arr.NonEmptyReadonlyArray<string>, Err, Done> = upstream.pipe(
+        Effect.map(Arr.map((bytes) => decoder.decode(bytes, streamOptions))),
+        Pull.catchDone((leftover) => {
+          pull = Cause.done(leftover as Done)
+          const last = decoder.decode()
+          return last.length > 0 ? Effect.succeed(Arr.of(last)) : pull
+        })
+      )
+      return Effect.suspend(() => pull)
     })
   )
 

@@ -33,6 +33,26 @@ describe("Channel", () => {
   })
 
   describe("constructors", () => {
+    it.live("fromAsyncIterable awaits idle iterator cleanup on early close", () =>
+      Effect.gen(function*() {
+        let finalized = false
+        async function* source() {
+          try {
+            yield [1] as const
+            yield [2] as const
+          } finally {
+            await new Promise((resolve) => setTimeout(resolve, 10))
+            finalized = true
+          }
+        }
+        yield* Channel.fromAsyncIterable(source(), (error) => error).pipe(
+          Stream.fromChannel,
+          Stream.take(1),
+          Stream.runDrain
+        )
+        assert.strictEqual(finalized, true)
+      }))
+
     for (
       const [name, constructor] of [["callback", Channel.callback], ["callbackArray", Channel.callbackArray]] as const
     ) {
@@ -196,6 +216,30 @@ describe("Channel", () => {
         assert.deepStrictEqual(result, [[1], [2]])
       }))
 
+    it.effect("fromReadableStream - surfaces cancellation failures and releases the lock", () =>
+      Effect.gen(function*() {
+        const error = new Error("cancel failed")
+        const readable = new ReadableStream<number>({
+          start(controller) {
+            controller.enqueue(1)
+          },
+          cancel() {
+            return Promise.reject(error)
+          }
+        })
+        const exit = yield* Channel.fromReadableStream({
+          evaluate: () => readable,
+          onError: (error) => error
+        }).pipe(
+          Channel.mapEffect(() => Effect.fail("downstream failed")),
+          Channel.runDrain,
+          Effect.exit
+        )
+
+        assertExitFailure(exit, Cause.combine(Cause.die("downstream failed"), Cause.die(error)))
+        assert.isFalse(readable.locked)
+      }))
+
     it.effect("fromTransformStream - surfaces write-side errors through the read side", () =>
       Effect.gen(function*() {
         const error = new Error("write failed")
@@ -264,7 +308,7 @@ describe("Channel", () => {
         ).pipe(Channel.runDrain, Effect.exit)
         assert.deepStrictEqual(
           result,
-          Exit.failCause(Cause.combine(Cause.fail("usage failure"), Cause.die("release failure")))
+          Exit.failCause(Cause.combine(Cause.die("usage failure"), Cause.die("release failure")))
         )
       }))
 
@@ -409,6 +453,25 @@ describe("Channel", () => {
           Channel.runCollect
         )
         assert.strictEqual(result.flat().join(""), "a🌍b")
+      }))
+
+    it.effect("decodeText decodes a truncated character at the end of the input", () =>
+      Effect.gen(function*() {
+        const result = yield* Channel.fromArray([[Uint8Array.of(0xC3)]] as const).pipe(
+          Channel.pipeTo(Channel.decodeText()),
+          Channel.runCollect
+        )
+        assert.strictEqual(result.flat().join(""), "\uFFFD")
+      }))
+
+    it.effect("decodeText dies on a truncated final character with fatal enabled", () =>
+      Effect.gen(function*() {
+        const exit = yield* Channel.fromArray([[Uint8Array.of(0xC3)]] as const).pipe(
+          Channel.pipeTo(Channel.decodeText(undefined, { fatal: true })),
+          Channel.runCollect,
+          Effect.exit
+        )
+        assert.isTrue(Exit.hasDies(exit))
       }))
   })
 

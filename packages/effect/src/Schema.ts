@@ -36,6 +36,7 @@ import * as HashMap_ from "./HashMap.ts"
 import * as HashSet_ from "./HashSet.ts"
 import * as Cookies_ from "./http/Cookies.ts"
 import * as Headers_ from "./http/Headers.ts"
+import * as UrlParams_internal from "./http/internal/urlParams.ts"
 import * as UrlParams_ from "./http/UrlParams.ts"
 import { NodeInspectSymbol } from "./Inspectable.ts"
 import * as core from "./internal/core.ts"
@@ -78,6 +79,8 @@ import * as SchemaIssue from "./SchemaIssue.ts"
 import * as SchemaParser from "./SchemaParser.ts"
 import type * as SchemaRepresentation from "./SchemaRepresentation.ts"
 import * as SchemaTransformation from "./SchemaTransformation.ts"
+import * as SemVer_ from "./SemVer.ts"
+import * as SemVerRange_ from "./SemVerRange.ts"
 import type { StandardJSONSchemaV1, StandardSchemaV1 } from "./StandardSchema.ts"
 import type { Assign, Lambda, Mutable, Simplify } from "./Struct.ts"
 import * as Struct_ from "./Struct.ts"
@@ -2960,8 +2963,8 @@ export interface Enum<A extends { [x: string]: string | number }>
   readonly enums: A
 }
 /**
- * Creates a schema from a TypeScript enum object. Validates that the input is one of the enum's values.
- * Numeric enum values must be finite.
+ * Creates a schema from a TypeScript enum or an object mapping names to string or number values.
+ * Validates that the input is one of those values. Numeric values must be finite.
  *
  * **Gotchas**
  *
@@ -2985,7 +2988,7 @@ export interface Enum<A extends { [x: string]: string | number }>
  * @category constructors
  * @since 4.0.0
  */
-export function Enum<A extends { [x: string]: string | number }>(enums: A): Enum<A> {
+export function Enum<const A extends { [x: string]: string | number }>(enums: A): Enum<A> {
   return make(
     new SchemaAST.Enum(
       Object.keys(enums).filter(
@@ -4029,6 +4032,7 @@ export declare namespace StructWithRest {
    */
   type Objects = Constraint & {
     readonly ast: SchemaAST.Objects
+    readonly Encoded: object
   }
   /**
    * Readonly list of record schemas that provide the additional index signatures
@@ -4197,6 +4201,13 @@ export interface StructWithRest<
  * producing a schema whose decoded type intersects the struct and all records.
  *
  * **Gotchas**
+ *
+ * The base schema must have an object-shaped encoded type. Whole-object
+ * transformations are not supported, even with an empty rest array. Apply
+ * transformations such as `Schema.fromJsonString` to the completed
+ * `StructWithRest` schema instead. Object-shaped encoded types alone do not
+ * guarantee compatibility: unsupported encodings are still rejected at runtime.
+ * Transformations on individual fields remain supported.
  *
  * TypeScript index signatures also apply to fixed keys. `StructWithRest` does
  * not reject incompatible fixed fields at the call site; use
@@ -5623,8 +5634,8 @@ export interface compose<To extends Constraint, From extends Constraint> extends
  * **Gotchas**
  *
  * In a custom transformation, `decode` maps `From["Type"]` to `To["Encoded"]`
- * and is used on the encoding path, while `encode` maps `To["Encoded"]` to
- * `From["Type"]` and is used on the decoding path.
+ * and is used on the decoding path, while `encode` maps `To["Encoded"]` to
+ * `From["Type"]` and is used on the encoding path.
  *
  * **Example** (Transforming strings to numbers with a schema transformation)
  *
@@ -5958,6 +5969,9 @@ export type DecodingDefaultOptions = {
 function toIssueEffect<A, R>(
   self: Effect.Effect<A, SchemaError, R>
 ): Effect.Effect<A, SchemaIssue.Issue, R> {
+  if (effectIsExit(self) && self._tag === "Success") {
+    return self as unknown as Exit_.Exit<A, SchemaIssue.Issue>
+  }
   return Effect.catchCause(self, (cause) => Effect.failCauseSync(() => Cause_.map(cause, (error) => error.issue)))
 }
 /**
@@ -6304,6 +6318,12 @@ type Flatten<Schemas> = Schemas extends readonly [infer Head, ...infer Tail]
   ? Head extends Union<infer Inner> ? [...Flatten<Inner>, ...Flatten<Tail>]
   : [Head, ...Flatten<Tail>]
   : []
+type DiscriminantKey<T extends PropertyKey> = T extends number ? `${T}` : T
+type EnsureUniqueDiscriminants<Tags extends ReadonlyArray<PropertyKey>, Seen = never> = Tags extends
+  readonly [infer Head extends PropertyKey, ...infer Tail extends ReadonlyArray<PropertyKey>]
+  ? [DiscriminantKey<Head> & Seen] extends [never] ? EnsureUniqueDiscriminants<Tail, Seen | DiscriminantKey<Head>>
+  : never
+  : unknown
 type MatchCasesResult<Cases> = {
   [K in keyof Cases]-?: NonNullable<Cases[K]> extends (...args: Array<any>) => infer R ? R : never
 }[keyof Cases]
@@ -6388,7 +6408,10 @@ export type toTaggedUnion<
  *
  * **Gotchas**
  *
- * Throws if multiple members use the same discriminant property key.
+ * Rejects overlapping discriminant types in known member tuples at compile
+ * time, including nested unions. Numeric and string values such as `1` and
+ * `"1"` count as duplicates. Also throws at runtime if multiple members use the
+ * same discriminant property key.
  *
  * **Example** (Adding tagged-union utilities to an existing union)
  *
@@ -6415,7 +6438,7 @@ export type toTaggedUnion<
  */
 export function toTaggedUnion<const Tag extends PropertyKey>(tag: Tag) {
   return <const Members extends ReadonlyArray<Constraint & { readonly Type: { readonly [K in Tag]: PropertyKey } }>>(
-    self: Union<Members>
+    self: Union<Members> & NoInfer<EnsureUniqueDiscriminants<TaggedUnionUtils<Tag, Members>["discriminants"]>>
   ): toTaggedUnion<Tag, Members> => {
     const cases: Record<PropertyKey, unknown> = {}
     const discriminants: Array<PropertyKey> = []
@@ -11256,7 +11279,7 @@ export function Cause<E extends Constraint, D extends Constraint>(error: E, defe
         }
         return Effect.mapBothEager(SchemaParser.decodeUnknownEffect(failures)(input.reasons, options), {
           onSuccess: Cause_.fromReasons,
-          onFailure: (issue) => SchemaIssue.makeCompositeAtKey(ast, "failures", issue, input, options)
+          onFailure: (issue) => SchemaIssue.makeCompositeAtKey(ast, "reasons", issue, input, options)
         })
       }
     },
@@ -15213,9 +15236,9 @@ export const UrlParams: UrlParams = declare(
     toCodec: () =>
       link<UrlParams_.UrlParams>()(
         ArraySchema(Tuple([String, String])),
-        SchemaTransformation.transform({
+        SchemaTransformation.transform<UrlParams_.UrlParams, ReadonlyArray<readonly [string, string]>>({
           decode: UrlParams_.make,
-          encode: (self) => self.params
+          encode: (self) => self.params.map(([key, value]) => [key, UrlParams_internal.unwrap(value)])
         })
       )
   }
@@ -15722,6 +15745,198 @@ export function Result<A extends Constraint, E extends Constraint>(
   return make(schema.ast, { success, failure })
 }
 
+// -----------------------------------------------------------------------------
+// SemVer schemas
+// -----------------------------------------------------------------------------
+
+const semVerStringTransformation = <A>(
+  parse: (input: string) => Result_.Result<A, SemVer_.SemVerError>,
+  format: (value: A) => string
+): SchemaTransformation.Transformation<A, string> =>
+  SchemaTransformation.transformEffect({
+    decode: (input, options) =>
+      Effect.mapErrorEager(
+        Effect.fromResult(parse(input)),
+        (error) => new SchemaIssue.InvalidValue({ message: error.message }, input, options)
+      ),
+    encode: (value) => Effect.succeed(format(value))
+  })
+// Alphanumeric identifiers contain at least one non-digit.
+const SemVerCoreArbitrary = Struct({
+  major: Natural,
+  minor: Natural,
+  patch: Natural,
+  prerelease: ArraySchema(Union([Natural, String.check(isPattern(/^[0-9]*[A-Za-z-][0-9A-Za-z-]*$/))]))
+})
+const semVerFromString = semVerStringTransformation(SemVer_.parse, SemVer_.format)
+const SemVerString = String.annotate({ expected: "a string that will be decoded as a SemVer" })
+/**
+ * Type-level representation of {@link SemVer}.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.0.6
+ */
+export interface SemVer extends declare<SemVer_.SemVer> {
+  readonly "Rebuild": SemVer
+}
+/**
+ * Schema for `SemVer` values.
+ *
+ * **Details**
+ *
+ * The JSON and StringTree codecs encode a version as its canonical string,
+ * including build metadata.
+ *
+ * @see {@link SemVerFromString} for parsing version strings
+ * @stability unstable
+ * @category schemas
+ * @since 4.0.6
+ */
+export const SemVer: SemVer = declare(
+  SemVer_.isSemVer,
+  {
+    representation: {
+      id: "effect/schema/SemVer",
+      payload: null
+    },
+    toCode: () => ({
+      runtime: `Schema.SemVer`,
+      Type: `SemVer.SemVer`,
+      importDeclarations: [`import * as SemVer from "effect/SemVer"`]
+    }),
+    expected: "SemVer",
+    toCodecArbitrary: () =>
+      linkDecoding<SemVer_.SemVer>()(
+        Struct({
+          ...SemVerCoreArbitrary.fields,
+          build: ArraySchema(String.check(isPattern(/^[0-9A-Za-z-]+$/)))
+        }),
+        SchemaGetter.transform(SemVer_.make)
+      ),
+    toCodecJson: () =>
+      link<SemVer_.SemVer>()(
+        SemVerString,
+        semVerFromString
+      ),
+    toFormatter: () => SemVer_.format
+  }
+)
+/**
+ * Type-level representation of {@link SemVerFromString}.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.0.6
+ */
+export interface SemVerFromString extends decodeTo<SemVer, String> {
+  readonly "Rebuild": SemVerFromString
+}
+/**
+ * Schema that parses a Semantic Versioning 2.0.0 string into a `SemVer`.
+ *
+ * **Details**
+ *
+ * Decodes with `SemVer.parse`, rejecting a `v` prefix, surrounding whitespace,
+ * partial versions, and leading zeros. Encodes with `SemVer.format`, including
+ * build metadata.
+ *
+ * @see {@link SemVer} for validating values that are already SemVer values
+ * @stability unstable
+ * @category schemas
+ * @since 4.0.6
+ */
+export const SemVerFromString: SemVerFromString = SemVerString.pipe(
+  decodeTo(SemVer, semVerFromString)
+)
+const semVerRangeFromString = semVerStringTransformation(SemVerRange_.parse, SemVerRange_.format)
+const SemVerRangeString = String.annotate({ expected: "a string that will be decoded as a SemVer range" })
+/**
+ * Type-level representation of {@link SemVerRange}.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.0.6
+ */
+export interface SemVerRange extends declare<SemVerRange_.SemVerRange> {
+  readonly "Rebuild": SemVerRange
+}
+/**
+ * Schema for `SemVerRange` values.
+ *
+ * **Details**
+ *
+ * The JSON and StringTree codecs encode a range with `SemVerRange.format`.
+ *
+ * @see {@link SemVerRangeFromString} for parsing range strings
+ * @stability unstable
+ * @category schemas
+ * @since 4.0.6
+ */
+export const SemVerRange: SemVerRange = declare(
+  SemVerRange_.isSemVerRange,
+  {
+    representation: {
+      id: "effect/schema/SemVerRange",
+      payload: null
+    },
+    toCode: () => ({
+      runtime: `Schema.SemVerRange`,
+      Type: `SemVerRange.SemVerRange`,
+      importDeclarations: [`import * as SemVerRange from "effect/SemVerRange"`]
+    }),
+    expected: "SemVerRange",
+    toCodecArbitrary: () =>
+      linkDecoding<SemVerRange_.SemVerRange>()(
+        ArraySchema(
+          ArraySchema(Struct({
+            operator: Literals(["", "=", "<", "<=", ">", ">=", "~", "^"]),
+            version: SemVerCoreArbitrary
+          })).check(isMinLength(1))
+        ),
+        SchemaGetter.transform((sets) =>
+          SemVerRange_.parseUnsafe(
+            sets.map((set) =>
+              set.map(({ operator, version }) => `${operator}${SemVer_.format(SemVer_.make(version))}`).join(" ")
+            ).join(" || ")
+          )
+        )
+      ),
+    toCodecJson: () =>
+      link<SemVerRange_.SemVerRange>()(
+        SemVerRangeString,
+        semVerRangeFromString
+      ),
+    toFormatter: () => SemVerRange_.format
+  }
+)
+/**
+ * Type-level representation of {@link SemVerRangeFromString}.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.0.6
+ */
+export interface SemVerRangeFromString extends decodeTo<SemVerRange, String> {
+  readonly "Rebuild": SemVerRangeFromString
+}
+/**
+ * Schema that parses an npm-style version range string into a `SemVerRange`.
+ *
+ * **Details**
+ *
+ * Decodes with `SemVerRange.parse` and encodes with `SemVerRange.format`,
+ * preserving parsed operators and normalizing wildcard spellings.
+ *
+ * @see {@link SemVerRange} for validating values that are already ranges
+ * @stability unstable
+ * @category schemas
+ * @since 4.0.6
+ */
+export const SemVerRangeFromString: SemVerRangeFromString = SemVerRangeString.pipe(
+  decodeTo(SemVerRange, semVerRangeFromString)
+)
+
 /**
  * Type-level representation returned by {@link Class}.
  *
@@ -15937,16 +16152,19 @@ function makeClass<
   return out
 }
 
+/**
+ * Constructs a class instance from fields that were already validated against
+ * the class struct, without running the constructor's schema pass.
+ *
+ * @internal
+ */
+export function makeClassTrusted<Self>(self: new(input: any, options?: MakeOptions) => Self, fields: object): Self {
+  return new self(fields, { "~payload": { token: payloadToken, value: fields } })
+}
+
 function getClassTransformation(self: new(...args: ReadonlyArray<any>) => any) {
   return new SchemaTransformation.Transformation<any, any, never, never>(
-    SchemaGetter.transform((input) =>
-      new self(input, {
-        "~payload": {
-          token: payloadToken,
-          value: input
-        }
-      })
-    ),
+    SchemaGetter.transform((input) => makeClassTrusted(self, input)),
     SchemaGetter.passthrough()
   )
 }
@@ -16748,6 +16966,108 @@ export interface toCodecArrayFromSingle<S extends Constraint> extends
 export const toCodecArrayFromSingle: {
   <S extends Constraint>(schema: S): toCodecArrayFromSingle<S>
 } = InternalToCodec.toCodecArrayFromSingle
+/**
+ * Type-level representation returned by {@link toCodecGoJson}.
+ *
+ * @stability unstable
+ * @category converting
+ * @since 4.0.6
+ */
+export interface toCodecGoJson<S extends Constraint> extends
+  BottomLazy<
+    S["ast"],
+    toCodecGoJson<S>,
+    S["~type.parameters"],
+    S["~type.mutability"],
+    S["~type.optionality"],
+    S["~type.constructor.default"],
+    S["~encoded.mutability"],
+    S["~encoded.optionality"]
+  >
+{
+  readonly "Type": S["Type"]
+  readonly "Encoded": Json
+  readonly "DecodingServices": S["DecodingServices"]
+  readonly "EncodingServices": S["EncodingServices"]
+  readonly "~type.make.in": S["~type.make.in"]
+  readonly "~type.make": S["~type.make"]
+  readonly "Iso": S["Iso"]
+  readonly schema: S
+}
+/**
+ * Derives a JSON codec, like {@link toCodecJson}, that also accepts the
+ * `null` values Go's `encoding/json` writes for nil pointers, slices, and maps.
+ *
+ * **When to use**
+ *
+ * Use when decoding JSON produced by a Go service (for example the Docker
+ * Engine or Kubernetes APIs), where any field the API document describes as
+ * optional, or any slice or map, may arrive as `null`.
+ *
+ * **Details**
+ *
+ * Decoding applies these rules at every level of the schema:
+ *
+ * - An optional key that is `null` decodes as a missing key.
+ * - A required array (`Schema.Array`) that is `null` decodes as `[]`.
+ * - A required record (`Schema.Record`) that is `null` decodes as `{}`.
+ *
+ * Array and record rules also apply at the top level and to nested collection
+ * values. Tuples, non-empty arrays, and structs are not treated as collections;
+ * collection checks still apply to the empty value.
+ *
+ * Encoding is unchanged from {@link toCodecJson}: the added rules only decode
+ * `null` and do not emit it. A missing key stays missing.
+ *
+ * These rules also accept `encoding/json/v2` output. By default, v2 writes
+ * nil slices and maps as `[]` and `{}`, but it can be configured to emit
+ * `null` instead.
+ *
+ * **Gotchas**
+ *
+ * - Normalization deliberately discards the distinction between nil and empty
+ *   Go slices or maps. They are distinguishable in Go, and unmarshalling a
+ *   missing key, `null`, or an empty collection can affect existing values
+ *   differently. Use {@link toCodecJson} with explicit nullable schemas when
+ *   that distinction matters.
+ * - A key whose schema already accepts `null` (for example
+ *   `Schema.NullOr(X)`, `Schema.Unknown`, or `Schema.Json`) keeps `null` as a
+ *   value.
+ * - A required field that is not an array or a record (a nil pointer to a Go
+ *   struct, for example) still fails on `null`. Make it optional if the API
+ *   can omit it.
+ * - A nil `[]byte` is written as `null` by `encoding/json` (and as `""` by
+ *   version 2), but its schema is a base64 string, not an array. A required
+ *   `[]byte` field that is `null` fails; make it optional if the API can send
+ *   `null`.
+ * - Only these `null` rules are covered. Field formats such as durations,
+ *   base64 bytes, and numbers encoded as strings belong in the field schemas.
+ *
+ * **Example** (Decoding a Go response with nil fields)
+ *
+ * ```ts import.meta.vitest
+ * import { Schema } from "effect"
+ *
+ * const Container = Schema.Struct({
+ *   Id: Schema.String,
+ *   Names: Schema.Array(Schema.String),
+ *   Labels: Schema.Record(Schema.String, Schema.String),
+ *   Status: Schema.optionalKey(Schema.String)
+ * })
+ *
+ * const decode = Schema.decodeUnknownSync(Schema.toCodecGoJson(Container))
+ *
+ * decode({ Id: "a", Names: null, Labels: null, Status: null }) // => { Id: "a", Names: [], Labels: {} }
+ * ```
+ *
+ * @see {@link toCodecJson} for the canonical JSON codec
+ * @stability unstable
+ * @category converting
+ * @since 4.0.6
+ */
+export const toCodecGoJson: {
+  <S extends Constraint>(schema: S): toCodecGoJson<S>
+} = InternalToCodec.toCodecGoJson
 type XmlEncoderOptions = {
   /** Root element name for the returned XML string. Default: "root" */
   readonly rootName?: string | undefined
@@ -17365,7 +17685,7 @@ export declare namespace Annotations {
     readonly "~sentinels"?: ReadonlyArray<SchemaAST.Sentinel> | undefined
   }
   /**
-   * Annotations for filter schema nodes (created via `Schema.filter`). Extends
+   * Annotations for filter checks (created via `Schema.makeFilter`). Extends
    * {@link Augment} with an optional error message, identifier, and metadata.
    * Filters are intentionally non-parametric to keep them covariant.
    *

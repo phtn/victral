@@ -2,15 +2,18 @@ import { assert, describe, it, vi } from "@effect/vitest"
 import { assertExitFailure } from "@effect/vitest/utils"
 import {
   Cause,
+  Clock,
   Context,
   Data,
   Deferred,
   Duration,
   Effect,
   Effectable,
+  Equal,
   Exit,
   Fiber,
   type Filter,
+  Hash,
   Latch,
   Layer,
   Logger,
@@ -424,6 +427,28 @@ describe("Effect", () => {
         assert.strictEqual(cause, error)
       }))
 
+    it.effect("evaluates the error factory on each execution, not at construction", () =>
+      Effect.gen(function*() {
+        let calls = 0
+        const effect = Effect.fromOption(Option.none(), () => new Error(`Missing value ${++calls}`))
+        assert.strictEqual(calls, 0)
+        const first = yield* Effect.flip(effect)
+        const second = yield* Effect.flip(effect)
+        assert.strictEqual(calls, 2)
+        assert.notStrictEqual(first, second)
+      }))
+
+    it.effect("captures a throwing error factory as a runtime defect", () => {
+      const defect = new Error("Error factory failed")
+      const effect = Effect.fromOption(Option.none(), () => {
+        throw defect
+      })
+      return Effect.gen(function*() {
+        const exit = yield* Effect.exit(effect)
+        assertExitDefect(exit, defect)
+      })
+    })
+
     it.effect("from a none with a custom error data-last", () =>
       Effect.gen(function*() {
         const error = new Error("Missing value")
@@ -664,6 +689,30 @@ describe("Effect", () => {
   })
 
   describe("effectify", () => {
+    it.effect("preserves a synchronous throw after callback success as a defect", () =>
+      Effect.gen(function*() {
+        const defect = new Error("boom")
+        const effectified = Effect.effectify((cb: (error: Error | null, value?: string) => void) => {
+          cb(null, "value")
+          throw defect
+        })
+        assertExitDefect(yield* Effect.exit(effectified()), defect)
+      }))
+
+    it.effect("maps a synchronous throw after callback failure with onSyncError", () =>
+      Effect.gen(function*() {
+        const defect = new Error("boom")
+        const effectified = Effect.effectify(
+          (cb: (error: Error | null, value?: string) => void) => {
+            cb(new Error("callback"))
+            throw defect
+          },
+          (error) => error,
+          (error) => error
+        )
+        assertExitFailure(yield* Effect.exit(effectified()), Cause.fail(defect))
+      }))
+
     it.effect("turns a throwing onError mapper in an async callback into a defect", () =>
       Effect.gen(function*() {
         let callback!: (error: Error | null, value?: string) => void
@@ -828,6 +877,15 @@ describe("Effect", () => {
         }
       }))
 
+    it.effect("elects typed failures when a concurrent sibling finalizer dies", () =>
+      Effect.gen(function*() {
+        const exit = yield* Effect.all([
+          Effect.never.pipe(Effect.ensuring(Effect.die("cleanup defect"))),
+          Effect.fail("error")
+        ], { concurrency: "unbounded" }).pipe(Effect.exit)
+        assert.deepStrictEqual(exit, Exit.failCause(Cause.combine(Cause.die("error"), Cause.die("cleanup defect"))))
+      }))
+
     it.effect("unbounded fail", () =>
       Effect.gen(function*() {
         const done: Array<number> = []
@@ -962,6 +1020,30 @@ describe("Effect", () => {
   })
 
   describe("all", () => {
+    it.effect("record preserves input key order with concurrency 2", () =>
+      Effect.gen(function*() {
+        const fiber = yield* Effect.all({
+          a: Effect.sleep(20).pipe(Effect.as(1)),
+          b: Effect.succeed(2)
+        }, { concurrency: 2 }).pipe(Effect.forkChild)
+        yield* TestClock.adjust(20)
+        const results = yield* Fiber.join(fiber)
+        assert.deepStrictEqual(Object.keys(results), ["a", "b"])
+        assert.deepStrictEqual(results, { a: 1, b: 2 })
+      }))
+
+    it.effect("record result mode preserves input key order with unbounded concurrency", () =>
+      Effect.gen(function*() {
+        const fiber = yield* Effect.all({
+          a: Effect.sleep(20).pipe(Effect.as(1)),
+          b: Effect.fail("boom")
+        }, { concurrency: "unbounded", mode: "result" }).pipe(Effect.forkChild)
+        yield* TestClock.adjust(20)
+        const results = yield* Fiber.join(fiber)
+        assert.deepStrictEqual(Object.keys(results), ["a", "b"])
+        assert.deepStrictEqual(results, { a: Result.succeed(1), b: Result.fail("boom") })
+      }))
+
     it.effect("tuple", () =>
       Effect.gen(function*() {
         const results = (yield* Effect.all([
@@ -1257,6 +1339,17 @@ describe("Effect", () => {
   })
 
   describe("filter", () => {
+    it.effect("preserves input order with concurrency 2", () =>
+      Effect.gen(function*() {
+        const fiber = yield* Effect.filter(
+          [1, 2, 3],
+          (n) => n === 1 ? Effect.sleep(20).pipe(Effect.as(true)) : Effect.succeed(n === 2),
+          { concurrency: 2 }
+        ).pipe(Effect.forkChild)
+        yield* TestClock.adjust(20)
+        assert.deepStrictEqual(yield* Fiber.join(fiber), [1, 2])
+      }))
+
     it.live("odd numbers", () =>
       Effect.gen(function*() {
         const results = yield* Effect.filter([1, 2, 3, 4, 5], (value) => Effect.succeed(value % 2 === 1))
@@ -1349,6 +1442,12 @@ describe("Effect", () => {
       const result = yield* Fiber.join(fiber)
       assert.strictEqual(result, 100)
       assert.deepStrictEqual(interrupted, [500, 300, 200])
+    }))
+
+  it.effect("raceAll elects typed failures when all racers fail and one dies", () =>
+    Effect.gen(function*() {
+      const exit = yield* Effect.raceAll([Effect.fail("error"), Effect.die("defect")]).pipe(Effect.exit)
+      assert.deepStrictEqual(exit, Exit.failCause(Cause.combine(Cause.die("error"), Cause.die("defect"))))
     }))
 
   it.effect("raceAllFirst", () =>
@@ -1617,7 +1716,7 @@ describe("Effect", () => {
         })
         const exit = yield* Effect.exit(Effect.retry(source, Schedule.recurs(1)))
         assert.strictEqual(attempts, 1)
-        assert.deepStrictEqual(exit, Exit.failCause(Cause.combine(Cause.fail("error"), Cause.die("cleanup failed"))))
+        assert.deepStrictEqual(exit, Exit.failCause(Cause.combine(Cause.die("error"), Cause.die("cleanup failed"))))
       }))
 
     it.live("nothing on success", () =>
@@ -2148,6 +2247,74 @@ describe("Effect", () => {
   })
 
   describe("interruption", () => {
+    it("interrupting a fiber does not call Math.random", async () => {
+      // The bug made the runtime retry forever while Math.random kept throwing,
+      // so stop throwing after a while to keep a regression bounded.
+      let calls = 0
+      const random = Math.random
+      const spy = vi.spyOn(Math, "random").mockImplementation(() => {
+        calls++
+        if (calls > 1_000) return random()
+        throw new Error("Math.random is not allowed")
+      })
+      // Fresh objects, so no earlier test has cached a random reference hash.
+      class DefectError extends Error {
+        override toString() {
+          return "DefectError"
+        }
+      }
+      try {
+        const exit = await Effect.runPromise(Effect.gen(function*() {
+          const latch = yield* Latch.make()
+          const child = yield* latch.await.pipe(
+            Effect.andThen(Effect.die(new DefectError())),
+            Effect.uninterruptible,
+            Effect.forkChild({ startImmediately: true })
+          )
+          // The child resumes after these synchronous interrupts.
+          yield* latch.open
+          child.interruptUnsafe(undefined, Context.make(ATag, "A"))
+          child.interruptUnsafe(undefined, Context.make(ATag, "A"))
+          return yield* Fiber.await(child)
+        }))
+        assert.strictEqual(calls, 0)
+        assert.isTrue(Exit.isFailure(exit) && Cause.hasDies(exit.cause) && Cause.hasInterrupts(exit.cause))
+      } finally {
+        spy.mockRestore()
+      }
+    })
+
+    it.effect("a defect that throws when hashed still terminates an interrupted fiber", () =>
+      Effect.gen(function*() {
+        // Throw a bounded number of times so a retrying runtime still finishes.
+        const limit = 1_000
+        let hashCalls = 0
+        const defect = {
+          [Hash.symbol]() {
+            if (++hashCalls <= limit) throw defect
+            return 0
+          },
+          [Equal.symbol](that: unknown) {
+            return that === defect
+          }
+        }
+        let finalized = 0
+        const child = yield* Effect.never.pipe(
+          Effect.onInterrupt(() => Effect.die(defect)),
+          Effect.ensuring(Effect.sync(() => finalized++)),
+          Effect.forkChild
+        )
+        yield* Effect.yieldNow
+        const exit = yield* Fiber.interrupt(child).pipe(Effect.andThen(Fiber.await(child)))
+        assert.isBelow(hashCalls, limit)
+        assert.strictEqual(finalized, 1)
+        assert.isTrue(
+          Exit.isFailure(exit) &&
+            exit.cause.reasons.some((reason) => reason._tag === "Die" && reason.defect === defect) &&
+            Cause.hasInterrupts(exit.cause)
+        )
+      }))
+
     it.effect("skipped handlers drop failures and keep defects when interrupted", () =>
       Effect.gen(function*() {
         const latch = yield* Latch.make()
@@ -2760,6 +2927,24 @@ describe("Effect", () => {
   })
 
   describe("forkIn", () => {
+    for (const options of [{ startImmediately: true }, { uninterruptible: true }]) {
+      it.effect(`does not run work in an already-closed scope with ${JSON.stringify(options)}`, () =>
+        Effect.gen(function*() {
+          const scope = yield* Scope.make()
+          yield* Scope.close(scope, Exit.void)
+          let ran = false
+          const fiber = yield* Effect.forkIn(
+            Effect.sync(() => {
+              ran = true
+            }),
+            scope,
+            options
+          )
+          const exit = yield* Fiber.await(fiber)
+          assert.deepStrictEqual([ran, Exit.hasInterrupts(exit)], [false, true])
+        }))
+    }
+
     it.effect("is interrupted when scope is closed", () =>
       Effect.gen(function*() {
         let interrupted = false
@@ -2778,6 +2963,23 @@ describe("Effect", () => {
   })
 
   describe("forkScoped", () => {
+    for (const options of [{ startImmediately: true }, { uninterruptible: true }]) {
+      it.effect(`does not run work in an already-closed scope with ${JSON.stringify(options)}`, () =>
+        Effect.gen(function*() {
+          const scope = yield* Scope.make()
+          yield* Scope.close(scope, Exit.void)
+          let ran = false
+          const fiber = yield* Effect.forkScoped(
+            Effect.sync(() => {
+              ran = true
+            }),
+            options
+          ).pipe(Scope.provide(scope))
+          const exit = yield* Fiber.await(fiber)
+          assert.deepStrictEqual([ran, Exit.hasInterrupts(exit)], [false, true])
+        }))
+    }
+
     it.effect("is interrupted when scope is closed", () =>
       Effect.gen(function*() {
         let interrupted = false
@@ -2842,7 +3044,7 @@ describe("Effect", () => {
         const result = yield* Effect.fail("body failure").pipe(Effect.onExit(throwing), Effect.exit)
         assert.deepStrictEqual(
           result,
-          Exit.failCause(Cause.combine(Cause.fail("body failure"), Cause.die("finalizer defect")))
+          Exit.failCause(Cause.combine(Cause.die("body failure"), Cause.die("finalizer defect")))
         )
       }))
 
@@ -2922,7 +3124,7 @@ describe("Effect", () => {
         )
         assert.deepStrictEqual(
           result,
-          Cause.combine(Cause.combine(Cause.fail(ExampleError), Cause.die(e2)), Cause.die(e3))
+          Cause.combine(Cause.combine(Cause.die(ExampleError), Cause.die(e2)), Cause.die(e3))
         )
       }))
 
@@ -2956,7 +3158,7 @@ describe("Effect", () => {
         }).pipe(Effect.scoped, Effect.exit)
         assert.deepStrictEqual(
           result,
-          Exit.failCause(Cause.combine(Cause.fail("usage failure"), Cause.die("finalizer failure")))
+          Exit.failCause(Cause.combine(Cause.die("usage failure"), Cause.die("finalizer failure")))
         )
       }))
 
@@ -4170,6 +4372,112 @@ describe("Effect", () => {
           assert.deepStrictEqual(negativeZero.pollUnsafe(), Exit.succeed(-Infinity), "-0 over 0 never woke its waiter")
         }))
     })
+
+    describe("transaction metadata", () => {
+      it.effect("starts with zero durations when the clock advances between reads", () =>
+        Effect.gen(function*() {
+          const clock = yield* Clock.Clock
+          let now = 1000
+          const currentTimeMillisUnsafe = () => now++
+          yield* Effect.tx(Effect.gen(function*() {
+            const metadata = yield* Effect.Transaction
+            assert.deepStrictEqual([metadata.elapsed, metadata.elapsedSincePrevious], [0, 0])
+            assert.strictEqual(metadata.start, metadata.now)
+          })).pipe(Effect.provideService(Clock.Clock, {
+            ...clock,
+            currentTimeMillisUnsafe,
+            currentTimeMillis: Effect.sync(currentTimeMillisUnsafe)
+          }))
+        }))
+
+      it.effect("tracks nested metadata across retries and conflicts", () =>
+        Effect.gen(function*() {
+          const ref = TxRef.makeUnsafe(0)
+          const started = yield* Deferred.make<void>()
+          const readyForConflict = yield* Deferred.make<void>()
+          const resume = yield* Deferred.make<void>()
+          const snapshots = yield* Ref.make<
+            Array<{
+              readonly attempt: number
+              readonly retryReason: Effect.TransactionRetryReason | undefined
+              readonly start: number
+              readonly now: number
+              readonly elapsed: number
+              readonly elapsedSincePrevious: number
+              readonly nestedSame: boolean
+            }>
+          >([])
+
+          const fiber = yield* Effect.forkChild(Effect.tx(Effect.gen(function*() {
+            const outer = yield* Effect.Transaction
+            const nestedSame = yield* Effect.tx(Effect.gen(function*() {
+              const inner = yield* Effect.Transaction
+              return inner === outer
+            }))
+            yield* Ref.update(snapshots, (current) => [
+              ...current,
+              {
+                attempt: outer.attempt,
+                retryReason: outer.retryReason,
+                start: outer.start,
+                now: outer.now,
+                elapsed: outer.elapsed,
+                elapsedSincePrevious: outer.elapsedSincePrevious,
+                nestedSame
+              }
+            ])
+            yield* TxRef.get(ref)
+            if (outer.attempt === 1) {
+              yield* Deferred.succeed(started, undefined)
+              return yield* Effect.txRetry
+            }
+            if (outer.attempt === 2) {
+              yield* Deferred.succeed(readyForConflict, undefined)
+              yield* Deferred.await(resume)
+            }
+          })))
+
+          yield* Deferred.await(started)
+          yield* TestClock.adjust("1 second")
+          yield* TxRef.set(ref, 1)
+          yield* Deferred.await(readyForConflict)
+          yield* TestClock.adjust("500 millis")
+          yield* TxRef.set(ref, 2)
+          yield* Deferred.succeed(resume, undefined)
+          yield* Fiber.join(fiber)
+          const recorded = yield* Ref.get(snapshots)
+
+          assert.deepStrictEqual(recorded, [
+            {
+              attempt: 1,
+              retryReason: undefined,
+              start: 0,
+              now: 0,
+              elapsed: 0,
+              elapsedSincePrevious: 0,
+              nestedSame: true
+            },
+            {
+              attempt: 2,
+              retryReason: "retry",
+              start: 0,
+              now: 1000,
+              elapsed: 1000,
+              elapsedSincePrevious: 1000,
+              nestedSame: true
+            },
+            {
+              attempt: 3,
+              retryReason: "conflict",
+              start: 0,
+              now: 1500,
+              elapsed: 1500,
+              elapsedSincePrevious: 500,
+              nestedSame: true
+            }
+          ])
+        }))
+    })
   })
 
   describe("Effect.fn", () => {
@@ -4305,7 +4613,7 @@ describe("Effect", () => {
         )
         assert.deepStrictEqual(
           result,
-          Exit.failCause(Cause.combine(Cause.fail(error), Cause.die("finalizer failure")))
+          Exit.failCause(Cause.combine(Cause.die(error), Cause.die("finalizer failure")))
         )
       }))
 
@@ -4398,7 +4706,7 @@ describe("Effect", () => {
         )
         assert.deepStrictEqual(
           result,
-          Exit.failCause(Cause.combine(Cause.fail(error), Cause.die("finalizer failure")))
+          Exit.failCause(Cause.combine(Cause.die(error), Cause.die("finalizer failure")))
         )
       }))
   })

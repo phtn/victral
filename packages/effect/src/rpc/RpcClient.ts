@@ -301,8 +301,11 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
   )
 
   const clearEntries = Effect.fnUntraced(function*(exit: Exit.Exit<never>) {
-    for (const [id, entry] of entries) {
-      entries.delete(id)
+    // Resuming callers can synchronously start new requests.
+    const pending = Array.from(entries.values())
+    entries.clear()
+    // Once detached, every entry must complete even if delivery is interrupted.
+    for (const entry of pending) {
       if (entry._tag === "Queue") {
         yield* (exit._tag === "Success"
           ? Queue.end(entry.queue as any)
@@ -311,7 +314,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any, E, const Flatten extend
         entry.resume(exit)
       }
     }
-  })
+  }, Effect.uninterruptible)
 
   const onRequest = (rpc: Rpc.AnyWithProps) => {
     const isStream = RpcSchema.isStreamSchema(rpc.successSchema)
@@ -1233,16 +1236,21 @@ const makePinger = Effect.fnUntraced(function*<A, E, R>(writePing: Effect.Effect
   const interval = options?.pingInterval ?? "5 seconds"
   const timeoutMillis = Duration.toMillis(options?.pingTimeout ?? interval)
   let lastSeen = clock.currentTimeMillisUnsafe()
+  let awaitingResponse = false
   const latch = Latch.makeUnsafe()
   const onFrame = () => {
     lastSeen = clock.currentTimeMillisUnsafe()
+    awaitingResponse = false
   }
   const reset = () => {
     onFrame()
     latch.closeUnsafe()
   }
   yield* Effect.suspend((): Effect.Effect<void, E, R> => {
-    if (clock.currentTimeMillisUnsafe() - lastSeen > timeoutMillis) return latch.open
+    // A late tick must send a ping before it can declare the connection silent.
+    // Keep the timeout measured from the last frame, including for custom timeouts.
+    if (awaitingResponse && clock.currentTimeMillisUnsafe() - lastSeen > timeoutMillis) return latch.open
+    awaitingResponse = true
     return writePing
   }).pipe(
     Effect.delay(interval),

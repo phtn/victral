@@ -119,6 +119,13 @@ export class MessageStorage extends Context.Service<MessageStorage, {
 
   /**
    * For locally sent messages, register a handler to process the replies.
+   *
+   * **Details**
+   *
+   * The handler must be registered as soon as the effect starts, before it
+   * first suspends. Callers fork it with `startImmediately` before saving or
+   * notifying the request, and rely on it to see every reply saved after that
+   * point. The effect completes when a `WithExit` reply arrives.
    */
   readonly registerReplyHandler: <R extends Rpc.Any>(
     message: Message.OutgoingRequest<R> | Message.IncomingRequest<R>
@@ -1086,8 +1093,8 @@ export class MemoryDriver extends Context.Service<MemoryDriver>()("effect/cluste
           journal.push(envelope)
           return SaveResultEncoded.Success()
         }),
-      saveReply: (reply_) =>
-        Effect.sync(() => {
+      saveReply: (reply_) => {
+        const save = Effect.sync(() => {
           const reply = JSON.parse(JSON.stringify(reply_)) as Reply.Encoded
           const entry = requests.get(reply.requestId)
           if (!entry || replyIds.has(reply.id)) return
@@ -1098,7 +1105,18 @@ export class MemoryDriver extends Context.Service<MemoryDriver>()("effect/cluste
           entry.replies.push(reply)
           replyIds.add(reply.id)
           replyLatch.openUnsafe()
-        }),
+        })
+        // Memory has no transaction isolation. Publish terminal replies at the
+        // outer commit boundary, before their queued handler notifications, so
+        // reply readers cannot deliver a success that may still be rolled back.
+        return TransactionNotifications.use((notifications) =>
+          reply_._tag === "WithExit" && notifications
+            ? Effect.sync(() => {
+              notifications.push(save)
+            })
+            : save
+        )
+      },
       clearReplies: (id, options) =>
         Effect.sync(() => {
           const entry = requests.get(String(id))

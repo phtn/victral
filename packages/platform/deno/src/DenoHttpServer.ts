@@ -87,7 +87,10 @@ export const make = Effect.fnUntraced(function*(
   } = options
   const server = Deno.serve(
     serveOptions as Deno.ServeTcpOptions,
-    (request, info) => currentHandler(request, info)
+    (request, info) =>
+      request.method === "CONNECT"
+        ? Promise.resolve(new Response(null, { status: 501 }))
+        : currentHandler(request, info)
   ) as Deno.HttpServer<Deno.NetAddr | Deno.UnixAddr>
 
   const shutdown = yield* Effect.promise(() => server.shutdown()).pipe(Effect.cached)
@@ -331,7 +334,7 @@ class DenoServerRequest extends Inspectable.Class implements ServerRequest.HttpS
     return IncomingMessage.inspect(this, {
       _id: "HttpServerRequest",
       method: this.method,
-      url: this.originalUrl
+      url: UrlParams.redactUrl(this.originalUrl)
     })
   }
   modify(options: {

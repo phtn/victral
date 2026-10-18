@@ -15,12 +15,14 @@ import * as Effect from "../Effect.ts"
 import * as Exit from "../Exit.ts"
 import * as Fiber from "../Fiber.ts"
 import { constVoid, dual } from "../Function.ts"
+import { shouldHydrate } from "../internal/hydration.ts"
 import * as Layer from "../Layer.ts"
 import * as Option from "../Option.ts"
 import { hasProperty } from "../Predicate.ts"
 import * as Queue from "../Queue.ts"
 import type { Scheduler, SchedulerDispatcher } from "../Scheduler.ts"
 import { MixedScheduler } from "../Scheduler.ts"
+import * as Schema from "../Schema.ts"
 import * as Scope from "../Scope.ts"
 import * as Stream from "../Stream.ts"
 import * as Result from "./AsyncResult.ts"
@@ -474,15 +476,24 @@ class RegistryImpl implements AtomRegistry {
     if (typeof key === "string" && this.preloadedSerializable.has(key)) {
       const encoded = this.preloadedSerializable.get(key)
       this.preloadedSerializable.delete(key)
-      const decoded = (atom as any as Atom.Serializable<any>)[SerializableTypeId].decode(encoded)
+      let decoded: A
+      try {
+        decoded = (atom as any as Atom.Serializable<any>)[SerializableTypeId].decode(encoded)
+      } catch (error) {
+        if (Schema.isSchemaError(error)) return node
+        throw error
+      }
       let target = atom
       while (target.initialValueTarget) {
         target = target.initialValueTarget
       }
-      if (target === atom) {
-        node.setValue(decoded)
-      } else {
-        this.ensureNode(target).setInitialValue(decoded)
+      const targetNode = target === atom ? node : this.ensureNode(target)
+      if (shouldHydrate(targetNode._value, decoded)) {
+        if (target === atom) {
+          node.setValue(decoded)
+        } else {
+          targetNode.setInitialValue(decoded)
+        }
       }
     }
     return node
@@ -838,7 +849,9 @@ class NodeImpl<A> {
     this._value = value
     let failure: unknown = noFailure
     try {
-      this.invalidateChildren()
+      // A first value cannot replace one held by a dependent. Recovery still
+      // retries dependents whose reads failed before this node had a value.
+      if (initialized || recovered) this.invalidateChildren()
     } catch (error) {
       failure = error
     }
