@@ -1,5 +1,20 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Queue, Schedule, Schema, Stream, Tracer } from "effect"
+import {
+  Cause,
+  Clock,
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Queue,
+  Schedule,
+  Schema,
+  Scope,
+  Stream,
+  Tracer
+} from "effect"
 import * as HttpClient from "effect/http/HttpClient"
 import * as HttpClientResponse from "effect/http/HttpClientResponse"
 import { Rpc, RpcClient, RpcGroup, RpcMessage, RpcSchema, RpcSerialization, RpcServer } from "effect/rpc"
@@ -93,6 +108,67 @@ const assertEmptyResponseFailsRequest = (
   })
 
 describe("RpcClient", () => {
+  it.effect("does not fail a new request started synchronously during connection defect delivery", () =>
+    Effect.gen(function*() {
+      const { client, handle, sent } = yield* makeChunkProtocol()
+      const caller = yield* client.Unary().pipe(
+        Effect.catchDefect(() => client.Unary()),
+        Effect.exit,
+        Effect.forkChild
+      )
+      takeRequestId(yield* Queue.take(sent))
+      // Let the first call suspend before delivering the defect.
+      yield* Effect.yieldNow
+      yield* handle({ _tag: "Defect", defect: "connection defect" })
+
+      const retryRequestId = takeRequestId(yield* Queue.take(sent))
+      yield* handle({ _tag: "Exit", requestId: retryRequestId, exit: { _tag: "Success", value: "ok" } })
+      assert.deepStrictEqual(yield* Fiber.join(caller), Exit.succeed("ok"))
+    }))
+
+  it.effect("releases pending calls when connection defect delivery is interrupted and the client closes", () =>
+    Effect.gen(function*() {
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer((exit) => Scope.close(scope, exit))
+      const sent = yield* Queue.unbounded<void>()
+      const delivery = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>()
+      const { client, write } = yield* RpcClient.makeNoSerialization(TestGroup, {
+        onFromClient: ({ message }) =>
+          message._tag === "Request" ? Queue.offer(sent, undefined).pipe(Effect.asVoid) : Effect.void
+      }).pipe(Effect.provideService(Scope.Scope, scope))
+
+      const first = yield* client.Ping().pipe(
+        Effect.catchDefect(() =>
+          Effect.gen(function*() {
+            const receiver = yield* Deferred.await(delivery)
+            yield* Effect.withFiber((fiber) => Effect.sync(() => receiver.interruptUnsafe(fiber.id)))
+          })
+        ),
+        Effect.forkChild
+      )
+      yield* Queue.take(sent)
+      // A queue completion introduces an interruption boundary between the unary calls.
+      yield* client.Events(undefined, { asQueue: true })
+      yield* Queue.take(sent)
+      const last = yield* client.Ping().pipe(Effect.forkChild)
+      yield* Queue.take(sent)
+      yield* Effect.yieldNow
+
+      const receiver = yield* Effect.withFiber((fiber) =>
+        Deferred.succeed(delivery, fiber).pipe(
+          Effect.andThen(write({ _tag: "Defect", clientId: 0, defect: "connection defect" }))
+        )
+      ).pipe(Effect.forkChild)
+      const receiveExit = yield* Fiber.await(receiver)
+      assert(Exit.isFailure(receiveExit) && Cause.hasInterruptsOnly(receiveExit.cause))
+      yield* Fiber.join(first)
+      yield* Scope.close(scope, Exit.void)
+
+      const lastExit = last.pollUnsafe()
+      assert(lastExit !== undefined, "client shutdown must not leave a pending call stranded")
+      assert(Exit.isFailure(lastExit))
+    }))
+
   it.effect("does not fail a new request started synchronously during protocol error delivery", () =>
     Effect.gen(function*() {
       const { client, handle, sent } = yield* makeChunkProtocol()
@@ -381,6 +457,61 @@ describe("RpcClient", () => {
         assert.strictEqual(error.reason._tag, "SocketOpenError")
       }
       assert.isUndefined(streamFiber.pollUnsafe())
+    }))
+
+  it.effect("keeps a slow unary request alive when default ping ticks run slightly late", () =>
+    Effect.gen(function*() {
+      const clock = yield* Clock.Clock
+      const requestSent = yield* Deferred.make<void>()
+      const frames = yield* Queue.unbounded<string>()
+      let pings = 0
+      const write: Socket.Writer["write"] = (data) =>
+        Effect.gen(function*() {
+          if (Socket.isCloseEvent(data)) return
+          const message = JSON.parse(typeof data === "string" ? data : new TextDecoder().decode(data))
+          if (message._tag === "Ping") {
+            pings++
+            yield* Queue.offer(frames, JSON.stringify({ _tag: "Pong" }) + "\n")
+          } else if (message._tag === "Request") {
+            yield* Deferred.succeed(requestSent, void 0)
+          }
+        })
+      const socket = Socket.make({
+        reader: Effect.succeed({
+          pull: Queue.take(frames).pipe(Effect.map((frame) => [frame] as const)),
+          upgrade: Socket.SocketUpgradeError.unsupported
+        }),
+        writer: Effect.succeed({
+          write,
+          writeAll: (chunks) => Effect.forEach(chunks, write, { discard: true })
+        })
+      })
+      const protocol = yield* RpcClient.makeProtocolSocket().pipe(
+        Effect.provideService(Socket.Socket, socket),
+        Effect.provide(RpcSerialization.layerNdjson),
+        // Model scheduler overhead deterministically: sleeps resume 1ms late.
+        Effect.provideService(Clock.Clock, {
+          ...clock,
+          sleep: (duration) => clock.sleep(Duration.sum(duration, Duration.millis(1)))
+        })
+      )
+      const client = yield* RpcClient.make(TestGroup, {
+        generateRequestId: () => RpcMessage.RequestId("0")
+      }).pipe(Effect.provideService(RpcClient.Protocol, protocol))
+      const response = yield* client.Ping().pipe(Effect.exit, Effect.forkChild)
+
+      yield* Deferred.await(requestSent)
+      yield* TestClock.adjust("12 seconds")
+      yield* Queue.offer(
+        frames,
+        JSON.stringify({
+          _tag: "Exit",
+          requestId: "0",
+          exit: { _tag: "Success", value: "slow result" }
+        }) + "\n"
+      )
+      assert.deepStrictEqual(yield* Fiber.join(response), Exit.succeed("slow result"))
+      assert.isAtLeast(pings, 2)
     }))
 
   it.effect("fails in-flight streams on a missed pong while retrying socket errors", () =>

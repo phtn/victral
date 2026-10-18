@@ -263,7 +263,7 @@ export const make = (
     })
 
     const connection = yield* makeConnection
-    const { acquirer, onCommitFailure, transactionAcquirer } = Client.makeSqliteAcquirers({
+    const { acquirer, borrower, onCommitFailure, transactionAcquirer } = Client.makeSqliteAcquirers({
       connection: Effect.succeed(connection),
       semaphore: yield* Semaphore.make(1),
       isTransaction: (conn) => conn.isTransaction()
@@ -271,7 +271,9 @@ export const make = (
 
     const client: SqliteClient = Object.assign(
       (yield* Client.make({
+        driver: "sqlite-bun",
         acquirer,
+        borrower,
         compiler,
         transactionAcquirer,
         onCommitFailure,

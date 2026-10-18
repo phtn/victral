@@ -199,6 +199,9 @@ export const make = Effect.fnUntraced(
           }), middleware)
 
         function handler(request: Request, server: BunServer<WebSocketContext>) {
+          if (request.method === "CONNECT") {
+            return Promise.resolve(new Response(null, { status: 501 }))
+          }
           return new Promise<Response>((resolve, _reject) => {
             const context = Context.add(
               services,
@@ -447,7 +450,7 @@ class BunServerRequest extends Inspectable.Class implements ServerRequest.HttpSe
     return IncomingMessage.inspect(this, {
       _id: "HttpServerRequest",
       method: this.method,
-      url: this.originalUrl
+      url: UrlParams.redactUrl(this.originalUrl)
     })
   }
   modify(

@@ -1,8 +1,8 @@
 /** @effect-diagnostics preferSchemaOverJson:skip-file */
-import { NodeHttpServer } from "@effect/platform-node"
+import { NodeHttpServer, NodeHttpServerRequest } from "@effect/platform-node"
 import { NodeWS } from "@effect/platform-node/NodeSocket"
 import { assert, describe, expect, it } from "@effect/vitest"
-import { ByteSize, Effect, Exit, Logger, Option, References } from "effect"
+import { ByteSize, Effect, Exit, Formatter, Logger, Option, References } from "effect"
 import * as Deferred from "effect/Deferred"
 import * as Duration from "effect/Duration"
 import * as Fiber from "effect/Fiber"
@@ -14,6 +14,7 @@ import {
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
+  HttpMiddleware,
   HttpPlatform,
   HttpRouter,
   HttpServer,
@@ -36,7 +37,9 @@ import * as Buffer from "node:buffer"
 import { randomBytes } from "node:crypto"
 import { EventEmitter } from "node:events"
 import * as Http from "node:http"
+import * as Http2 from "node:http2"
 import * as Net from "node:net"
+import * as Zlib from "node:zlib"
 
 const Todo = Schema.Struct({
   id: Schema.Number,
@@ -104,6 +107,49 @@ describe("HttpServer", () => {
         Effect.flatMap(HttpClientResponse.schemaBodyJson(Todo))
       )
       expect(todo).toEqual({ id: 1, title: "test" })
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)))
+
+  it.effect("toServerResponse works behind the decompression middleware", () =>
+    Effect.gen(function*() {
+      yield* HttpServer.serveEffect(
+        HttpServerRequest.HttpServerRequest.use((request) => {
+          const responses = [request, request.modify({ url: "/modified" })].map(NodeHttpServerRequest.toServerResponse)
+          return Effect.succeed(
+            HttpServerResponse.text(responses.map((response) => response instanceof Http.ServerResponse).join(","))
+          )
+        }),
+        HttpMiddleware.decompression()
+      )
+      const response = yield* HttpClient.post("/", {
+        body: HttpBody.uint8Array(Zlib.gzipSync("hello")),
+        headers: { "content-encoding": "gzip" }
+      })
+      assert.strictEqual(yield* response.text, "true,true")
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)))
+
+  it.effect("redacts query params when inspecting requests", () =>
+    Effect.gen(function*() {
+      yield* HttpRouter.add(
+        "GET",
+        "/inspect",
+        Effect.gen(function*() {
+          const request = yield* HttpServerRequest.HttpServerRequest
+          return yield* HttpServerResponse.json({
+            url: request.url,
+            json: JSON.stringify(request),
+            formatted: Formatter.format(request)
+          })
+        }).pipe(Effect.provideService(UrlParams.CurrentRedactedNames, ["token"]))
+      ).pipe(HttpRouter.serve, Layer.build)
+
+      const result = (yield* HttpClient.get("/inspect?token=token-secret&sig=sig-visible").pipe(
+        Effect.flatMap((response) => response.json)
+      )) as { readonly url: string; readonly json: string; readonly formatted: string }
+
+      assert.strictEqual(result.url, "/inspect?token=token-secret&sig=sig-visible")
+      assert.include(result.json, `"url":"/inspect?token=REDACTED&sig=sig-visible"`)
+      assert.include(result.formatted, "/inspect?token=REDACTED&sig=sig-visible")
+      assert.notInclude(result.formatted, "token-secret")
     }).pipe(Effect.provide(NodeHttpServer.layerTest)))
 
   it.effect("schemaJson applies a JSON reviver", () =>
@@ -748,6 +794,70 @@ describe("HttpServer", () => {
       assert.strictEqual(writeCount, 1)
     }))
 
+  it.effect("aborts the response when a streamed body fails after it started", () =>
+    Effect.gen(function*() {
+      const received = yield* Latch.make()
+      yield* HttpRouter.add(
+        "GET",
+        "/stream",
+        HttpServerResponse.stream(
+          Stream.make(Buffer.Buffer.from("partial")).pipe(
+            Stream.concat(Stream.fromEffect(received.await.pipe(Effect.andThen(Effect.fail("boom")))))
+          )
+        )
+      ).pipe(
+        HttpRouter.serve,
+        Layer.build
+      )
+      const response = yield* HttpClient.get("/stream")
+      assert.strictEqual(response.status, 200)
+      let body = ""
+      const exit = yield* response.stream.pipe(
+        Stream.runForEach((chunk) => {
+          body += Buffer.Buffer.from(chunk).toString()
+          return received.open
+        }),
+        Effect.exit
+      )
+      assert.strictEqual(body, "partial")
+      assert.isTrue(Exit.isFailure(exit))
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)))
+
+  describe("when writeHead throws", () => {
+    it.live("answers rejected HTTP/1.1 headers with a 500 and reports the failure", () =>
+      Effect.gen(function*() {
+        const observed = yield* Deferred.make<Exit.Exit<unknown, unknown>>()
+        yield* HttpServer.serve(
+          Effect.succeed(HttpServerResponse.formData(new FormData(), { headers: { "x-invalid": "a\nb" } })),
+          (app) => Effect.onExit(app, (exit) => Deferred.succeed(observed, exit))
+        ).pipe(Layer.build)
+
+        const response = yield* HttpClient.get("/")
+        assert.strictEqual(response.status, 500)
+        assert.strictEqual(yield* response.text, "")
+        assert.isTrue(Exit.isFailure(yield* Deferred.await(observed)))
+      }).pipe(Effect.timeout("2 seconds"), Effect.provide(NodeHttpServer.layerTest)))
+
+    it.live("closes an h2c stream whose headers HTTP/2 forbids and reports the failure", () =>
+      Effect.gen(function*() {
+        const server = Http2.createServer()
+        const observed = yield* Deferred.make<Exit.Exit<unknown, unknown>>()
+        yield* HttpServer.serve(
+          Effect.succeed(HttpServerResponse.text("ok", { headers: { "keep-alive": "timeout=5" } })),
+          (app) => Effect.onExit(app, (exit) => Deferred.succeed(observed, exit))
+        ).pipe(
+          Layer.provide(NodeHttpServer.layer(() => server as any, { port: 0 })),
+          Layer.build
+        )
+
+        const address = server.address()
+        assert(address !== null && typeof address !== "string")
+        const answer = yield* h2Request(address.port).pipe(Effect.timeout("2 seconds"))
+        assert.deepStrictEqual(answer, { _tag: "Closed" })
+        assert.isTrue(Exit.isFailure(yield* Deferred.await(observed)))
+      }))
+  })
+
   it.live("answers keep-alive requests while graceful shutdown drains an existing connection", () => {
     const requestStarted = Latch.makeUnsafe()
     const releaseResponse = Latch.makeUnsafe()
@@ -1320,6 +1430,20 @@ const getStatusText = (port: number) =>
     request.on("error", (error) => resume(Effect.fail(error)))
     return Effect.sync(() => request.destroy())
   })
+
+const h2Request = (port: number) =>
+  Effect.callback<{ readonly _tag: "Status"; readonly status: unknown } | { readonly _tag: "Closed" }>(
+    (resume) => {
+      const session = Http2.connect(`http://127.0.0.1:${port}`)
+      session.on("error", constVoid)
+      const stream = session.request({ ":path": "/" })
+      stream.on("error", constVoid)
+      stream.on("response", (headers) => resume(Effect.succeed({ _tag: "Status", status: headers[":status"] })))
+      stream.on("close", () => resume(Effect.succeed({ _tag: "Closed" })))
+      stream.end()
+      return Effect.sync(() => session.destroy())
+    }
+  )
 
 const tcpPort = (server: Http.Server): number => {
   const address = server.address()

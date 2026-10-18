@@ -136,6 +136,24 @@ describe("Stream", () => {
         assert.strictEqual(offered, 4)
         assert.isFalse(done)
       }))
+
+    it.effect("register effect has run when the stream starts pulling", () =>
+      Effect.gen(function*() {
+        let emit: ((n: number) => void) | undefined
+        const fiber = yield* Stream.callback<number>((queue) =>
+          Effect.sync(() => {
+            emit = (n) => Queue.offerUnsafe(queue, n)
+          })
+        ).pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true })
+        )
+        assert.isUndefined(fiber.pollUnsafe())
+        assert.isDefined(emit, "register effect has not run")
+        emit!(1)
+        assert.deepStrictEqual(yield* Fiber.join(fiber), [1])
+      }))
   })
 
   describe("destructors", () => {
@@ -189,6 +207,34 @@ describe("Stream", () => {
         )
         assert.deepStrictEqual(seen, [1, 2, 3])
       }))
+
+    it.effect.each([0, 1])(
+      "toReadableStream - respects upstream demand with highWaterMark %i",
+      (highWaterMark) =>
+        Effect.gen(function*() {
+          const pulled: Array<number> = []
+          const reader = yield* Effect.acquireRelease(
+            Effect.sync(() =>
+              Stream.range(1, 3, 1).pipe(
+                Stream.tap((n) => Effect.sync(() => pulled.push(n))),
+                Stream.toReadableStream({ strategy: { highWaterMark } })
+              ).getReader()
+            ),
+            (reader) => Effect.promise(() => reader.cancel())
+          )
+          // Let the Web Stream and its producer process all currently scheduled work.
+          yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 0)))
+          const beforeRead = [...pulled]
+          const result = yield* Effect.promise(() => reader.read())
+          yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 0)))
+
+          assert.deepStrictEqual(result, { done: false, value: 1 })
+          assert.deepStrictEqual(
+            [beforeRead, pulled],
+            highWaterMark === 0 ? [[], [1]] : [[1], [1, 2]]
+          )
+        })
+    )
 
     it.effect("toAsyncIterable - return interrupts an in-flight pull", () =>
       Effect.gen(function*() {
@@ -556,21 +602,18 @@ describe("Stream", () => {
 
     it.effect("fromReadableStream - errored streams fail with the mapped error, not a finalizer defect", () =>
       Effect.gen(function*() {
+        const readable = new ReadableStream<number>({
+          start(controller) {
+            controller.error(new Error("boom"))
+          }
+        })
         const exit = yield* Stream.fromReadableStream({
-          evaluate: () =>
-            new ReadableStream<number>({
-              start(controller) {
-                controller.error(new Error("boom"))
-              }
-            }),
-          onError: (error) => new Error(`mapped: ${(error as Error).message}`)
+          evaluate: () => readable,
+          onError: () => "mapped"
         }).pipe(Stream.runDrain, Effect.exit)
 
-        assertTrue(Exit.isFailure(exit))
-        if (Exit.isFailure(exit)) {
-          assertTrue(exit.cause.reasons.every(Cause.isFailReason))
-          deepStrictEqual(Cause.squash(exit.cause), new Error("mapped: boom"))
-        }
+        assertExitFailure(exit, Cause.fail("mapped"))
+        assert.isFalse(readable.locked)
       }))
   })
 
@@ -1394,6 +1437,16 @@ describe("Stream", () => {
         assert.deepStrictEqual(result, Array.scan([1, 2, 3, 4, 5], 0, (acc, curr) => acc + curr))
       }))
 
+    it.effect("mapAccum preserves large callback results in order", () =>
+      Effect.gen(function*() {
+        const values = Array.makeBy(200000, (i) => i)
+        const result = yield* Stream.make(1).pipe(
+          Stream.mapAccum(() => 0, (state) => [state, values]),
+          Stream.runCollect
+        )
+        assert.deepStrictEqual(result, values)
+      }))
+
     it.effect("mapAccumArrayEffect data-first", () =>
       Effect.gen(function*() {
         const result = yield* Stream.mapAccumArrayEffect(
@@ -1714,6 +1767,19 @@ describe("Stream", () => {
   })
 
   describe("mapEffect with concurrency", () => {
+    for (const concurrency of [Infinity, 1e300]) {
+      it.effect(`waits for in-flight effects after upstream ends (concurrency: ${concurrency}, unordered: true)`, () =>
+        Effect.gen(function*() {
+          const fiber = yield* Stream.range(1, 5).pipe(
+            Stream.mapEffect((n) => Effect.as(Effect.sleep("10 millis"), n), { concurrency, unordered: true }),
+            Stream.runCollect,
+            Effect.forkChild
+          )
+          yield* TestClock.adjust("10 millis")
+          assert.deepStrictEqual((yield* Fiber.join(fiber)).sort(), [1, 2, 3, 4, 5])
+        }))
+    }
+
     for (const unordered of [false, true]) {
       it.effect(`fails when the mapping function throws (unordered: ${unordered})`, () =>
         Effect.gen(function*() {
@@ -5513,6 +5579,25 @@ describe("Stream", () => {
         )
         deepStrictEqual(result, [4])
       }))
+
+    it.live.each(["timeout", "timeoutOrElse"] as const)(
+      "%s finishes when an async iterator pull never settles",
+      (kind) =>
+        Effect.gen(function*() {
+          async function* source() {
+            yield "a"
+            await new Promise(() => undefined)
+          }
+          const result = yield* Stream.fromAsyncIterable(source(), (error) => error).pipe(
+            kind === "timeout" ? Stream.timeout("10 millis") : Stream.timeoutOrElse({
+              duration: "10 millis",
+              orElse: () => Stream.succeed("fallback")
+            }),
+            Stream.runCollect
+          )
+          deepStrictEqual(result, kind === "timeout" ? ["a"] : ["a", "fallback"])
+        })
+    )
 
     it.effect("timeoutOrElse - should not apply timeout after switch", () =>
       Effect.gen(function*() {

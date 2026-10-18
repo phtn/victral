@@ -49,6 +49,7 @@ import { internalCall } from "../Utils.ts"
 import type { Primitive } from "./core.ts"
 import {
   args,
+  causeAddInterrupts,
   causeAnnotate,
   causeCombine,
   causeEmpty,
@@ -58,6 +59,7 @@ import {
   contA,
   contAll,
   contE,
+  Die,
   evaluate,
   exitDie,
   exitFail,
@@ -68,6 +70,7 @@ import {
   InterruptorStackTrace,
   isCause,
   isDieReason,
+  isDone,
   isEffect,
   isFailReason,
   isInterruptReason,
@@ -130,9 +133,9 @@ export class Interrupt extends ReasonBase<"Interrupt"> implements Cause.Interrup
     )
   }
   [Hash.symbol](): number {
-    return Hash.combine(Hash.string(`${this._tag}:${this.fiberId}`))(
-      Hash.random(this.annotations)
-    )
+    // Equality compares annotations by reference, so leave them out instead of
+    // hashing them randomly.
+    return Hash.string(`${this._tag}:${this.fiberId}`)
   }
 }
 
@@ -169,6 +172,22 @@ export const findErrorOption = Filter.toOption(findError)
 
 /** @internal */
 export const hasDies = <E>(self: Cause.Cause<E>): boolean => self.reasons.some(isDieReason)
+
+/**
+ * Defects take precedence over typed failures when causes are combined: if
+ * the cause contains a `Die`, every `Fail` becomes a `Die`. `Done` signals
+ * stay typed so pulls still complete.
+ *
+ * @internal
+ */
+export const causeElectDefects = <E>(self: Cause.Cause<E>): Cause.Cause<E> =>
+  hasDies(self) && hasFails(self)
+    ? causeFromReasons(
+      self.reasons.map((reason) =>
+        reason._tag === "Fail" && !isDone(reason.error) ? new Die(reason.error, reason.annotations) : reason
+      )
+    )
+    : self
 
 /** @internal */
 export const findDie = <E>(self: Cause.Cause<E>): Result.Result<Cause.Die, Cause.Cause<E>> => {
@@ -566,7 +585,7 @@ export class FiberImpl<A = any, E = any> implements Fiber.Fiber<A, E> {
       cause = causeAnnotate(cause, annotations)
     }
     this._interruptedCause = this._interruptedCause
-      ? causeCombine(this._interruptedCause, cause)
+      ? causeAddInterrupts(this._interruptedCause, cause)
       : cause
     if (this.interruptible) {
       if (this._running) {
@@ -1000,7 +1019,7 @@ export const fromOption: <
     (args) => args.length >= 2 || Option.isOption(args[0]),
     <A, E>(option: Option.Option<A>, onNone?: LazyArg<E>): Effect.Effect<A, Cause.NoSuchElementError | E> =>
       Option.isNone(option)
-        ? fail(onNone ? onNone() : new NoSuchElementError("Effect.fromOption: Option.none"))
+        ? onNone ? failSync(onNone) : fail(new NoSuchElementError("Effect.fromOption: Option.none"))
         : succeed(option.value)
   )
 
@@ -1507,14 +1526,19 @@ const succeedPayload = function(this: { readonly payload: any }, _value: unknown
 // V8 includes the property name of a stored continuation in its stack trace.
 // Other engines need an explicit frame for the stack cleaner to cut at.
 const continuationMarksStack = (() => {
-  if (getStackTraceLimit() === 0) return false
+  const limit = getStackTraceLimit()
+  if (limit === 0) return false
   const marker = "~effect/Effect/stackProbe"
   const probe = {
     [marker]: function stackProbe() {
-      return new Error().stack
+      return new Error()
     }
   }
-  return probe[marker]()?.includes("[as " + marker + "]") === true
+  // Only the probe frame is needed to detect the continuation property name.
+  setStackTraceLimit(1)
+  const error = probe[marker]()
+  setStackTraceLimit(limit)
+  return error.stack?.includes("[as " + marker + "]") === true
 })()
 const mapCont = function(this: { readonly payload: any }, value: any, fiber: FiberImpl) {
   const f = this.payload
@@ -1634,7 +1658,7 @@ export const raceAll = <Eff extends Effect.Effect<any, any, any>>(
         if (exit._tag === "Failure") {
           failures.push(...exit.cause.reasons)
           if (doneCount >= len) {
-            resume(failCause(causeFromReasons(failures)))
+            resume(failCause(causeElectDefects(causeFromReasons(failures))))
           }
           return
         }
@@ -2885,7 +2909,7 @@ export const catchIf: {
   ) => Effect.Effect<A | A2 | Exclude<A3, unassigned>, E2 | E3 | (A3 extends unassigned ? E : never), R | R2 | R3>
   <A, E, R, EB extends E, A2, E2, R2, A3 = unassigned, E3 = never, R3 = never>(
     self: Effect.Effect<A, E, R>,
-    refinement: Predicate.Refinement<E, EB>,
+    refinement: Predicate.Refinement<NoInfer<E>, EB>,
     f: (e: EB) => Effect.Effect<A2, E2, R2>,
     orElse?: ((e: Exclude<E, EB>) => Effect.Effect<A3, E3, R3>) | undefined
   ): Effect.Effect<
@@ -3971,7 +3995,9 @@ const combineFinalizerCause = <A, E, XE, XR>(
   exit_: Exit.Exit<A, E>,
   finalizer: Effect.Effect<void, XE, XR>
 ): Effect.Effect<void, E | XE, XR> =>
-  exitIsSuccess(exit_) ? finalizer : catchCause(finalizer, (cause) => failCause(causeCombine(exit_.cause, cause)))
+  exitIsSuccess(exit_)
+    ? finalizer
+    : catchCause(finalizer, (cause) => failCause(causeElectDefects(causeCombine(exit_.cause, cause))))
 
 const scopeCloseFinalizers = fnUntraced(function*<A, E>(
   self: Scope.Scope,
@@ -4682,23 +4708,18 @@ export const all = <
       ? (forEach as any)(Object.values(arg), result, options)
       : (forEach as any)(Object.values(arg), identity, options)
   }
-  return suspend(() => {
-    const out: Record<string, unknown> = {}
-    return as(
+  return suspend(() =>
+    map(
       forEach(
         Object.entries(arg),
-        ([key, effect]) =>
-          map(options?.mode === "result" ? result(effect) : effect, (value) => {
-            InternalRecord.assignProperty(out, key, value)
-          }),
+        ([key, effect]) => map(options?.mode === "result" ? result(effect) : effect, (value) => [key, value] as const),
         {
-          discard: true,
           concurrency: options?.concurrency
         }
       ),
-      out
+      Object.fromEntries
     )
-  }) as any
+  ) as any
 }
 
 /** @internal */
@@ -5136,7 +5157,9 @@ const iterateConcurrentImpl = <S, A, X, E, R, E2>(options: IterateOptions<S, A, 
                   const reasons = exit.cause.reasons.filter((reason) => reason._tag !== "Interrupt")
                   if (reasons.length > 0) {
                     const cause = causeFromReasons(reasons)
-                    terminal = exitFailCause(terminal._tag === "Failure" ? causeCombine(terminal.cause, cause) : cause)
+                    terminal = exitFailCause(
+                      terminal._tag === "Failure" ? causeElectDefects(causeCombine(terminal.cause, cause)) : cause
+                    )
                   }
                 }
               } else {
@@ -5331,31 +5354,20 @@ export const filter: {
       | ((a: A, i: number) => Effect.Effect<boolean, E, R>),
     options?: { readonly concurrency?: Concurrency | undefined }
   ): Effect.Effect<Array<A>, E, R> =>
-    suspend(() => {
-      const out: Array<A> = []
-      return as(
-        forEach(
-          elements,
-          (a, i) => {
-            const result = (predicate as Function)(a, i)
-            if (typeof result === "boolean") {
-              if (result) out.push(a)
-              return void_ as any
-            }
-            return map(result, (keep) => {
-              if (keep) {
-                out.push(a)
-              }
-            })
-          },
-          {
-            discard: true,
-            concurrency: options?.concurrency
+    map(
+      forEach(
+        elements,
+        (a, i) => {
+          const result = (predicate as Function)(a, i)
+          if (typeof result === "boolean") {
+            return succeed(result ? Option.some(a) : Option.none())
           }
-        ),
-        out
-      )
-    })
+          return map(result, (keep) => keep ? Option.some(a) : Option.none())
+        },
+        options
+      ),
+      Arr.getSomes
+    )
 )
 
 /** @internal */
@@ -5624,7 +5636,10 @@ export const forkIn: {
     }
   ): Effect.Effect<Fiber.Fiber<A, E>, never, R> =>
     withFiber((parent) => {
-      const fiber = forkUnsafe(parent, self, options?.startImmediately, true, options?.uninterruptible)
+      // A closed scope gets an unstarted fiber, which is interrupted below
+      const fiber = scope.state._tag === "Closed"
+        ? new FiberImpl<A, E>(parent.context)
+        : forkUnsafe(parent, self, options?.startImmediately, true, options?.uninterruptible)
       if (!(fiber as FiberImpl<any, any>)._exit) {
         if (scope.state._tag !== "Closed") {
           const key = {}

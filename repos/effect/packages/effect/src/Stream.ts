@@ -1259,9 +1259,10 @@ export const fromPubSubTake = <A, E>(pubsub: PubSub.PubSub<Take.Take<A, E>>): St
  *
  * **Details**
  *
- * The stream reads from a `ReadableStreamDefaultReader`, maps read failures
- * with `onError`, and closes the reader when the stream finalizes. By default
- * the reader is canceled; set `releaseLockOnEnd` to release the lock instead.
+ * The stream reads from a `ReadableStreamDefaultReader` and maps read failures
+ * with `onError`. Finalization cancels the reader and releases its lock, or
+ * only releases the lock when `releaseLockOnEnd` is set. A rejected cancel
+ * hook becomes a defect.
  *
  * **Example** (Creating a stream from a ReadableStream)
  *
@@ -1432,6 +1433,11 @@ export interface EventListener<A = unknown> {
 
 /**
  * Creates a stream from an event listener.
+ *
+ * **Gotchas**
+ *
+ * Event listeners cannot backpressure the source. When a bounded `bufferSize`
+ * is full, additional events are dropped rather than suspending the listener.
  *
  * **Example** (Creating a stream from an event listener)
  *
@@ -5260,7 +5266,7 @@ export const catchIf: {
   ) => Stream<A | A2 | Exclude<A3, unassigned>, E2 | E3 | (A3 extends unassigned ? E : never), R | R2 | R3>
   <A, E, R, EB extends E, A2, E2, R2, A3 = unassigned, E3 = never, R3 = never>(
     self: Stream<A, E, R>,
-    refinement: Refinement<E, EB>,
+    refinement: Refinement<NoInfer<E>, EB>,
     f: (e: EB) => Stream<A2, E2, R2>,
     orElse?: ((e: Exclude<E, EB>) => Stream<A3, E3, R3>) | undefined
   ): Stream<A | A2 | Exclude<A3, unassigned>, E2 | E3 | (A3 extends unassigned ? Exclude<E, EB> : never), R | R2 | R3>
@@ -7825,7 +7831,9 @@ export const mapAccum: {
       for (let index = 0; index < arr.length; index++) {
         const [newState, values] = f(state, arr[index])
         state = newState
-        acc.push(...values)
+        for (let i = 0; i < values.length; i++) {
+          acc.push(values[i])
+        }
       }
       return [state, Arr.isArrayNonEmpty(acc) ? Arr.of(acc) : emptyArr]
     },
@@ -9807,10 +9815,10 @@ export const decodeText: <
     <E, R>(self: Stream<Uint8Array, E, R>, options?: {
       readonly encoding?: string | undefined
     }): Stream<string, E, R> =>
-      suspend(() => {
-        const decoder = new TextDecoder(options?.encoding)
-        return map(self, (chunk) => decoder.decode(chunk, { stream: true }))
-      })
+      self.channel.pipe(
+        Channel.pipeTo(Channel.decodeText(options?.encoding)),
+        fromChannel
+      )
   )
 
 /**
@@ -10409,7 +10417,8 @@ export const ensuring: {
 /**
  * Provides a layer or context to the stream, removing the corresponding
  * service requirements. Use `options.local` to build the layer every time; by
- * default, layers are shared between provide calls.
+ * default, a layer already built by an enclosing provide or runtime is reused;
+ * sibling provide calls build their own copies.
  *
  * **Example** (Providing stream requirements)
  *
@@ -11542,6 +11551,9 @@ export const mkUint8Array = <E, R>(self: Stream<Uint8Array, E, R>): Effect.Effec
  *
  * See https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream.
  *
+ * When `signal` aborts, the stream is interrupted even if the reader has
+ * stopped pulling, and the `ReadableStream` closes.
+ *
  * **Example** (Converting to a ReadableStream with services)
  *
  * ```ts import.meta.vitest
@@ -11560,45 +11572,67 @@ export const mkUint8Array = <E, R>(self: Stream<Uint8Array, E, R>): Effect.Effec
 export const toReadableStreamWith: {
   <A, XR>(
     context: Context.Context<XR>,
-    options?: { readonly strategy?: QueuingStrategy<A> | undefined }
+    options?: {
+      readonly strategy?: QueuingStrategy<A> | undefined
+      readonly signal?: AbortSignal | undefined
+    }
   ): <E, R extends XR>(self: Stream<A, E, R>) => ReadableStream<A>
   <A, E, XR, R extends XR>(
     self: Stream<A, E, R>,
     context: Context.Context<XR>,
-    options?: { readonly strategy?: QueuingStrategy<A> | undefined }
+    options?: {
+      readonly strategy?: QueuingStrategy<A> | undefined
+      readonly signal?: AbortSignal | undefined
+    }
   ): ReadableStream<A>
 } = dual(
   (args) => isStream(args[0]),
   <A, E, XR, R extends XR>(
     self: Stream<A, E, R>,
     context: Context.Context<XR>,
-    options?: { readonly strategy?: QueuingStrategy<A> | undefined }
+    options?: {
+      readonly strategy?: QueuingStrategy<A> | undefined
+      readonly signal?: AbortSignal | undefined
+    }
   ): ReadableStream<A> => {
     let currentResolve: (() => void) | undefined = undefined
     let fiber: Fiber.Fiber<void, E> | undefined = undefined
+    let cancelled = false
     const latch = Latch.makeUnsafe(false)
+    const signal = options?.signal
+    // Interrupting the fiber directly also stops a consumer waiting for a pull.
+    const onAbort = () => fiber!.interruptUnsafe()
 
     return new ReadableStream<A>({
       start(controller) {
         fiber = Effect.runFork(Effect.provideContext(
-          runForEachArray(self, (chunk) =>
-            latch.whenOpen(Effect.sync(() => {
-              latch.closeUnsafe()
-              for (let i = 0; i < chunk.length; i++) {
-                controller.enqueue(chunk[i])
-              }
-              currentResolve!()
-              currentResolve = undefined
-            }))),
+          Channel.runForEach(
+            Channel.transformPull(self.channel, (pull) => Effect.succeed(latch.whenOpen(pull))),
+            (chunk) =>
+              Effect.sync(() => {
+                latch.closeUnsafe()
+                for (let i = 0; i < chunk.length; i++) {
+                  controller.enqueue(chunk[i])
+                }
+                currentResolve!()
+                currentResolve = undefined
+              })
+          ),
           context
         ))
         fiber.addObserver((exit) => {
-          if (exit._tag === "Failure") {
+          signal?.removeEventListener("abort", onAbort)
+          if (cancelled) return
+          if (exit._tag === "Failure" && signal?.aborted !== true) {
             controller.error(Cause.squash(exit.cause))
           } else {
             controller.close()
           }
         })
+        if (signal !== undefined && fiber.pollUnsafe() === undefined) {
+          if (signal.aborted) onAbort()
+          else signal.addEventListener("abort", onAbort, { once: true })
+        }
       },
       pull() {
         return new Promise<void>((resolve) => {
@@ -11608,6 +11642,7 @@ export const toReadableStreamWith: {
       },
       cancel() {
         if (!fiber) return
+        cancelled = true
         return Effect.runPromise(Effect.asVoid(Fiber.interrupt(fiber)))
       }
     }, options?.strategy)

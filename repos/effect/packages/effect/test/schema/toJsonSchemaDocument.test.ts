@@ -1266,10 +1266,8 @@ describe("toJsonSchemaDocument", () => {
                 "items": {
                   "type": "string"
                 },
-                "minItems": 1,
-                "allOf": [
-                  { "minItems": 2, "maxItems": 2 }
-                ]
+                "minItems": 2,
+                "maxItems": 2
               }
             }
           )
@@ -1359,10 +1357,7 @@ describe("toJsonSchemaDocument", () => {
                 "items": {
                   "type": "string"
                 },
-                "minItems": 1,
-                "allOf": [
-                  { "minItems": 2 }
-                ]
+                "minItems": 2
               }
             }
           )
@@ -1609,6 +1604,54 @@ describe("toJsonSchemaDocument", () => {
             ]
           }
         })
+      })
+
+      it("merges colliding inclusive bounds into the tighter bound", () => {
+        assertJsonSchemaDocument(
+          Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })).annotate({ description: "a", default: 5 }),
+          {
+            schema: {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "description": "a",
+              "default": 5
+            }
+          }
+        )
+      })
+
+      it("keeps only the tightest inclusive or exclusive bound", () => {
+        assertJsonSchemaDocument(
+          Schema.Finite.check(
+            Schema.isGreaterThan(0),
+            Schema.isGreaterThan(1),
+            Schema.isGreaterThanOrEqualTo(1),
+            Schema.isLessThan(10),
+            Schema.isLessThan(9),
+            Schema.isLessThanOrEqualTo(8)
+          ),
+          { schema: { type: "number", exclusiveMinimum: 1, maximum: 8 } }
+        )
+      })
+
+      it("merges colliding property-count bounds into the tighter bound", () => {
+        assertJsonSchemaDocument(
+          Schema.Record(Schema.String, Schema.String).check(
+            Schema.isMinProperties(2),
+            Schema.isMinProperties(1),
+            Schema.isMaxProperties(5),
+            Schema.isMaxProperties(3)
+          ),
+          {
+            schema: {
+              "type": "object",
+              "additionalProperties": { "type": "string" },
+              "minProperties": 2,
+              "maxProperties": 3
+            }
+          }
+        )
       })
 
       it("isInt32", () => {
@@ -3997,6 +4040,53 @@ describe("toJsonSchemaDocument", () => {
           "additionalProperties": false
         }
       }
+    })
+  })
+
+  describe("toCodecGoJson", () => {
+    it("describes the nil values written by Go as null", () => {
+      assertJsonSchemaDocument(
+        Schema.toCodecGoJson(Schema.Struct({
+          a: Schema.String,
+          b: Schema.optionalKey(Schema.FiniteFromString),
+          c: Schema.Array(Schema.String)
+        })),
+        {
+          schema: {
+            "type": "object",
+            "properties": {
+              "a": { "type": "string" },
+              "b": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+              "c": { "anyOf": [{ "type": "array", "items": { "type": "string" } }, { "type": "null" }] }
+            },
+            "required": ["a", "c"],
+            "additionalProperties": false
+          }
+        }
+      )
+    })
+
+    it("describes recursive schemas", () => {
+      interface Node {
+        readonly Children: ReadonlyArray<Node>
+      }
+      const Node: Schema.Codec<Node> = Schema.Struct({
+        Children: Schema.Array(Schema.suspend(() => Node))
+      }).annotate({ identifier: "Node" })
+
+      assertJsonSchemaDocument(Schema.toCodecGoJson(Node), {
+        schema: { "$ref": "#/$defs/Node" },
+        definitions: {
+          Node: {
+            "type": "object",
+            "properties": {
+              "Children": { "anyOf": [{ "type": "array", "items": { "$ref": "#/$defs/Node" } }, { "type": "null" }] }
+            },
+            "required": ["Children"],
+            "additionalProperties": false
+          }
+        }
+      })
     })
   })
 })

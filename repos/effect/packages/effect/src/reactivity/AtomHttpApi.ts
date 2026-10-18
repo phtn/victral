@@ -115,16 +115,14 @@ export interface AtomHttpApiClient<Self, Id extends string, Groups extends HttpA
         infer _R,
         infer _RE
       >
-    ] ? Simplify<
-        HttpApiEndpoint.ClientRequest<_Params, _Query, _Payload, _Headers, ResponseMode> & {
-          readonly reactivityKeys?:
-            | ReadonlyArray<unknown>
-            | ReadonlyRecord<string, ReadonlyArray<unknown>>
-            | undefined
-          readonly timeToLive?: Duration.Input | undefined
-          readonly serializationKey?: string | undefined
-        }
-      >
+    ] ? HttpApiEndpoint.ClientRequest<_Params, _Query, _Payload, _Headers, ResponseMode> & {
+        readonly reactivityKeys?:
+          | ReadonlyArray<unknown>
+          | ReadonlyRecord<string, ReadonlyArray<unknown>>
+          | undefined
+        readonly timeToLive?: Duration.Input | undefined
+        readonly serializationKey?: string | undefined
+      }
       : never
   ) => [Endpoint] extends [
     HttpApiEndpoint.HttpApiEndpoint<
@@ -244,7 +242,7 @@ export const Service =
       if (responseMode === "decoded-only") {
         const definition = groups[group].endpoints[endpoint]
         return Atom.serializable(atom, {
-          key: `AtomHttpApi:mutation:${group}:${endpoint}`,
+          key: `AtomHttpApi:mutation:${JSON.stringify([id, group, endpoint])}`,
           schema: AsyncResult.Schema({
             success: Schema.Union(HttpApiEndpoint.getSuccessSchemas(definition)),
             error: Schema.Union(HttpApiEndpoint.getErrorSchemas(definition))
