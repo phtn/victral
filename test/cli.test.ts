@@ -16,11 +16,13 @@ test('model listing names providers, credentials, and selection format', async (
   const models = Bun.spawn([process.execPath, cli, '--models'], { stdout: 'pipe', stderr: 'pipe' });
   const output = await new Response(models.stdout).text();
   expect(await models.exited).toBe(0);
-  expect(output).toContain('1. muse-wonder-1.0 (Meta; alias mw1.0; needs META_API_KEY or MODEL_API_KEY)');
-  expect(output).toContain('2. muse-wonder-full (Meta; alias mwfull; needs META_API_KEY or MODEL_API_KEY)');
-  expect(output).toContain('3. gpt-6-luna (OpenAI; alias luna6; needs OPENAI_API_KEY)');
-  expect(output).toContain('4. gpt-6.1-sol (OpenAI; alias sol6.1; needs OPENAI_API_KEY)');
-  expect(output.match(/^  \d+\./gm)).toHaveLength(4);
+  expect(output).toContain('1. north-mini-code-1-0 (Cohere; alias north-mini; needs COHERE_API_KEY)');
+  expect(output).toContain('2. command-a-03-2025 (Cohere; alias command-a; needs COHERE_API_KEY)');
+  expect(output).toContain('3. command-a-plus-05-2026 (Cohere; alias command-a-plus; needs COHERE_API_KEY)');
+  expect(output).toContain('4. muse-wonder-1.0 (Meta; alias mw1.0; needs META_API_KEY or MODEL_API_KEY)');
+  expect(output).toContain('6. gpt-6-luna (OpenAI; alias luna6; needs OPENAI_API_KEY)');
+  expect(output).toContain('7. gpt-6.1-sol (OpenAI; alias sol6.1; needs OPENAI_API_KEY)');
+  expect(output.match(/^  \d+\./gm)).toHaveLength(7);
   expect(output).toContain('--model <number, short name, or ID>');
 });
 

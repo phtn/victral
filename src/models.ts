@@ -1,5 +1,6 @@
 import { Meta } from './meta.js';
 import { OpenAI } from './openai.js';
+import { Cohere } from './cohere.js';
 import { MODEL } from './constants.js';
 import type { ProviderOptions } from './providers/types.js';
 import { findModel, formatModelsList } from './model-catalog.js';
@@ -9,6 +10,6 @@ export function createModel(model = MODEL, options: ProviderOptions = {}) {
   const selected = findModel(String(model).trim().toLowerCase());
   if (!selected) throw new Error(`Unsupported model: ${model}.\n${formatModelsList()}`);
   model = selected.id;
-  const Provider = selected.provider === 'OpenAI' ? OpenAI : Meta;
+  const Provider = selected.provider === 'OpenAI' ? OpenAI : selected.provider === 'Cohere' ? Cohere : Meta;
   return new Provider({ ...options, model, instrument: true });
 }

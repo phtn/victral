@@ -8,7 +8,7 @@ test('completion narrows commands, then providers, then models one word at a tim
   expect(command.suggestions).toEqual(['/model']);
   const first = completeCommand('/mo', command)!;
   expect(first).toEqual({ input: '/model ', cursor: 7 });
-  expect(commandCompletion(first.input).suggestions).toEqual(['meta', 'openai']);
+  expect(commandCompletion(first.input).suggestions).toEqual(['cohere', 'meta', 'openai']);
   const provider = commandCompletion('/model o');
   expect(provider.suggestions).toEqual(['openai']);
   const second = completeCommand('/model o', provider)!;

@@ -1,6 +1,6 @@
 import * as Effect from 'effect/Effect';
 import { consumeSse } from './sse.js';
-import { MODEL } from './constants.js';
+import { META_MODEL } from './constants.js';
 import { citationFooter } from './web-citations.js';
 import { ProviderAdapter, providerOutcome, type ProviderService } from './providers/core.js';
 import type { NativeBlock, ProviderOptions, ProviderResult, RequestOptions } from './providers/types.js';
@@ -48,7 +48,7 @@ export class Meta extends ProviderAdapter {
   constructor(options: ProviderOptions = {}) {
     const apiKey = options.apiKey ?? (process.env.META_API_KEY || process.env.MODEL_API_KEY);
     if (!apiKey) throw new Error('Set META_API_KEY (or MODEL_API_KEY) in your environment before selecting Meta.');
-    super('Meta', apiKey, options, MODEL);
+    super('Meta', apiKey, options, META_MODEL);
   }
   private requestBody(messages: Message[], options: RequestOptions, stream: boolean) {
     const body = metaRequest(messages, options.tools, this.model, options.maxTokens, this.purpose);

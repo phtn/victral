@@ -1,8 +1,9 @@
 # Victral
 
 A persistent coding workspace with a TypeScript CLI and a full-screen terminal
-interface, implementing the latest OptChat / UniiChat memory design with Meta and OpenAI models.
-The default is Meta `muse-wonder-1.0` for both the agent and the compactor.
+interface, implementing the latest OptChat / UniiChat memory design with Cohere,
+Meta and OpenAI models. The defaults are Cohere `north-mini-code-1-0` for the
+agent and `command-a-03-2025` for the compactor.
 The [upstream specification](docs/OPTCHAT_SPEC.md) is pinned to gist revision
 `3c190e06f34aba0c69f49042c526093269604935` (October 8, 2026).
 [Alignment notes](docs/UPSTREAM_ALIGNMENT.md) describe the implementation and
@@ -48,8 +49,8 @@ application, scripts, and test suite and loads local `.env` files automatically.
 bun install
 ```
 
-Set `META_API_KEY` (or `MODEL_API_KEY`) for the default model, or `OPENAI_API_KEY`
-for an OpenAI model, in your environment
+Set `COHERE_API_KEY` for the default models and fallback, `META_API_KEY` (or
+`MODEL_API_KEY`) for Meta, or `OPENAI_API_KEY` for OpenAI, in your environment
 or in a local `.env` file. The example
 in `.env.example` lists the available settings. Never commit your keys.
 
@@ -87,34 +88,40 @@ and [the Effect migration plan](docs/EFFECT_MIGRATION_PLAN.md) for integration t
 
 | Short name | Model ID | Provider | Credential |
 | --- | --- | --- | --- |
+| `north-mini` | `north-mini-code-1-0` | Cohere | `COHERE_API_KEY` |
+| `command-a` | `command-a-03-2025` | Cohere | `COHERE_API_KEY` |
+| `command-a-plus` | `command-a-plus-05-2026` | Cohere | `COHERE_API_KEY` |
 | `mw1.0` | `muse-wonder-1.0` | Meta | `META_API_KEY` or `MODEL_API_KEY` |
 | `mwfull` | `muse-wonder-full` | Meta | `META_API_KEY` or `MODEL_API_KEY` |
 | `luna6` | `gpt-6-luna` | OpenAI | `OPENAI_API_KEY` |
 | `sol6.1` | `gpt-6.1-sol` | OpenAI | `OPENAI_API_KEY` |
 
 ```sh
-bun run start --project /absolute/path/to/your/project --model mw1.0
+bun run start --project /absolute/path/to/your/project --model north-mini
 bun run start --project /absolute/path/to/your/project --model luna6
 ```
 
-Choose the compactor separately if desired:
+Choose the compactor separately if desired. The default pair uses
+`north-mini-code-1-0` for the agent and `command-a-03-2025` for compaction.
+When `--model` or `VICTRAL_MODEL` is set without a compactor selection, the
+compactor follows that selected model.
 
 ```sh
-bun run start --model mw1.0 --compactor-model mwfull
+bun run start --model north-mini --compactor-model command-a
 ```
 
 `--models` lists the supported models with their providers and required
 credentials, without making API requests. Models can be named by list number,
-short name, or full ID: `--model mw1.0` and `--model 1` work like
-`--model muse-wonder-1.0`. During an interactive session, `/model` shows the
+short name, or full ID: `--model north-mini` and `--model 1` work like
+`--model north-mini-code-1-0`. During an interactive session, `/model` shows the
 current agent, the compactor, and the numbered choices; `/model meta mw1.0` or
 `/model openai sol6.1` switches the main agent between turns while retaining saved
 memory. `/model openai` lists only OpenAI models. Model-only shortcuts such as
 `/model mw1.0` and `/model luna6` also work. Switching the main model does not
 change the configured compactor. Model switches are session-local;
 set `VICTRAL_MODEL` and `VICTRAL_COMPACTOR_MODEL` for defaults. Explicit CLI
-flags take precedence. The numbered choices are 1 for `muse-wonder-1.0` and
-2 for `muse-wonder-full`, 3 for `gpt-6-luna`, and 4 for `gpt-6.1-sol`.
+flags take precedence. The model list displays numbered choices for every
+supported model.
 Short names also work in the environment
 settings and smoke scripts, and are case-insensitive. API requests and saved
 usage retain the full model IDs. The status bar shows the selected model's short
@@ -122,13 +129,15 @@ name and updates when switching with `/model`.
 
 Both the main agent and compactor try their configured model first. If startup
 configuration/credentials are invalid, or a provider request fails, that role
-switches to `muse-wonder-full` for the rest of the session. Set `META_API_KEY` (or
-`MODEL_API_KEY`) so the fallback can authenticate. `/model` and the status bar
+switches to its provider's fallback for the rest of the session. Cohere models
+switch to `command-a-plus-05-2026`; Meta and OpenAI models keep using
+`muse-wonder-full`. Set the corresponding provider key so the fallback can
+authenticate. `/model` and the status bar
 report the active models; fallback notices appear in the workspace. Restarting or
 explicitly switching the main model starts a new configured selection.
 
-Each failed request can make one replacement request to `muse-wonder-full`; fallback failures
-remain visible and do not loop. Cancellation, response-cleanup defects and consumer
+Each failed request can make one replacement request to the selected fallback;
+fallback failures remain visible and do not loop. Cancellation, response-cleanup defects and consumer
 callback/persistence errors do not trigger fallback. Partial output already saved
 from a failed main request remains saved; only the successful response's tool calls
 execute. Oversized compactor summaries retain their normal shortening attempts.
@@ -137,7 +146,7 @@ worker selection and optional Jev evaluations keep their existing policies.
 
 The status bar suggests matching command words as you type. `/m` shows `/metrics`
 and `/model`; `/mo` narrows to `/model`. Tab completes the selected word and adds
-a space, revealing the next choices: `meta` and `openai`, followed by that
+a space, revealing the next choices: `cohere`, `meta` and `openai`, followed by that
 provider's models. For example, type `/mo`, Tab, `o`, Tab, `s`, Tab to compose
 `/model openai sol6.1 `. Up/Down or Shift+Tab changes the selected suggestion;
 Enter runs the completed command. Suggestions occupy the status bar while
@@ -163,6 +172,12 @@ tools, and reports a failed turn if a tool step contains no calls.
 
 See [Meta models](https://dev.meta.ai/docs/models) and the
 [Messages API](https://dev.meta.ai/docs/protocols/messages) documentation.
+
+Cohere uses the Chat V2 API with native tool calls and SSE streaming. It
+preserves Cohere assistant tool plans and calls when replaying messages, and
+maps usage and citations into Victral's provider-neutral results. The optional
+`--web-search` provider-hosted search flag is currently supported by Meta and
+OpenAI; Cohere Chat V2 requires a user-defined search tool.
 
 The runner defaults to one persistent chat at `~/.local/share/victral/chat`.
 Use that same chat directory across launches to retain history. Project file
@@ -430,7 +445,8 @@ editing, bracketed paste, Unicode, resizing, and subscription/raw-mode cleanup.
 The TSRX checker uses TypeScript 5.9.3, supported by this pinned toolchain.
 
 The Meta and OpenAI adapters, storage, compaction, and evaluation modules remain JavaScript
-behind typed application interfaces; they are covered by the existing tests.
+behind typed application interfaces; the Cohere adapter is TypeScript. Existing offline tests
+cover the Meta/OpenAI adapters, provider selection, and session fallback behavior.
 Compatibility `.js` entry points keep current scripts and imports working.
 
 The smoke test makes real provider requests using only a
@@ -443,6 +459,9 @@ Run the same smoke test for a supported model:
 ```sh
 bun run smoke --model muse-wonder-1.0
 bun run smoke --model muse-wonder-full
+bun run smoke --model north-mini
+bun run smoke --model command-a
+bun run smoke --model command-a-plus
 bun run smoke --model luna6
 bun run smoke --model sol6.1
 ```
@@ -571,8 +590,8 @@ remain in saved memory.
 
 ## Standalone Jev evaluation
 
-Jev produces typed judgments, rather than summary text. Meta `muse-wonder-1.0`
-is the default main agent and compactor. Jev observes the original memory algorithm without
+Jev produces typed judgments, rather than summary text. Cohere `north-mini-code-1-0`
+is the default main agent and `command-a-03-2025` the default compactor. Jev observes the original memory algorithm without
 automatic filtering, deletion, rewriting, or gating.
 
 Set `TYPESAFE_API_KEY` locally, then evaluate an explicitly chosen source and

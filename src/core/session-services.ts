@@ -23,7 +23,7 @@ export class SessionMemory extends Context.Service<SessionMemory, Memory>()('vic
 export class SessionEvaluations extends Context.Service<SessionEvaluations, Evaluations>()('victral/session/Evaluations') {}
 export class SessionMetrics extends Context.Service<SessionMetrics, Metrics>()('victral/session/Metrics') {}
 
-export interface ModelOptions { purpose?: ProviderPurpose; webSearch?: boolean; usage: (record: unknown) => void; fallback?: boolean; onFallback?: () => void }
+export interface ModelOptions { purpose?: ProviderPurpose; webSearch?: boolean; usage: (record: unknown) => void; fallback?: boolean; onFallback?: (model: string) => void }
 // Model construction is synchronous; its native provider effects run in the owner scopes.
 const modelFactory = createModel;
 export class SessionModels extends Context.Service<SessionModels, {

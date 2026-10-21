@@ -1,4 +1,7 @@
 export const MODEL_INFO = [
+  { id: 'north-mini-code-1-0', shortName: 'north-mini', provider: 'Cohere', credential: 'COHERE_API_KEY' },
+  { id: 'command-a-03-2025', shortName: 'command-a', provider: 'Cohere', credential: 'COHERE_API_KEY' },
+  { id: 'command-a-plus-05-2026', shortName: 'command-a-plus', provider: 'Cohere', credential: 'COHERE_API_KEY' },
   { id: 'muse-wonder-1.0', shortName: 'mw1.0', provider: 'Meta', credential: 'META_API_KEY or MODEL_API_KEY' },
   { id: 'muse-wonder-full', shortName: 'mwfull', provider: 'Meta', credential: 'META_API_KEY or MODEL_API_KEY' },
   { id: 'gpt-6-luna', shortName: 'luna6', provider: 'OpenAI', credential: 'OPENAI_API_KEY' },

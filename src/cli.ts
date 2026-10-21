@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline'
 import { parseArgs } from 'node:util'
-import { MODEL } from './constants.js'
+import { COMPACTOR_MODEL, MODEL } from './constants.js'
 import { formatModelsList } from './models.js'
 import { configuredModelId } from './fallback-model.js'
 import { Session } from './session.js'
@@ -18,10 +18,10 @@ Usage: victral [options]
   --project PATH          Project root (default: current directory)
   --chat-dir PATH         Persistent chat directory
   --model ID              Main agent model (number, short name, or full ID; see --models)
-  --compactor-model ID    Background memory model (defaults to --model; fallback muse-wonder-full)
+  --compactor-model ID    Background memory model (default command-a; fallback depends on provider)
   --instructions FILE     Load custom instructions instead of AGENTS.md
   --allow-shell           Enable CLI, shell and background command tools
-  --web-search            Enable provider web search (additional provider charges)
+  --web-search            Enable Meta/OpenAI provider web search (additional provider charges)
   --mcp-config FILE       Load explicitly configured MCP integrations
   --ask TEXT              Run one turn, then exit
   --plain                 Use a line-oriented terminal (automatic for pipes)
@@ -90,13 +90,14 @@ async function main(): Promise<void> {
   }
   const project = fs.realpathSync(values.project)
   if (!fs.statSync(project).isDirectory()) throw new Error('--project must select a directory.')
-  const model = configuredModelId(values.model ?? process.env.VICTRAL_MODEL ?? MODEL)
+  const configuredModel = values.model ?? process.env.VICTRAL_MODEL
+  const model = configuredModelId(configuredModel ?? MODEL)
+  const configuredCompactor = values['compactor-model'] ?? process.env.VICTRAL_COMPACTOR_MODEL
   const session = await Session.open({
     project,
     chatDir: path.resolve(values['chat-dir']),
     model,
-    compactorModel: configuredModelId(
-      values['compactor-model'] ?? process.env.VICTRAL_COMPACTOR_MODEL ?? model),
+    compactorModel: configuredModelId(configuredCompactor ?? (configuredModel ? model : COMPACTOR_MODEL)),
     instructions: values.instructions,
     allowShell: values['allow-shell'],
     webSearch: values['web-search'],

@@ -6,8 +6,10 @@ The [alignment report](UPSTREAM_ALIGNMENT.md) records adaptations and verificati
 The previous recipe is archived in [OPTCHAT_SPEC_ORIGINAL.md](OPTCHAT_SPEC_ORIGINAL.md).
 
 Victral runs on Bun with a TypeScript CLI, tool layer and Beast/Octane terminal
-workspace. Meta `muse-wonder-1.0` is the default agent and compactor;
-`muse-wonder-full` is the fallback. See [README](../README.md) for credentials,
+workspace. Cohere `north-mini-code-1-0` is the default agent, `command-a-03-2025`
+is the default compactor, and `command-a-plus-05-2026` is the Cohere fallback
+for both roles. Meta and OpenAI selections keep their `muse-wonder-full`
+fallback. See [README](../README.md) for credentials,
 commands, instructions and model selection. Jev evaluations and metrics remain
 separate from the conversation memory.
 

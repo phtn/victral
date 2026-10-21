@@ -19,6 +19,22 @@ export const OpenaiTool = Schema.Struct({ type: Schema.Literal('function_call'),
 export const OpenaiSearch = Schema.Struct({ type: Schema.Literal('web_search_call'), action: optional(Usage) });
 const ErrorDetail = Schema.Struct({ message: optional(Schema.String) });
 export const MetaResponse = Schema.Struct({ content: Schema.Array(Native), stop_reason: optional(Schema.NullOr(Schema.String)), usage: optional(Usage) });
+export const CohereText = Schema.Struct({ type: Schema.Literal('text'), text: Schema.String });
+export const CohereTool = Schema.Struct({ id: Schema.String, type: optional(Schema.String), function: Schema.Struct({
+  name: Schema.String, arguments: Schema.Unknown,
+}) });
+export const CohereMessage = Schema.Struct({ role: optional(Schema.String), content: optional(Schema.Array(Native)),
+  tool_calls: optional(Schema.Array(Native)), tool_plan: optional(Schema.String), citations: optional(Schema.Array(Schema.Unknown)) });
+export const CohereResponse = Schema.Struct({ message: CohereMessage, finish_reason: optional(Schema.NullOr(Schema.String)), usage: optional(Usage) });
+export const CohereContentDelta = Schema.Struct({ delta: Schema.Struct({ message: Schema.Struct({ content: Schema.Struct({ text: Schema.String }) }) }) });
+export const CohereToolPlanDelta = Schema.Struct({ delta: Schema.Struct({ message: Schema.Struct({ tool_plan: Schema.String }) }) });
+export const CohereToolCallStart = Schema.Struct({ index: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  delta: Schema.Struct({ message: Schema.Struct({ tool_calls: Schema.Unknown }) }) });
+export const CohereToolCallDelta = Schema.Struct({ index: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  delta: Schema.Struct({ message: Schema.Struct({ tool_calls: Schema.Struct({ function: Schema.Struct({ arguments: Schema.String }) }) }) }) });
+export const CohereMessageEnd = Schema.Struct({ delta: Schema.Struct({ finish_reason: optional(Schema.NullOr(Schema.String)), usage: optional(Usage) }) });
+export const CohereCitationStart = Schema.Struct({ delta: Schema.Struct({ message: Schema.Struct({ citations: Schema.Unknown }) }) });
+export const CohereError = Schema.Struct({ message: optional(Schema.String), error: optional(Schema.Struct({ message: optional(Schema.String) })) });
 export const OpenaiResponse = Schema.Struct({ status: optional(Schema.String), output: Schema.Array(Native), usage: optional(Usage),
   error: optional(Schema.NullOr(ErrorDetail)), incomplete_details: optional(Schema.NullOr(Schema.Struct({ reason: optional(Schema.String) }))) });
 export const SignatureState = Schema.Struct({ signature: optional(Schema.String) });

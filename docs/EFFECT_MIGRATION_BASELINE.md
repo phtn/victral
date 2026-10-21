@@ -921,10 +921,19 @@ The focused CLI check also passes after updating the active-model startup headin
 
 ## Meta model selection update — October 18, 2026
 
-The default Meta model is now `muse-wonder-1.0` (`mw1.0`); automatic agent and
-compactor failover uses `muse-wonder-full` (`mwfull`). Both remain selectable
-catalog entries. The October 16 fallback policy above records the original target;
-the fallback behavior is unchanged apart from its model ID.
+At that point, the default Meta model was `muse-wonder-1.0` (`mw1.0`) and
+automatic agent/compactor failover used `muse-wonder-full` (`mwfull`). Both
+remain selectable catalog entries. The October 16 fallback policy above records
+that historical target.
+
+## Cohere model defaults — October 22, 2026
+
+The default agent is Cohere `north-mini-code-1-0` (`north-mini`), the default
+compactor is `command-a-03-2025` (`command-a`), and both use
+`command-a-plus-05-2026` (`command-a-plus`) as their session fallback. Meta and
+OpenAI models keep their Meta fallback. Cohere uses Chat V2 with native tool
+calls and streaming. The older provider behavior and verification results above
+are historical records.
 
 All verification uses injected/offline transports; no live API calls were made.
 The CPU-only benchmark remains within budget: median snapshot 0.002718125 ms;

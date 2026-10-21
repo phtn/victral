@@ -2,13 +2,17 @@ import * as Cause from 'effect/Cause';
 import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import { createModel } from './models.js';
-import { resolveModelId } from './model-catalog.js';
+import { findModel, resolveModelId } from './model-catalog.js';
 import { ProviderCallbackFailure, ProviderFailure, ProviderOutputLimit, type ProviderService } from './providers/core.js';
 import type { ProviderOptions, ProviderResult, RequestOptions, StreamOptions } from './providers/types.js';
 import type { Message } from './types.js';
 import { toolExitValue } from './tool-effects.js';
 
 export const FALLBACK_MODEL = 'muse-wonder-full';
+export const COHERE_FALLBACK_MODEL = 'command-a-plus-05-2026';
+export function fallbackModelFor(model: string): string {
+  return findModel(model.trim().toLowerCase())?.provider === 'Cohere' ? COHERE_FALLBACK_MODEL : FALLBACK_MODEL;
+}
 type Provider = { model: string; effects: ProviderService };
 export type ModelFactory = (model: string, options: ProviderOptions) => Provider;
 // Startup configuration may be invalid: let the owning model attempt fallback.
@@ -19,16 +23,18 @@ export function configuredModelId(input: string): string {
 
 export class FallbackModel {
   readonly configuredModel: string;
+  readonly fallbackModel: string;
   private current: Provider;
   private fallback?: Provider;
   readonly effects: ProviderService;
-  constructor(model: string, private options: ProviderOptions, private onFallback: () => void = () => {}, private factory: ModelFactory = createModel) {
+  constructor(model: string, private options: ProviderOptions, private onFallback: (model: string) => void = () => {}, private factory: ModelFactory = createModel) {
     this.configuredModel = configuredModelId(model);
+    this.fallbackModel = fallbackModelFor(this.configuredModel);
     try { this.current = factory(this.configuredModel, options); }
     catch (primary) {
-      if (this.configuredModel === FALLBACK_MODEL) throw primary;
+      if (this.configuredModel === this.fallbackModel) throw primary;
       try { this.current = this.getFallback(); }
-      catch (fallback) { throw new AggregateError([primary, fallback], 'Unable to initialize configured model or muse-wonder-full fallback. Check model configuration and Meta credentials.'); }
+      catch (fallback) { throw new AggregateError([primary, fallback], `Unable to initialize configured model or ${this.fallbackModel} fallback. Check model configuration and ${this.fallbackCredential}.`); }
       this.notify();
     }
     const owner = this;
@@ -38,9 +44,10 @@ export class FallbackModel {
     };
   }
   get model(): string { return this.current.model; }
-  get fallbackActive(): boolean { return this.configuredModel !== FALLBACK_MODEL && this.model === FALLBACK_MODEL; }
-  private getFallback(): Provider { return this.fallback ??= this.factory(FALLBACK_MODEL, { ...this.options, apiKey: undefined }); }
-  private notify() { try { this.onFallback(); } catch { /* Presentation cannot fail a model request. */ } }
+  get fallbackActive(): boolean { return this.configuredModel !== this.fallbackModel && this.model === this.fallbackModel; }
+  private get fallbackCredential(): string { return this.fallbackModel === COHERE_FALLBACK_MODEL ? 'COHERE_API_KEY' : 'META_API_KEY or MODEL_API_KEY'; }
+  private getFallback(): Provider { return this.fallback ??= this.factory(this.fallbackModel, { ...this.options, apiKey: undefined }); }
+  private notify() { try { this.onFallback(this.fallbackModel); } catch { /* Presentation cannot fail a model request. */ } }
   private validate(result: ProviderResult): Effect.Effect<ProviderResult, ProviderFailure> {
     const complete = result.finish_reason === 'COMPLETE' || (this.options.purpose !== 'compactor'
       && result.finish_reason === 'TOOL_CALL' && !!result.message.tool_calls?.length);
@@ -58,14 +65,14 @@ export class FallbackModel {
         const reason = cause.reasons[0];
         // No replay after cancellation, cleanup defects, or consumer/persistence
         // callback failure. Native response scopes have finished before this runs.
-        if (primary.model === FALLBACK_MODEL || cause.reasons.length !== 1 || !reason || !Cause.isFailReason(reason)
+        if (primary.model === this.fallbackModel || cause.reasons.length !== 1 || !reason || !Cause.isFailReason(reason)
           || reason.error instanceof ProviderCallbackFailure
           || !(reason.error instanceof ProviderFailure || reason.error instanceof ProviderOutputLimit)) return Effect.failCause(cause);
         return Effect.gen({ self: this }, function*() {
           const fallback = yield* Effect.try({ try: () => this.getFallback(), catch: error => new ProviderFailure({
-            provider: FALLBACK_MODEL, reason: 'provider', message: 'Unable to initialize muse-wonder-full fallback. Check Meta credentials.', cause: error,
+            provider: this.fallbackModel, reason: 'provider', message: `Unable to initialize ${this.fallbackModel} fallback. Check ${this.fallbackCredential}.`, cause: error,
           }) }).pipe(Effect.catchCause(fallbackCause => Effect.failCause(Cause.combine(cause, fallbackCause))));
-          const changed = this.current.model !== FALLBACK_MODEL;
+          const changed = this.current.model !== this.fallbackModel;
           this.current = fallback;
           if (changed) this.notify();
           return yield* run(fallback).pipe(Effect.catchCause(fallbackCause => Effect.failCause(Cause.combine(cause, fallbackCause))));

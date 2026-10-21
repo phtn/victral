@@ -2,6 +2,7 @@ import { test } from 'bun:test';
 import assert from 'node:assert/strict';
 import { Meta, metaRequest } from '../src/meta.js';
 import { OpenAI } from '../src/openai.js';
+import { Cohere } from '../src/cohere.js';
 import { createModel, MODELS, MODEL_INFO, formatModelsList, resolveModelId } from '../src/models.js';
 import { MODEL } from '../src/constants.js';
 
@@ -53,23 +54,23 @@ test('Meta streaming retains signatures and encrypted blocks without logging rea
   assert.equal(logs.length, 1);
   assert.equal(logs[0].kind, 'tool');
 });
-test('model selection supports Meta and only the two requested OpenAI models', () => {
-  assert.deepEqual(MODELS, ['muse-wonder-1.0', 'muse-wonder-full', 'gpt-6-luna', 'gpt-6.1-sol']);
+test('model selection supports Cohere, Meta and the two requested OpenAI models', () => {
+  assert.deepEqual(MODELS, ['north-mini-code-1-0', 'command-a-03-2025', 'command-a-plus-05-2026', 'muse-wonder-1.0', 'muse-wonder-full', 'gpt-6-luna', 'gpt-6.1-sol']);
   for (const model of MODELS) {
     const provider = createModel(model, { apiKey: 'test-key' });
     assert.equal(provider.model, model);
-    assert.ok(provider instanceof (model.startsWith('muse-') ? Meta : OpenAI));
+    assert.ok(provider instanceof (model.startsWith('muse-') ? Meta : model.startsWith('gpt-') ? OpenAI : Cohere));
   }
   assert.throws(() => createModel('unknown'), /Unsupported model/);
 });
-test('default model is Meta Muse Wonder 1.0', () => {
-  assert.equal(MODEL, 'muse-wonder-1.0');
-  assert.ok(createModel(MODEL, { apiKey: 'test-key' }) instanceof Meta);
+test('default model is Cohere North Mini Code', () => {
+  assert.equal(MODEL, 'north-mini-code-1-0');
+  assert.ok(createModel(MODEL, { apiKey: 'test-key' }) instanceof Cohere);
 });
 test('model input accepts numbers, case variants, and unambiguous short names', () => {
-  assert.equal(MODEL_INFO.length, 4);
-  assert.ok(formatModelsList().includes('1. muse-wonder-1.0'));
-  assert.ok(formatModelsList().includes('2. muse-wonder-full'));
+  assert.equal(MODEL_INFO.length, 7);
+  assert.ok(formatModelsList().includes('1. north-mini-code-1-0'));
+  assert.ok(formatModelsList().includes('4. muse-wonder-1.0'));
   assert.equal(resolveModelId('1'), MODELS[0]);
   assert.equal(resolveModelId('2'), MODELS[1]);
   assert.equal(resolveModelId('MUSE-WONDER-1.0'), 'muse-wonder-1.0');
@@ -80,15 +81,16 @@ test('model input accepts numbers, case variants, and unambiguous short names', 
     assert.equal(createModel(shortName, { apiKey: 'test-key' }).model, id);
     assert.ok(formatModelsList().includes(`alias ${shortName}`));
   }
-  assert.equal(resolveModelId('3'), 'gpt-6-luna');
-  assert.equal(resolveModelId('4'), 'gpt-6.1-sol');
+  assert.equal(resolveModelId('3'), 'command-a-plus-05-2026');
+  assert.equal(resolveModelId('6'), 'gpt-6-luna');
+  assert.equal(resolveModelId('7'), 'gpt-6.1-sol');
   assert.equal(resolveModelId('OPENAI luna6'), 'gpt-6-luna');
   assert.equal(resolveModelId('openai gpt-6.1-sol'), 'gpt-6.1-sol');
   assert.equal(resolveModelId('meta mw1.0'), 'muse-wonder-1.0');
-  assert.equal(resolveModelId('openai 3'), 'gpt-6-luna');
+  assert.equal(resolveModelId('openai 6'), 'gpt-6-luna');
   assert.throws(() => resolveModelId('meta luna6'), /Unknown model/);
   assert.throws(() => resolveModelId('openai 1'), /belong to openai/);
-  assert.throws(() => resolveModelId('5'), /between 1 and 4/);
+  assert.throws(() => resolveModelId('8'), /between 1 and 7/);
   assert.throws(() => resolveModelId('muse-wonder'), /several models/);
   assert.throws(() => resolveModelId('unknown'), /Unknown model/);
   assert.throws(() => resolveModelId(''), /Choose a model/);

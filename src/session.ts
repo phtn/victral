@@ -123,8 +123,8 @@ export class Session extends EventEmitter {
       const usage = (record: unknown) => ownedMetrics?.usage(record);
       let session: Session | undefined;
       const notices: string[] = [];
-      const fallbackNotice = (role: string) => () => {
-        const text = `${role} switched to muse-wonder-full fallback.`;
+      const fallbackNotice = (role: string) => (fallbackModel: string) => {
+        const text = `${role} switched to ${fallbackModel} fallback.`;
         if (session) { session.add('system', text); session.emit('notice', text); }
         else notices.push(text);
       };
@@ -158,7 +158,7 @@ export class Session extends EventEmitter {
     return sessionExitValue(exit, 'Session startup');
   }
   private createModel(id: string, options: ModelOptions): ModelPort {
-    return sessionExitValue(this.runtime.runSyncExit(Effect.flatMap(SessionModels, models => models.create(id, { ...options, fallback: options.purpose !== 'subagent', onFallback: () => { this.add('system', 'Main agent switched to muse-wonder-full fallback.'); this.emit('notice', 'Main agent switched to muse-wonder-full fallback.'); } }))), 'Model creation');
+    return sessionExitValue(this.runtime.runSyncExit(Effect.flatMap(SessionModels, models => models.create(id, { ...options, fallback: options.purpose !== 'subagent', onFallback: fallbackModel => { const text = `Main agent switched to ${fallbackModel} fallback.`; this.add('system', text); this.emit('notice', text); } }))), 'Model creation');
   }
   private instructions(): string {
     const filename = this.options.instructions ?? path.join(this.options.project, 'AGENTS.md');

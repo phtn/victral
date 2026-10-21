@@ -56,15 +56,17 @@ entry points remain usable. Runtime disposal runs outside the runtime it closes.
 
 The main agent and compactor have independent configured-model-first wrappers.
 Configuration/credential construction errors and lone typed provider failures switch
-that role to `muse-wonder-full` for the session. This policy was explicitly requested
-after the migration, on October 16, 2026. Native `createModel` remains strict for standalone
-callers; research workers and Jev keep their existing selection/retry policies.
+that role to its provider-specific fallback for the session. Cohere selections
+use `command-a-plus-05-2026`; other configured providers retain
+`muse-wonder-full`. Native `createModel` remains strict for standalone callers;
+research workers and Jev keep their existing selection/retry policies.
 
-Fallback initialization uses Meta environment credentials, never an OpenAI key from
-the primary options. Healthy requests do not initialize the fallback or make extra
-calls. A failed primary request can be replaced once; failure of the replacement
-retains both Causes without a retry loop. Provider response scopes finish cleanup
-before replacement. Interruptions, compound cleanup failures and typed consumer
+Fallback initialization uses the fallback provider's environment credential,
+never a primary provider key from the primary options. Healthy requests do not
+initialize the fallback or make extra calls. A failed primary request can be
+replaced once; failure of the replacement retains both Causes without a retry
+loop. Provider response scopes finish cleanup before replacement. Interruptions,
+compound cleanup failures and typed consumer
 callback errors never cause failover. A session stays on the fallback until restart
 or an explicit main-model switch. Active model IDs and usage remain accurate.
 

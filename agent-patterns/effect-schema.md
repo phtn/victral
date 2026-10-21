@@ -41,7 +41,7 @@ import { Schema } from "effect"
 
 const Retries = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 const Settings = Schema.Struct({
-  provider: Schema.Literals(["meta", "openai"]),
+  provider: Schema.Literals(["cohere", "meta", "openai"]),
   model: Schema.NonEmptyString,
   retries: Retries,
   tags: Schema.Array(Schema.String),
@@ -578,7 +578,7 @@ for scoped decoding/consumption and cleanup details.
 ## Provider wire validation and exact replay
 
 [Provider wire schemas](../src/providers/wire.ts) validate the fields used by
-Meta/OpenAI adapters: event tags/indices, text/thinking/signature deltas, tool
+Cohere/Meta/OpenAI adapters: event tags/indices, text/thinking/signature deltas, tool
 names/IDs/arguments, consumed message/output shapes and citation collections.
 Known records use `Struct`, opaque usage/tool objects use `Record(String,
 Unknown)`, and event/block tags use `Literal`/`Literals`. Schemas and cached parsers
