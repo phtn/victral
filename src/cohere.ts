@@ -2,6 +2,7 @@ import * as Effect from 'effect/Effect'
 import { ProviderAdapter, providerOutcome, type ProviderService } from './providers/core.js'
 import type { ProviderOptions, ProviderResult, RequestOptions } from './providers/types.js'
 import * as Wire from './providers/wire.js'
+import { consumeSse } from './sse.js'
 import type { ContentBlock, Message, ToolDefinition } from './types.js'
 import { citationFooter } from './web-citations.js'
 
@@ -10,28 +11,53 @@ const textContent = (content: string | ContentBlock[]) =>
 const record = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
 const array = (value: unknown): unknown[] => (Array.isArray(value) ? value : value === undefined ? [] : [value])
+// Preserve strings here because streamed tool-call arguments may still be partial JSON.
 const toolArguments = (value: unknown) => (typeof value === 'string' ? value : (JSON.stringify(value ?? {}) ?? '{}'))
+const requestToolArguments = (value: unknown) => {
+  const encoded = toolArguments(value)
+  try {
+    return record(JSON.parse(encoded)) ? encoded : '{}'
+  } catch {
+    return '{}'
+  }
+}
+const cohereReplayMessage = (value: unknown) => {
+  const native = structuredClone(value)
+  const message = record(native)
+  if (!message || !Array.isArray(message.tool_calls)) return native
+  return {
+    ...message,
+    tool_calls: message.tool_calls.map((call) => {
+      const nativeCall = record(call)
+      const fn = record(nativeCall?.function)
+      return nativeCall && fn
+        ? { ...nativeCall, function: { ...fn, arguments: requestToolArguments(fn.arguments) } }
+        : call
+    })
+  }
+}
 
-function citationReferences(citations: unknown[]) {
+function citationReferences(citations: readonly unknown[] | undefined) {
   const references: { url: string; title?: string }[] = []
-  for (const citation of citations)
-    for (const sourceValue of array(record(citation)?.sources)) {
-      const source = record(sourceValue)
-      const outputValue = source?.tool_output
-      let output = record(outputValue)
-      if (!output && typeof outputValue === 'string') {
-        try {
-          output = record(JSON.parse(outputValue))
-        } catch {
-          /* Plain-text tool output has no source metadata. */
+  if (citations)
+    for (const citation of citations)
+      for (const sourceValue of array(record(citation)?.sources)) {
+        const source = record(sourceValue)
+        const outputValue = source?.tool_output
+        let output = record(outputValue)
+        if (!output && typeof outputValue === 'string') {
+          try {
+            output = record(JSON.parse(outputValue))
+          } catch {
+            /* Plain-text tool output has no source metadata. */
+          }
         }
+        const nestedSource = record(output?.source)
+        const url = output?.url ?? output?.source_url ?? nestedSource?.url ?? source?.url
+        if (typeof url !== 'string') continue
+        const title = output?.title ?? nestedSource?.title ?? source?.title
+        references.push({ url, ...(typeof title === 'string' ? { title } : {}) })
       }
-      const nestedSource = record(output?.source)
-      const url = output?.url ?? output?.source_url ?? nestedSource?.url ?? source?.url
-      if (typeof url !== 'string') continue
-      const title = output?.title ?? nestedSource?.title ?? source?.title
-      references.push({ url, ...(typeof title === 'string' ? { title } : {}) })
-    }
   return references
 }
 
@@ -44,13 +70,13 @@ export function cohereRequest(
   const turns = messages.map((message) => {
     // Cohere expects its native assistant message, including tool_plan, to be
     // replayed intact when it is followed by tool results.
-    if (message.role === 'assistant' && message._cohereMessage) return structuredClone(message._cohereMessage)
+    if (message.role === 'assistant' && message._cohereMessage) return cohereReplayMessage(message._cohereMessage)
     const text = textContent(message.content)
     if (message.role === 'tool') return { role: 'tool', tool_call_id: message.tool_call_id, content: text }
     const calls = message.tool_calls?.map((call) => ({
       id: call.id,
       type: 'function',
-      function: { name: call.function.name, arguments: call.function.arguments }
+      function: { name: call.function.name, arguments: requestToolArguments(call.function.arguments) }
     }))
     return {
       role: message.role,
@@ -87,7 +113,9 @@ export class Cohere extends ProviderAdapter {
     super('Cohere', apiKey, options, 'north-mini-code-1-0')
   }
   private requestBody(messages: Message[], options: RequestOptions, stream: boolean) {
-    return { ...cohereRequest(messages, options.tools, this.model, options.maxTokens), stream }
+    const maxTokens =
+      this.purpose === 'compactor' ? Math.min(options.maxTokens ?? 8_192, 8_192) : options.maxTokens
+    return { ...cohereRequest(messages, options.tools, this.model, maxTokens), stream }
   }
   private normalize(input: unknown): ProviderResult {
     const raw = Wire.checkedWire(Wire.CohereResponse, input)
@@ -97,7 +125,7 @@ export class Cohere extends ProviderAdapter {
       .filter((block) => block.type === 'text')
       .map((block) => Wire.checkedWire(Wire.CohereText, block).text)
       .join('')
-    const citations = native.citations ?? []
+    const citations = native.citations
     const footer = citationFooter([{ annotations: citationReferences(citations) }])
     const calls = (native.tool_calls ?? []).map((block) => {
       const tool = Wire.checkedWire(Wire.CohereTool, block)
@@ -112,7 +140,7 @@ export class Cohere extends ProviderAdapter {
     const message: Message = {
       role: 'assistant',
       content,
-      _cohereMessage: structuredClone(native),
+      _cohereMessage: cohereReplayMessage(native),
       ...(calls.length ? { tool_calls: calls } : {})
     }
     return { message, finish_reason: normalizedFinishReason(raw.finish_reason), usage: raw.usage }
@@ -143,7 +171,7 @@ export class Cohere extends ProviderAdapter {
             { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
             (response) =>
               Effect.gen({ self: this }, function* () {
-                const content: string[] = [],
+                const contentBlocks = new Map<number, Record<string, unknown>>(),
                   toolCalls = new Map<
                     number,
                     { id: string; type: 'function'; function: { name: string; arguments: string } }
@@ -157,12 +185,30 @@ export class Cohere extends ProviderAdapter {
                   Effect.gen({ self: this }, function* () {
                     if (!payload.trim() || payload.trim() === '[DONE]') return true
                     const event = yield* this.parse(() => Wire.checkedWire(Wire.Native, JSON.parse(payload)))
+                    if (event.type === 'content-start') {
+                      const start = yield* this.parse(() => Wire.checkedWire(Wire.CohereContentStart, event))
+                      const block = record(start.delta.message.content)
+                      if (block) contentBlocks.set(start.index, structuredClone(block))
+                    }
                     if (event.type === 'content-delta') {
                       const delta = yield* this.parse(() => Wire.checkedWire(Wire.CohereContentDelta, event))
-                      const text = delta.delta.message.content.text
-                      content.push(text)
-                      yield* this.textCallback(() => onText(text))
-                      if (text) yield* this.callback(() => onEntry('talk', text))
+                      const change = delta.delta.message.content
+                      const block = contentBlocks.get(delta.index) ?? {}
+                      const next = { ...block }
+                      const text = change.text
+                      if (text !== undefined) {
+                        next.type ??= 'text'
+                        next.text = `${typeof next.text === 'string' ? next.text : ''}${text}`
+                        yield* this.textCallback(() => onText(text))
+                        if (text) yield* this.callback(() => onEntry('talk', text))
+                      }
+                      const thinking = change.thinking
+                      if (thinking !== undefined) {
+                        next.type ??= 'thinking'
+                        next.thinking = `${typeof next.thinking === 'string' ? next.thinking : ''}${thinking}`
+                        yield* this.textCallback(() => onThought(thinking))
+                      }
+                      if (text !== undefined || thinking !== undefined) contentBlocks.set(delta.index, next)
                     }
                     if (event.type === 'tool-plan-delta') {
                       const delta = yield* this.parse(() => Wire.checkedWire(Wire.CohereToolPlanDelta, event))
@@ -219,10 +265,10 @@ export class Cohere extends ProviderAdapter {
                   return yield* Effect.fail(
                     this.failure('truncated', 'Cohere stream ended before a terminal message event.')
                   )
-                const answer = content.join('')
+                const content = [...contentBlocks.entries()].sort(([a], [b]) => a - b).map(([, block]) => block)
                 const native: Record<string, unknown> = {
                   role: 'assistant',
-                  ...(answer ? { content: [{ type: 'text', text: answer }] } : {}),
+                  ...(content.length ? { content } : {}),
                   ...(toolPlan ? { tool_plan: toolPlan } : {}),
                   ...(toolCalls.size
                     ? { tool_calls: [...toolCalls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call) }

@@ -26,7 +26,10 @@ export const CohereTool = Schema.Struct({ id: Schema.String, type: optional(Sche
 export const CohereMessage = Schema.Struct({ role: optional(Schema.String), content: optional(Schema.Array(Native)),
   tool_calls: optional(Schema.Array(Native)), tool_plan: optional(Schema.String), citations: optional(Schema.Array(Schema.Unknown)) });
 export const CohereResponse = Schema.Struct({ message: CohereMessage, finish_reason: optional(Schema.NullOr(Schema.String)), usage: optional(Usage) });
-export const CohereContentDelta = Schema.Struct({ delta: Schema.Struct({ message: Schema.Struct({ content: Schema.Struct({ text: Schema.String }) }) }) });
+export const CohereContentStart = Schema.Struct({ index: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  delta: Schema.Struct({ message: Schema.Struct({ content: Native }) }) });
+export const CohereContentDelta = Schema.Struct({ index: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  delta: Schema.Struct({ message: Schema.Struct({ content: Schema.Struct({ text: optional(Schema.String), thinking: optional(Schema.String) }) }) }) });
 export const CohereToolPlanDelta = Schema.Struct({ delta: Schema.Struct({ message: Schema.Struct({ tool_plan: Schema.String }) }) });
 export const CohereToolCallStart = Schema.Struct({ index: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   delta: Schema.Struct({ message: Schema.Struct({ tool_calls: Schema.Unknown }) }) });

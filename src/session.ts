@@ -37,6 +37,9 @@ export interface TranscriptEntry { id: number; role: 'you' | 'victral' | 'system
 export interface SessionState {
   entries: readonly TranscriptEntry[]; model: string; active: boolean;
   phase: string; tool?: ToolActivity; turn?: TurnRecord; metrics: string; jev?: JevStatus;
+  session?: { id: string; name: string };
+  sessions?: readonly { id: string; name: string }[];
+  switching?: boolean;
 }
 export class Session extends EventEmitter {
   entries: TranscriptEntry[] = [];
@@ -103,8 +106,36 @@ export class Session extends EventEmitter {
         self.closed = true; clearTimeout(self.updateTimer); evaluations.off('update', self.evaluationListener);
       }));
       yield* Effect.try({ try: () => {
-        for (const record of storage.root.slice(-60)) {
-          if (record.kind === 'user' || record.kind === 'talk') self.add(record.kind === 'user' ? 'you' : 'victral', record.text, false);
+        // Streamed assistant chunks are saved individually, but form one
+        // transcript message. Find a recent history window by displayed
+        // messages, then reassemble adjacent chunks before rendering Markdown.
+        let start = 0, messages = 0;
+        let nextKind: 'talk' | undefined;
+        for (let index = storage.root.length - 1; index >= 0; index--) {
+          const record = storage.root[index]!;
+          if (record.kind === 'user') {
+            if (++messages > 60) { start = index + 1; break; }
+            nextKind = undefined;
+          } else if (record.kind === 'talk') {
+            if (nextKind !== 'talk' && ++messages > 60) { start = index + 1; break; }
+            nextKind = 'talk';
+          } else nextKind = undefined;
+        }
+        let restoredTalk: TranscriptEntry | undefined;
+        for (const record of storage.root.slice(start)) {
+          if (record.kind === 'user') {
+            self.add('you', record.text, false);
+            restoredTalk = undefined;
+          } else if (record.kind === 'talk') {
+            if (restoredTalk) restoredTalk.text += record.text;
+            else {
+              self.add('victral', record.text, false);
+              restoredTalk = self.entries.at(-1);
+            }
+          } else if (record.kind === 'tool') {
+            self.add('tool', record.text, false);
+            restoredTalk = undefined;
+          } else restoredTalk = undefined;
         }
         evaluations.on('update', self.evaluationListener);
       }, catch: cause => cause });
@@ -178,6 +209,11 @@ export class Session extends EventEmitter {
       phase: this.phase, tool: this.tool, turn: this.turn, metrics: this.options.metrics ? this.metrics.compact() : '',
       jev: this.options.metrics ? this.metrics.jevStatus() : undefined };
   }
+  get canSwitchSessions(): boolean { return !this.closed && !this.closing && !this.runner.active && !this.subagents.active; }
+  notify(text: string, isError = false): void {
+    this.add(isError ? 'error' : 'system', text);
+    this.emit(isError ? 'errorText' : 'notice', text);
+  }
   cancel(): void { this.runner.cancel(); this.phase = 'Canceling'; this.update(); }
   async submit(input: string): Promise<void> {
     if (this.closed || this.closing) return;
@@ -205,7 +241,7 @@ export class Session extends EventEmitter {
     const [name, ...rest] = line.split(/\s+/); const arg = rest.join(' ');
     if (name === '/exit') { await this.close(); return; }
     if (name === '/cancel') { this.cancel(); return; }
-    if (name === '/help') return COMMANDS.map(([cmd, description]) => `${cmd.padEnd(10)} ${description}`).join('\n') + '\n\nType / for suggestions · Tab completes a word · ↑↓ selects suggestions · Esc cancels · Ctrl+P commands · Ctrl+O metrics · Wheel / Shift+↑↓ / PgUp/PgDn scroll · Home/End jump · Ctrl+C cancel / close';
+    if (name === '/help') return COMMANDS.map(([cmd, description]) => `${cmd.padEnd(10)} ${description}`).join('\n') + '\n\nType / for suggestions · Tab completes a word · ↑↓ selects suggestions · Esc cancels · Ctrl+P commands · Ctrl+O metrics · Ctrl+L thread/log focus · PgUp/PgDn scroll · Home/End jump · Ctrl+C cancel / close';
     if (name === '/sfx') {
       if (rest.length > 1 || (arg && arg !== 'on' && arg !== 'off')) throw new Error('Usage: /sfx [on | off]');
       return this.runtime.runPromise(Effect.gen(function*() {

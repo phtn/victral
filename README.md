@@ -26,6 +26,26 @@ saved history. Subsequent launches load it directly, recovering only messages
 appended after its last write. Keep the view files with the logs when backing
 up or moving a chat; `/backup` includes them automatically.
 
+## Create and reopen sessions
+
+Use `/new` to create a session with empty history and memory, or give it a name:
+
+```text
+/new Bug investigation
+/sessions
+/session default
+/session Bug investigation
+```
+
+`/sessions` lists saved sessions with their IDs and numbers and marks the current
+session. `/session ID`, `/session NUMBER`, or `/session EXACT NAME` opens one;
+names ignore case. Sessions can be switched between turns; use `/cancel` to stop
+active work first. The last selected session opens automatically on the next
+launch. The existing `--chat-dir` history remains the **Original session**;
+additional sessions live under `CHAT_DIR/sessions/ID`, with `sessions.json`
+storing their names and last selection. Keep the whole chat directory when
+moving the session library. `/backup` backs up only the active session.
+
 ## Architecture and contributing
 
 One Effect runtime owns each session and its scoped turns, tools and background
@@ -307,9 +327,11 @@ Use `/tools` to confirm availability after restarting Victral.
 
 An interactive terminal opens the Beast/Octane workspace automatically, using
 the native `@octanejs/ink` terminal renderer. It has
-streaming conversation history, tool timing and status, a command menu,
-measured metrics, input history, and a composer that stays available during
-agent work. The alternate screen restores your previous terminal on exit.
+streaming conversation history, a separate log pane, tool timing and status, a
+command menu, measured metrics, input history, and a composer that stays
+available during agent work. The conversation uses the left half of the
+terminal; tool, system, and error logs appear on the right. The alternate screen
+restores your previous terminal on exit.
 Resize to at least 42 columns × 16 rows. Escape cancels a turn or dismisses a
 panel. Input supports pasting, cursor movement, Ctrl+A/Ctrl+E, and Ctrl+U.
 
@@ -319,9 +341,10 @@ panel. Input supports pasting, cursor movement, Ctrl+A/Ctrl+E, and Ctrl+U.
 | Tab | Complete the selected command, provider, or model word and add a space |
 | Up / Down / Shift+Tab with suggestions | Select a suggestion |
 | Ctrl+O | Toggle the detailed metrics panel |
-| Page Up / Page Down | Scroll conversation or metrics |
+| Ctrl+L | Focus the conversation or log pane |
+| Page Up / Page Down | Scroll the focused pane |
 | Mouse wheel / Shift+Up / Shift+Down | Scroll three lines at a time |
-| Home / End | Jump to the beginning / latest messages |
+| Home / End | Jump to the beginning / latest content in the focused pane |
 | Up / Down | Recall submitted input |
 | Escape | Dismiss a panel or cancel the active turn |
 | Ctrl+C | Cancel while working; close while idle |
@@ -348,6 +371,9 @@ queued work before releasing the chat lock.
 
 | Command | Effect |
 | --- | --- |
+| `/new [NAME]` | Create a new session with empty history and memory |
+| `/sessions` | List saved sessions and mark the current one |
+| `/session [ID \| NUMBER \| NAME]` | Open a saved session; no argument lists sessions |
 | `/help` | Show commands and keyboard shortcuts |
 | `/tools` | List agent tools and command execution access |
 | `/plan` | Display the saved task plan and its revision |

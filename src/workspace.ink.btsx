@@ -14,6 +14,7 @@ module
   const codexBlue = '#5aa9ff'
   const user = '#009393'
   const muted = '#8b949e'
+  const gray = '#4b949e'
   const bright = '#e6edf3'
   const composerBg = '#333333'
   const composerDim = '#9a9a9a'
@@ -36,7 +37,9 @@ setup
     { stdout } = useStdout()
   const [input, setInput] = useState(''),
     [cursor, setCursor] = useState(0),
-    [scroll, setScroll] = useState<number | null>(null)
+    [threadScroll, setThreadScroll] = useState<number | null>(null),
+    [logsScroll, setLogsScroll] = useState<number | null>(null),
+    [focusedPane, setFocusedPane] = useState<'thread' | 'logs'>('thread')
   const [panel, setPanel] = useState<'chat' | 'metrics' | 'commands'>('chat')
   const [selected, setSelected] = useState(0),
     [history, setHistory] = useState<string[]>([]),
@@ -57,10 +60,15 @@ setup
   }, [])
   const markdownCache = useRef(new Map<number, { text: string; width: number; lines: DisplayLine[] }>())
   const width = Math.max(10, columns - 2)
+  const threadPaneWidth = Math.max(1, Math.floor(width / 2))
+  const logsPaneWidth = Math.max(1, width - threadPaneWidth - 1)
+  const threadTextWidth = Math.max(1, threadPaneWidth - 2)
+  const logsTextWidth = Math.max(1, logsPaneWidth - 2)
   const composerHeight = 3,
     headerHeight = 2,
     statusHeight = 1
   const bodyHeight = Math.max(1, rows - headerHeight - composerHeight - statusHeight - (state.active ? 1 : 0))
+  const paneContentHeight = Math.max(1, bodyHeight - 1)
   useEffect(() => {
     if (!stdout.isTTY) return
     stdout.write('\x1b[?1000h\x1b[?1006h')
@@ -79,41 +87,62 @@ setup
     return () => clearInterval(timer)
   }, [state.active])
   const project = shortProject(safeText(session.options.project))
-  const lines = useMemo<DisplayLine[]>(() => {
-    if (panel === 'metrics') return markdownLines(session.metrics.detailed(), width).map(line => ({ ...line, color: muted }))
-    if (!state.entries.length) return []
-    const ids = new Set(state.entries.map(entry => entry.id))
+  const menu = COMMANDS.slice(
+    Math.max(0, selected - Math.floor(paneContentHeight / 2)),
+    Math.max(0, selected - Math.floor(paneContentHeight / 2)) + paneContentHeight
+  )
+  const threadLines = useMemo<DisplayLine[]>(() => {
+    if (panel === 'metrics') return markdownLines(session.metrics.detailed(), threadTextWidth).map(line => ({ ...line, color: muted }))
+    if (panel === 'commands') return menu.map(([command, description]) => ({
+      text: `${command === COMMANDS[selected]![0] ? '⟢ ' : '  '}${command.padEnd(10)} ${description}`,
+      color: command === COMMANDS[selected]![0] ? codexBlue : muted
+    }))
+    const messages = state.entries.filter(entry => entry.role === 'you' || entry.role === 'victral')
+    const ids = new Set(messages.map(entry => entry.id))
     for (const id of markdownCache.current.keys()) if (!ids.has(id)) markdownCache.current.delete(id)
-    const lastUser = state.entries.findLast(entry => entry.role === 'you')?.id
-    return state.entries.flatMap((entry) => {
+    const lastUser = messages.findLast(entry => entry.role === 'you')?.id
+    return messages.flatMap((entry) => {
       if (entry.role === 'you') {
         return [
-          ...wrapLines(entry.text, Math.max(1, width - 2)).map((text) => ({ text: `⟢ ${text}`, color: user })),
+          ...wrapLines(entry.text, Math.max(1, threadTextWidth - 2)).map((text) => ({ text: `⟢ ${text}`, color: user })),
           ...(state.active && entry.id === lastUser ? [{ text: '✓ Received', color: muted }] : []),
           { text: '', color: muted }
         ]
       }
-      if (entry.role === 'victral' || entry.format === 'markdown') {
-        const cached = markdownCache.current.get(entry.id)
-        if (cached?.text === entry.text && cached.width === width) return cached.lines
-        const rendered = [
-          ...markdownLines(entry.text, width).map(line => ({ ...line, color: entry.role === 'victral' ? bright : muted })),
-          ...(entry.role === 'victral' ? [{ text: '[Copy Markdown]', color: codexBlue, copyId: entry.id }] : []),
-          { text: '', color: muted }
-        ]
-        markdownCache.current.set(entry.id, { text: entry.text, width, lines: rendered })
-        return rendered
-      }
-      return [
-        ...wrapLines(entry.text, width).map((text) => ({ text, color: entry.role === 'error' ? errorRed : muted })),
+      const cached = markdownCache.current.get(entry.id)
+      if (cached?.text === entry.text && cached.width === threadTextWidth) return cached.lines
+      const rendered = [
+        ...markdownLines(entry.text, threadTextWidth).map(line => ({ ...line, color: bright })),
+        { text: '[Copy Markdown]', color: codexBlue, copyId: entry.id },
         { text: '', color: muted }
       ]
+      markdownCache.current.set(entry.id, { text: entry.text, width: threadTextWidth, lines: rendered })
+      return rendered
     })
-  }, [state.entries, state.active, panel, width, session])
-  const maxScroll = Math.max(0, lines.length - bodyHeight),
-    top = scroll === null ? maxScroll : Math.min(scroll, maxScroll),
-    offset = maxScroll - top
-  const visible = lines.slice(top, top + bodyHeight)
+  }, [state.entries, state.active, panel, threadTextWidth, session, menu, selected])
+  const logsLines = useMemo<DisplayLine[]>(() => state.entries.flatMap(entry => {
+    if (entry.role !== 'system' && entry.role !== 'error' && entry.role !== 'tool') return []
+    const label = entry.role === 'error' ? 'ERROR' : entry.role === 'tool' ? 'TOOL' : 'INFO'
+    const color = entry.role === 'error' ? errorRed : entry.role === 'tool' ? muted : statusPath
+    if (entry.format === 'markdown') {
+      return [
+        { text: `${label} ·`, color },
+        ...markdownLines(entry.text, logsTextWidth).map(line => ({ ...line, color })),
+        { text: '', color: muted }
+      ]
+    }
+    return [
+      ...wrapLines(`${label} · ${entry.text}`, logsTextWidth).map(text => ({ text, color })),
+      { text: '', color: muted }
+    ]
+  }), [state.entries, logsTextWidth])
+  const threadMaxScroll = Math.max(0, threadLines.length - paneContentHeight)
+  const logsMaxScroll = Math.max(0, logsLines.length - paneContentHeight)
+  const threadTop = threadScroll === null ? threadMaxScroll : Math.min(threadScroll, threadMaxScroll)
+  const logsTop = logsScroll === null ? logsMaxScroll : Math.min(logsScroll, logsMaxScroll)
+  const threadVisible = threadLines.slice(threadTop, threadTop + paneContentHeight)
+  const logsVisible = logsLines.slice(logsTop, logsTop + paneContentHeight)
+  const focusedOffset = focusedPane === 'thread' ? threadMaxScroll - threadTop : logsMaxScroll - logsTop
   const copyLabel = (line: DisplayLine) => {
     const entry = state.entries.find(entry => entry.id === line.copyId)
     return copyFeedback && copyFeedback.id === line.copyId && copyFeedback.text === entry?.text
@@ -136,19 +165,18 @@ setup
     copyTimer.current = setTimeout(() => setCopyFeedback(null), 2000)
   }
   useEffect(() => {
-    setScroll((prev) => prev === null ? null : Math.min(prev, maxScroll))
-  }, [maxScroll])
+    setThreadScroll(prev => prev === null ? null : Math.min(prev, threadMaxScroll))
+    setLogsScroll(prev => prev === null ? null : Math.min(prev, logsMaxScroll))
+  }, [threadMaxScroll, logsMaxScroll])
   const scrollBy = (amount: number) => {
-    setScroll((prev) => {
+    const maxScroll = focusedPane === 'thread' ? threadMaxScroll : logsMaxScroll
+    const setPaneScroll = focusedPane === 'thread' ? setThreadScroll : setLogsScroll
+    setPaneScroll(prev => {
       const current = prev === null ? maxScroll : Math.min(prev, maxScroll)
       const next = Math.max(0, Math.min(maxScroll, current + amount))
       return next === maxScroll ? null : next
     })
   }
-  const menu = COMMANDS.slice(
-    Math.max(0, selected - Math.floor(bodyHeight / 2)),
-    Math.max(0, selected - Math.floor(bodyHeight / 2)) + bodyHeight
-  )
   const close = (error?: Error) => {
     void session.close().then(() => exit(error), cause => exit(new Error('Session cleanup failed.', { cause })))
   }
@@ -156,7 +184,7 @@ setup
     if (!value.trim()) return
     setInput('')
     setCursor(0)
-    setScroll(value.trim() === '/metrics' ? 0 : null)
+    setThreadScroll(value.trim() === '/metrics' ? 0 : null)
     setPanel(value.trim() === '/metrics' ? 'metrics' : 'chat')
     setHistoryIndex(-1)
     setHistory((prev) => [...prev.slice(-99), value])
@@ -169,9 +197,12 @@ setup
     if (click) {
       if (panel !== 'chat' || rows < 16 || columns < 42) return
       const x = Number(click[1]), y = Number(click[2])
-      const line = visible[y - headerHeight - 1]
-      if (y > headerHeight && y <= headerHeight + bodyHeight && line?.copyId !== undefined && x >= 2 && x < 2 + stringWidth(copyLabel(line))) {
-        void copyEntry(line.copyId)
+      if (y > headerHeight + 1 && y <= headerHeight + bodyHeight) {
+        if (x < 1 + threadPaneWidth) {
+          setFocusedPane('thread')
+          const line = threadVisible[y - headerHeight - 2]
+          if (line?.copyId !== undefined && x >= 2 && x < 2 + stringWidth(copyLabel(line))) void copyEntry(line.copyId)
+        } else if (x > 1 + threadPaneWidth) setFocusedPane('logs')
       }
       return
     }
@@ -183,20 +214,24 @@ setup
     if (event.escape) {
       if (panel !== 'chat') {
         setPanel('chat')
-        setScroll(null)
+        setThreadScroll(null)
       }
       else if (state.active) session.cancel()
       return
     }
     if (event.ctrl && key === 'p') {
       setPanel((prev) => (prev === 'commands' ? 'chat' : 'commands'))
-      setScroll(null)
+      setThreadScroll(null)
       setSelected(0)
+      return
+    }
+    if (event.ctrl && key === 'l') {
+      setFocusedPane(prev => prev === 'thread' ? 'logs' : 'thread')
       return
     }
     if (event.ctrl && key === 'o') {
       setPanel((prev) => (prev === 'metrics' ? 'chat' : 'metrics'))
-      setScroll(panel === 'metrics' ? null : 0)
+      setThreadScroll(panel === 'metrics' ? null : 0)
       return
     }
     if (panel !== 'commands' && (event.pageUp || (event.shift && event.upArrow))) {
@@ -208,7 +243,9 @@ setup
       return
     }
     if (panel !== 'commands' && (event.home || event.end)) {
-      setScroll(event.home && maxScroll > 0 ? 0 : null)
+      const maxScroll = focusedPane === 'thread' ? threadMaxScroll : logsMaxScroll
+      const setPaneScroll = focusedPane === 'thread' ? setThreadScroll : setLogsScroll
+      setPaneScroll(event.home && maxScroll > 0 ? 0 : null)
       return
     }
     if (panel === 'commands') {
@@ -288,15 +325,15 @@ setup
   const afterCursor = inputChars.slice(cursor + 1).join('')
   const spinner = ['◐', '◓', '◑', '◒'][tick % 4]
   const jevStatus = state.jev ? formatJevStatus(state.jev, Math.max(12, width - 13)) : ''
-  const statusRight = offset
-    ? `↑ ${offset} lines`
+  const statusRight = focusedOffset
+    ? `${focusedPane === 'thread' ? 'THREAD' : 'LOGS'} ↑ ${focusedOffset} lines`
     : panel === 'metrics'
       ? 'METRICS'
       : panel === 'commands'
         ? 'COMMANDS'
         : state.active
           ? `${spinner} ${state.phase}`
-          : maxScroll > 0 && columns >= 80 ? 'PgUp/PgDn · scroll' : ''
+          : `Ctrl+L ${focusedPane === 'thread' ? 'logs' : 'thread'} · PgUp/PgDn scroll`
 
 if rows < 16 || columns < 42
   Box(flexDirection="column")
@@ -312,15 +349,13 @@ else
         Text(color={muted}) #{` (v${VERSION})`}
       Text(color={muted} wrap="truncate-end") #{`  ${project}`}
       Text
-    Box(flexDirection="column" paddingX={1} height={bodyHeight} flexShrink={0})
-      if !state.entries.length && panel === 'chat'
-        Text(color={codexBlue}) A half-formed idea will do.
-      if panel === 'commands'
-        each item in menu key item[0]
-          Text(color={COMMANDS[selected]![0] === item[0] ? codexBlue : muted} wrap="truncate-end")
-            | #{(COMMANDS[selected]![0] === item[0] ? '⟢ ' : '  ') + item[0].padEnd(10) + ' ' + item[1]}
-      else
-        each line, index in visible key index
+    Box(flexDirection="row" width={columns} paddingX={1} height={bodyHeight} flexShrink={0})
+      Box(flexDirection="column" width={threadPaneWidth} paddingX={1} height={bodyHeight} flexShrink={0})
+        Text(color={focusedPane === 'thread' ? codexBlue : muted} wrap="truncate-end")
+          | #{panel === 'commands' ? 'COMMANDS' : panel === 'metrics' ? 'METRICS' : 'THREAD'}
+        if !threadLines.length && panel === 'chat'
+          Text(color={codexBlue}) A half-formed idea will do.
+        each line, index in threadVisible key index
           Box(height={1} flexShrink={0})
             Text(color={line.color} wrap="truncate-end")
               if line.copyId !== undefined
@@ -331,6 +366,20 @@ else
                     Text({...span}) #{span.text}
                 else
                   Text #{line.text || ' '}
+      Box(width={1} height={bodyHeight} flexShrink={0})
+        Text(color={gray}) #{Array.from({ length: bodyHeight }, () => '│').join('\n')}
+      Box(flexDirection="column" width={logsPaneWidth} paddingX={1} height={bodyHeight} flexShrink={0})
+        Text(color={focusedPane === 'logs' ? codexBlue : muted} wrap="truncate-end") LOGS
+        if !logsLines.length
+          Text(color={muted}) No logs yet.
+        each line, index in logsVisible key index
+          Box(height={1} flexShrink={0})
+            Text(color={line.color} wrap="truncate-end")
+              if line.spans
+                each span, spanIndex in line.spans key spanIndex
+                  Text({...span}) #{span.text}
+              else
+                Text #{line.text || ' '}
     if state.active
       Box(height={1} paddingX={1} flexShrink={0})
         Text(color={codexBlue} wrap="truncate-end") #{`${spinner} Working · ${safeText(state.phase)}`}
@@ -355,7 +404,7 @@ else
             Text(wrap="truncate-end")
               Text(color={statusModel}) #{safeText(shortModelName(state.model))}
               Text(color={statusDot}) #{' · '}
-              Text(color={statusPath}) #{project}
+              Text(color={statusPath}) #{project + (state.session ? ` · ${safeText(state.session.name)}` : '')}
           if statusRight
             Box(marginLeft={1} flexShrink={0} minWidth={0})
               Text(color={muted} wrap="truncate-end") #{statusRight}

@@ -7,7 +7,7 @@ import { parseArgs } from 'node:util'
 import { COMPACTOR_MODEL, MODEL } from './constants.js'
 import { formatModelsList } from './models.js'
 import { configuredModelId } from './fallback-model.js'
-import { Session } from './session.js'
+import { SessionWorkspace } from './session-workspace.js'
 import { errorMessage } from './types.js'
 import { commandCompletion, completeCommand } from './command-completion.js'
 
@@ -93,7 +93,7 @@ async function main(): Promise<void> {
   const configuredModel = values.model ?? process.env.VICTRAL_MODEL
   const model = configuredModelId(configuredModel ?? MODEL)
   const configuredCompactor = values['compactor-model'] ?? process.env.VICTRAL_COMPACTOR_MODEL
-  const session = await Session.open({
+  const session = await SessionWorkspace.open({
     project,
     chatDir: path.resolve(values['chat-dir']),
     model,
@@ -151,7 +151,7 @@ async function main(): Promise<void> {
       const prompt = () => {
         if (interactive) rl.prompt()
       }
-      console.log(`Victral · ${session.snapshot().model}\nProject: ${project}\nType /help for commands.\n`)
+      console.log(`Victral · ${session.snapshot().model}\nProject: ${project}\nSession: ${session.snapshot().session?.name ?? 'Original session'}\nType /help for commands.\n`)
       session.on('text', (text) => process.stdout.write(text))
       session.on('notice', (text) => {
         console.log(text)
