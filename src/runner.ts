@@ -53,6 +53,7 @@ export class Runner {
   private readonly executeEffect: (effect: Effect.Effect<void, never>) => Promise<void>;
   private closing?: Promise<void>;
   private readonly onWorkflow: WorkflowObserver;
+  private streamedEntries?: { kind: MessageKind; text: string }[];
   onText: (text: string) => void;
   onThought: (text: string) => void;
   onError: (text: string) => void;
@@ -74,9 +75,23 @@ export class Runner {
   }
   submit(text: string, kind: MessageKind = 'user'): Promise<void> {
     const entry = { text, logged: false, kind };
-    if (this.inCall) { this.memory.append(kind, text); entry.logged = true; }
+    if (this.inCall) {
+      this.flushStreamedEntries(this.streamedEntries);
+      this.memory.append(kind, text); entry.logged = true;
+    }
     this.queue.push(entry);
     return this.active ? this.running! : this.run();
+  }
+  private recordStreamedEntry(kind: MessageKind, text: string) {
+    const entries = this.streamedEntries;
+    if (!entries) { this.memory.append(kind, text); return; }
+    const previous = entries.at(-1);
+    if (kind === 'talk' && previous?.kind === 'talk') previous.text += text;
+    else entries.push({ kind, text });
+  }
+  private flushStreamedEntries(entries = this.streamedEntries) {
+    if (!entries) return;
+    for (const entry of entries.splice(0)) this.memory.append(entry.kind, entry.text);
   }
   cancel() { this.controller?.abort(); }
   take() {
@@ -148,10 +163,15 @@ export class Runner {
         const operationId = `${state.id}/model-${modelSteps}`;
         this.emit({ operationId, kind: 'model', status: 'processing' }, signal);
         const calls = yield* Effect.gen({ self: this }, function*() {
+          const streamedEntries: { kind: MessageKind; text: string }[] = [];
+          this.streamedEntries = streamedEntries;
           const result = yield* turnFailure(smoothResponseEffect(this.model, messages, {
             tools: this.tools.definitions, onText: this.onText, onThought: this.onThought,
-            onEntry: (kind, text) => this.memory.append(kind, text),
-          }), 'model');
+            onEntry: (kind, text) => this.recordStreamedEntry(kind, text),
+          }), 'model').pipe(Effect.onExit(() => this.attempt('callback', () => {
+            this.flushStreamedEntries(streamedEntries);
+            if (this.streamedEntries === streamedEntries) this.streamedEntries = undefined;
+          })));
           return yield* this.attempt('model', () => {
             messages.push(result.message); // Keep native provider content intact.
             if (result.finish_reason === 'MAX_TOKENS') throw new Error('Model output limit reached; response is incomplete.');

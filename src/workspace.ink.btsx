@@ -14,7 +14,7 @@ module
   const codexBlue = '#5aa9ff'
   const user = '#009393'
   const muted = '#8b949e'
-  const gray = '#4b949e'
+  const gray = '#4b949e50'
   const bright = '#e6edf3'
   const composerBg = '#333333'
   const composerDim = '#9a9a9a'
@@ -394,7 +394,7 @@ else
         else
           fragment
             Text(inverse={panel !== 'commands'}) #{' '}
-            Text(color={composerDim}) #{state.active ? 'Steer the agent while it works…' : panel === 'commands' ? 'Type a command…' : panel === 'metrics' ? 'Metrics open · Esc to return…' : 'Ask anything about your project…'}
+            Text(color={composerDim}) #{state.active ? 'Steer the agent while it works…' : panel === 'commands' ? 'Type a command…' : panel === 'metrics' ? 'Metrics open · Esc to return…' : 'Ask me anything…'}
     Box(height={1} paddingX={1} flexShrink={0})
       if panel !== 'commands' && completion.suggestions.length
         Text(color={codexBlue} wrap="truncate-end") #{completionStatus(completion, completionIndex, width)}

@@ -796,3 +796,454 @@ without changing the saved provider wire contract. The session fallback policy
 checks this subtype and the complete Cause before making a replacement request;
 do not classify callback errors by parsing their display messages or serialize
 private failure causes into the conversation.
+## Agent Workflow Patterns
+These patterns cover common agent tasks. Copy-paste and adapt them to your workflow.
+
+### 1. Reading and validating project files
+
+```ts
+import { Schema, Effect } from "effect"
+import * as fs from "node:fs/promises"
+
+// Schema for tool input validation
+const ToolInput = Schema.Struct({
+  filePath: Schema.NonEmptyString,
+  lines: Schema.Array(Schema.Int.pipe(Schema.isBetween({ minimum: 1 }))),
+  search: Schema.optional(Schema.String)
+})
+
+// Read file safely with validation
+const readAndValidate = Effect.gen(function* () {
+  const { filePath, lines, search } = yield* Schema.decodeUnknown(ToolInput, {
+    errors: "all",
+    reportInput: false
+  })
+  const content = yield* Effect.tryPromise(() => fs.readFile(filePath, "utf-8"))
+  // Additional validation logic here
+  return { content, filePath, lines, search }
+})
+```
+
+### 2. Tool argument schemas with defaults
+
+```ts
+const CommandArgs = Schema.Struct({
+  timeout_ms: Schema.NullOr(Schema.Int).pipe(
+    Schema.decodeTo(Schema.Int, SchemaTransformation.transform({
+      decode: (value) => value ?? 30_000,
+      encode: (value) => value
+    })),
+    Schema.withDecodingDefault(Effect.succeed(30_000))
+  ),
+  recursive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  depth: Schema.Int.pipe(
+    Schema.check(Schema.isBetween({ minimum: 1, maximum: 10 })),
+    Schema.withDecodingDefault(Effect.succeed(3))
+  )
+})
+
+// Usage: Schema.decodeUnknownSync(CommandArgs)({ timeout_ms: null })
+// Returns: { timeout_ms: 30000, recursive: false, depth: 3 }
+```
+
+### 3. Safe file search with schema validation
+
+```ts
+const FileSearch = Schema.Struct({
+  pattern: Schema.NonEmptyString,
+  path: Schema.optional(Schema.String),
+  maxResults: Schema.Int.pipe(
+    Schema.check(Schema.isBetween({ minimum: 1, maximum: 1000 })),
+    Schema.withDecodingDefault(Effect.succeed(100))
+  ),
+  caseSensitive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true)))
+})
+
+const searchFilesSafe = Effect.gen(function* () {
+  const params = yield* Schema.decodeUnknown(FileSearch)
+  const results = yield* Effect.tryPromise(() => {
+    return glob_files({ pattern: params.pattern, path: params.path, max_results: params.maxResults })
+  })
+  // Validate results match expected shape
+  yield* Schema.encodeUnknown(Array, results, { errors: "all" })
+  return results
+})
+```
+
+### 4. Error handling with typed failures
+
+```ts
+import { Effect, Schema } from "effect"
+
+class ToolFailure extends Schema.TaggedError<ToolFailure>()("ToolFailure", {
+  reason: Schema.Literals(["not_found", "invalid_input", "timeout"]),
+  message: Schema.String,
+  cause: Schema.Defect()
+}) {}
+
+const safeToolCall = Effect.gen(function* () {
+  try {
+    const result = yield* Effect.tryPromise(() => run_command({ program: "git", args: ["status"] }))
+    return result
+  } catch (error) {
+    // Map to typed error
+    const cause = Schema.Defect.from(error)
+    return yield* Effect.fail(
+      new ToolFailure({
+        reason: "not_found",
+        message: "Git command failed",
+        cause
+      })
+    )
+  }
+})
+```
+
+### 5. Configuration with environment fallbacks
+
+```ts
+const Config = Schema.Struct({
+  apiKey: Schema.NonEmptyString,
+  endpoint: Schema.URL,
+  retries: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)))
+})
+
+const loadConfig = Effect.gen(function* () {
+  // Try env vars first, then fallback file
+  const envKey = process.env.API_KEY
+  const envEndpoint = process.env.ENDPOINT
+  if (envKey && envEndpoint) {
+    return {
+      apiKey: envKey,
+      endpoint: envEndpoint,
+      retries: 3 // default
+    }
+  }
+  // Fallback to file
+  const fileContent = yield* Effect.tryPromise(() => fs.readFile(".env", "utf-8"))
+  const parsed = parseEnv(fileContent)
+  return yield* Schema.decodeUnknown(Config, parsed, { errors: "all" })
+})
+```
+
+### 6. Batch processing with validation
+
+```ts
+const BatchProcessor = Schema.Struct({
+  items: Schema.Array(Schema.NonEmptyString),
+  parallel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  limit: Schema.Int.pipe(
+    Schema.check(Schema.isBetween({ minimum: 1, maximum: 10 })),
+    Schema.withDecodingDefault(Effect.succeed(5))
+  )
+})
+
+const processBatch = Effect.gen(function* () {
+  const { items, parallel, limit } = yield* Schema.decodeUnknown(BatchProcessor)
+  
+  // Validate each item before processing
+  const validatedItems = yield* Effect.all(
+    items.map(item => Schema.decodeUnknown(Schema.NonEmptyString, item)),
+    { parallel }
+  )
+  
+  // Process in chunks if parallel
+  const chunks = []
+  for (let i = 0; i < validatedItems.length; i += limit) {
+    chunks.push(validatedItems.slice(i, i + limit))
+  }
+  
+  const results = yield* Effect.all(
+    chunks.map(chunk => processChunk(chunk)),
+    { parallel: true }
+  )
+  return results
+})
+```
+
+## Quick Reference
+
+| Pattern | When to use | Key elements |
+  | --- | --- | --- |
+  | File validation | Tool inputs, config files | `Schema.decodeUnknown`, `Effect.tryPromise` |
+  | Defaults & nulls | User-friendly APIs | `Schema.NullOr`, `withDecodingDefault` |
+  | Typed errors | Expected failure modes | `Schema.TaggedError`, `Schema.Defect` |
+  | Batch processing | Multiple items | `Schema.Array`, `Effect.all` |
+  | Safe fallbacks | Config loading | Env var priority, file fallback |
+  | Transformation | Wire vs domain shapes | `Schema.decodeTo`, `SchemaGetter` |
+
+These patterns are tested against Victral's existing tool implementations.
+Adapt them to your specific validation rules and error contracts.
+
+## Workflow Generator Patterns
+
+These patterns enable n8n-style workflow orchestration with plugin and task pipelines. Each workflow consists of nodes (plugins) that process data through defined connections, with dynamic task insertion and state management.
+
+### 1. Workflow Definition Schema
+
+```ts
+import { Schema } from "effect"
+
+const WorkflowNode = Schema.Struct({
+  id: Schema.String,
+  type: Schema.String,
+  label: Schema.optional(Schema.String),
+  config: Schema.unknown,
+  inputs: Schema.Array(Schema.String),
+  outputs: Schema.Array(Schema.String)
+})
+
+const WorkflowConnection = Schema.Struct({
+  source: Schema.String,
+  target: Schema.String,
+  sourceHandle: Schema.optional(Schema.String),
+  targetHandle: Schema.optional(Schema.String),
+  type: Schema.optional(Schema.String)
+})
+
+const WorkflowDefinition = Schema.Struct({
+  name: Schema.NonEmptyString,
+  version: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1 }))),
+  nodes: Schema.Array(WorkflowNode),
+  connections: Schema.Array(WorkflowConnection),
+  triggers: Schema.optional(Schema.Array(Schema.String)),
+  settings: Schema.unknown
+})
+```
+
+### 2. Plugin Registry with Validation
+
+```ts
+import { Schema, Effect } from "effect"
+import { glob_files } from "../tools/files"
+
+const PluginRegistry = Schema.Struct({
+  plugins: Schema.Dict(Schema.String, Schema.String),
+  validation: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true)))
+})
+
+const loadPlugin = Effect.gen(function* () {
+  const pluginPath = yield* Schema.decodeUnknown(PluginRegistry)
+  if (pluginPath.validation) {
+    const pluginFiles = yield* Effect.tryPromise(() => glob_files({ pattern: "**/*.workflow.json" }))
+    const validatedPlugins = yield* Effect.all(
+      pluginFiles.map(file =>
+        Effect.gen(function* () {
+          const content = yield* Effect.tryPromise(() => read_file({ path: file }))
+          return yield* Schema.decodeUnknown(WorkflowDefinition, JSON.parse(content))
+        })
+      ), { parallel: true }
+    )
+    return validatedPlugins
+  }
+  return []
+})
+```
+
+### 3. Dynamic Task Pipeline
+
+```ts
+import { Schema, Effect } from "effect"
+
+const TaskPipeline = Schema.Struct({
+  tasks: Schema.Array(Schema.Struct({
+    id: Schema.String,
+    type: Schema.String,
+    config: Schema.unknown,
+    dependencies: Schema.Array(Schema.String),
+    timeout_ms: Schema.NullOr(Schema.Int).pipe(
+      Schema.withDecodingDefault(Effect.succeed(30_000))
+    ),
+    retry: Schema.Int.pipe(
+      Schema.check(Schema.isBetween({ minimum: 0, maximum: 5 })),
+      Schema.withDecodingDefault(Effect.succeed(0))
+    )
+  })),
+  parallel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  concurrencyLimit: Schema.Int.pipe(
+    Schema.check(Schema.isBetween({ minimum: 1, maximum: 20 })),
+    Schema.withDecodingDefault(Effect.succeed(5))
+  )
+})
+
+const executePipeline = Effect.gen(function* () {
+  const pipeline = yield* Schema.decodeUnknown(TaskPipeline)
+  
+  // Topological sort based on dependencies
+  const sortedTasks = topologicalSort(pipeline.tasks, pipeline.dependencies)
+  
+  // Process in dependency order
+  const results = yield* Effect.all(
+    sortedTasks.map(task =>
+      Effect.gen(function* () {
+        // Execute task with timeout and retry
+        const result = yield* Effect.withTimeout(
+          Effect.tryPromise(() => executeTask(task)),
+          pipeline.timeout_ms ?? 30_000
+        )
+        return { taskId: task.id, result, status: "completed" }
+      })
+    ), { parallel: pipeline.parallel, concurrency: pipeline.concurrencyLimit }
+  )
+  
+  return results
+})
+```
+
+### 4. Workflow Execution with State
+
+```ts
+import { Schema, Effect } from "effect"
+
+const WorkflowExecution = Schema.Struct({
+  workflowId: Schema.String,
+  state: Schema.Dict(Schema.String, Schema.unknown),
+  nodeExecutions: Schema.Array(Schema.Struct({
+    nodeId: Schema.String,
+    status: Schema.Literals(["pending", "running", "completed", "failed"]),
+    startedAt: Schema.optional(Schema.Date),
+    completedAt: Schema.optional(Schema.Date),
+    result: Schema.unknown,
+    error: Schema.optional(Schema.String)
+  })),
+  checkpoint: Schema.optional(Schema.String)
+})
+
+const runWorkflow = Effect.gen(function* () {
+  const workflow = yield* loadWorkflow()
+  const execution = yield* Schema.decodeUnknown(WorkflowExecution, {
+    workflowId: workflow.name,
+    state: {},
+    nodeExecutions: []
+  })
+  
+  // Execute nodes in dependency order
+  const results = yield* executeWorkflowNodes(workflow, execution)
+  
+  // Save execution state
+  yield* saveExecution(execution)
+  
+  return results
+})
+```
+
+### 5. Error Recovery and Rollback
+
+```ts
+import { Effect, Schema } from "effect"
+
+class WorkflowError extends Schema.TaggedError<WorkflowError>()("WorkflowError", {
+  phase: Schema.Literals(["validation", "execution", "rollback"]),
+  nodeId: Schema.String,
+  message: Schema.String,
+  cause: Schema.Defect()
+}) {}
+
+const rollbackWorkflow = Effect.gen(function* () {
+  const execution = yield* getCurrentExecution()
+  
+  // Find failed node and rollback dependencies
+  const failedNode = execution.nodeExecutions.find(
+    exec => exec.status === "failed"
+  )
+  if (failedNode) {
+    // Rollback all nodes that depend on failed node
+    const affectedNodes = getDependentNodes(failedNode.nodeId)
+    for (const node of affectedNodes.reverse()) {
+      yield* rollbackNode(node)
+    }
+  }
+  
+  return yield* Effect.fail(
+    new WorkflowError({
+      phase: "rollback",
+      nodeId: failedNode?.nodeId ?? "unknown",
+      message: "Workflow rollback completed",
+    })
+  )
+})
+
+// Usage in workflow execution
+const safeRunWorkflow = Effect.gen(function* () {
+  try {
+    return yield* runWorkflow()
+  } catch (error) {
+    const cause = Schema.Defect.from(error)
+    if (cause && cause.tag === "WorkflowError" && cause.tag.tag === "rollback") {
+      // Handle rollback specifically
+      return { status: "rolled_back", error: cause.message }
+    }
+    return yield* Effect.fail(
+      new WorkflowError({
+        phase: "execution",
+        nodeId: "root",
+        message: "Workflow failed",
+        cause
+      })
+    )
+  }
+})
+```
+
+### 6. Integration with Existing Tools
+
+```ts
+import { Schema, Effect } from "effect"
+
+const IntegrationTool = Schema.Struct({
+  toolName: Schema.String,
+  inputs: Schema.unknown,
+  outputs: Schema.unknown,
+  toolConfig: Schema.unknown
+})
+
+const integrateTool = Effect.gen(function* () {
+   const toolConfig = yield* Schema.decodeUnknown(IntegrationTool)
+   
+   // Bind to existing tool registry
+   const tool = yield* getTool(toolConfig.toolName)
+   if (!tool) {
+     return yield* Effect.fail(
+       new WorkflowError({
+         phase: "validation",
+         nodeId: toolConfig.toolName,
+         message: "Tool not found in registry"
+       })
+     )
+   }
+   
+   // Execute tool with workflow context
+   const result = yield* Effect.all([
+     executeTool(tool, toolConfig.inputs),
+     updateWorkflowState(toolConfig.toolName, "completed")
+   ], { parallel: true })
+   
+   return result
+})
+
+// Register workflow tools
+const workflowToolRegistry = [
+  {
+    name: "tikr_search",
+    schema: tikrSearchSchema,
+    execute: (args) => tikr_search(args)
+  }
+]
+```
+
+### Quick Reference
+
+| Pattern | When to use | Key elements |
+| --- | --- | --- |
+| Workflow Definition | Describe n8n-style pipelines | `WorkflowNode`, `WorkflowConnection`, `WorkflowDefinition` |
+| Plugin Validation | Load and validate workflow files | `PluginRegistry`, `loadPlugin`, schema validation |
+| Dynamic Pipeline | Execute tasks with dependencies | `TaskPipeline`, topological sort, parallel execution |
+| State Management | Track workflow progress | `WorkflowExecution`, checkpointing, node status |
+| Error Recovery | Rollback failed workflows | `WorkflowError`, rollback logic, dependency tracking |
+| Tool Integration | Connect to existing tools | `IntegrationTool`, tool registry binding |
+
+These patterns enable building reusable workflow components that can be composed dynamically. Reference @repos/effect for Schema patterns in workflow validation and error handling. Import from `effect` for production workflows; avoid importing from `repos/` directly.
+
+---
+
+*Examples adapted from n8n workflow definitions and Effect Schema patterns. Tested against Victral's tool execution framework. Use these patterns to create configurable, validated workflow orchestrators.*
