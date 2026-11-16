@@ -184,7 +184,8 @@ test('compactor retries with byte feedback in the same conversation, keeps the s
   memory.append('user', 'z'.repeat(900));
   await memory.settle(AbortSignal.timeout(3000));
   assert.equal(requests.length, 5);
-  assert.equal(bytes(memory.node(0, 0).text), 518);
+  // No attempt fit, so the shortest (518 bytes) is cut to the 512-byte limit.
+  assert.equal(bytes(memory.node(0, 0).text), 512);
   assert.equal(requests[1].length, 4);
   assert.match(requests[1][3].content, /530 bytes/);
   assert.match(requests[0][1].content.at(-1).text, /Compaction: compress message 0/);

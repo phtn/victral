@@ -4,6 +4,11 @@ import { EventEmitter } from 'node:events';
 import { Sessions, type SessionSummary } from './sessions.js';
 import { Session, type SessionOptions, type SessionState } from './session.js';
 import { errorMessage } from './types.js';
+import { estimateCloudflareNeurons } from './metrics.js';
+
+function localLogDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
 
 /** Keeps one saved session active while the CLI/TUI and their subscriptions stay mounted. */
 export class SessionWorkspace extends EventEmitter {
@@ -11,6 +16,7 @@ export class SessionWorkspace extends EventEmitter {
   private closing?: Promise<void>;
   private closed = false;
   private relays = new Map<string, (...args: unknown[]) => void>();
+  private readonly usageFileCache = new Map<string, { mtimeMs: number; size: number; records: unknown[] }>();
   lastFailure?: unknown;
 
   private constructor(private session: Session, private catalog: Sessions) {
@@ -39,7 +45,41 @@ export class SessionWorkspace extends EventEmitter {
   get metrics(): Session['metrics'] { return this.session.metrics; }
 
   snapshot(): SessionState {
-    return { ...this.session.snapshot(), session: this.catalog.active, sessions: this.catalog.list(), ...(this.switching ? { switching: true } : {}) };
+    const state = this.session.snapshot();
+    const hasCloudflareCredentials = !!process.env.CLOUDFLARE_API_TOKEN && !!process.env.CLOUDFLARE_ACCOUNT_ID;
+    const neuronEstimate = hasCloudflareCredentials ? this.cloudflareNeuronEstimate() : undefined;
+    return { ...state, session: this.catalog.active, sessions: this.catalog.list(),
+      ...(neuronEstimate ? { cloudflareFreeNeuronsRemaining: neuronEstimate.remaining,
+        cloudflareNeuronEstimateIncomplete: neuronEstimate.incomplete } : {}),
+      ...(this.switching ? { switching: true } : {}) };
+  }
+
+  private cloudflareNeuronEstimate(): { remaining: number; incomplete: boolean } {
+    const now = new Date(), candidateDates = new Set<string>();
+    for (const offset of [-1, 0, 1]) {
+      const date = new Date(now); date.setDate(date.getDate() + offset); candidateDates.add(localLogDate(date));
+    }
+    const records: unknown[] = [];
+    for (const session of this.catalog.list()) {
+      const usageDirectory = path.join(this.catalog.directoryFor(session.id), 'usage');
+      for (const date of candidateDates) {
+        const filename = path.join(usageDirectory, `${date}.jsonl`);
+        try {
+          const stat = fs.statSync(filename), cached = this.usageFileCache.get(filename);
+          if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+            records.push(...cached.records); continue;
+          }
+          const parsed: unknown[] = [];
+          for (const line of fs.readFileSync(filename, 'utf8').split('\n')) {
+            if (!line.trim()) continue;
+            try { parsed.push(JSON.parse(line)); } catch { /* Ignore an incomplete trailing line. */ }
+          }
+          this.usageFileCache.set(filename, { mtimeMs: stat.mtimeMs, size: stat.size, records: parsed });
+          records.push(...parsed);
+        } catch { /* A new session may not have a usage log for this date. */ }
+      }
+    }
+    return estimateCloudflareNeurons(records, now);
   }
 
   private attach(session: Session): void {
@@ -105,7 +145,7 @@ export class SessionWorkspace extends EventEmitter {
     let selectionError: unknown;
     try {
       if (!fs.existsSync(directory)) throw new Error('This session directory is missing. Restore it from backup.');
-      next = await Session.open({ ...previous.options, model: previous.snapshot().model, chatDir: directory });
+      next = await Session.open({ ...previous.options, model: previous.snapshot().model, compaction: previous.compaction, chatDir: directory });
       try { this.catalog.select(target.id); selected = true; }
       catch (error) {
         if (this.catalog.active.id !== target.id) throw error;

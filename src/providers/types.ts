@@ -15,6 +15,8 @@ export interface UsageRecord {
 }
 export interface ProviderOptions {
   apiKey?: string; model?: string; usage?: (record: UsageRecord) => void;
-  fetchImpl?: typeof fetch; purpose?: ProviderPurpose; webSearch?: boolean;
+  fetchImpl?: typeof fetch; purpose?: ProviderPurpose; webSearch?: boolean; accountId?: string;
   instrument?: boolean;
+  // Per-request limit. Compactors default to COMPACTOR_TIMEOUT; other roles have none.
+  timeoutMs?: number;
 }

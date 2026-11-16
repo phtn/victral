@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { Meta, metaRequest } from '../src/meta.js';
 import { OpenAI } from '../src/openai.js';
 import { Cohere } from '../src/cohere.js';
+import { Anthropic } from '../src/anthropic.js';
+import { Cloudflare } from '../src/cloudflare.js';
+import { MLX } from '../src/mlx.js';
 import { createModel, MODELS, MODEL_INFO, formatModelsList, resolveModelId } from '../src/models.js';
 import { MODEL } from '../src/constants.js';
 
@@ -54,12 +57,12 @@ test('Meta streaming retains signatures and encrypted blocks without logging rea
   assert.equal(logs.length, 1);
   assert.equal(logs[0].kind, 'tool');
 });
-test('model selection supports Cohere, Meta and the two requested OpenAI models', () => {
-  assert.deepEqual(MODELS, ['north-mini-code-1-0', 'command-a-03-2025', 'command-a-plus-05-2026', 'muse-wonder-1.0', 'muse-wonder-full', 'gpt-6-luna', 'gpt-6.1-sol']);
+test('model selection supports Cohere, Meta, OpenAI, Anthropic and Cloudflare models', () => {
+  assert.deepEqual(MODELS, ['north-mini-code-1-0', 'command-a-03-2025', 'command-a-plus-05-2026', 'muse-wonder-1.0', 'muse-wonder-full', 'gpt-6-luna', 'gpt-6.1-sol', 'claude-sonnet-5-5', 'claude-opus-5-5', '@cf/meta/llama-3.2-1b-instruct', '@cf/zai-org/glm-4.7-flash', 'mlx-community/Qwen3.5-4B-OptiQ-4bit', 'mlx-community/Llama-3.2-3B-Instruct-4bit']);
   for (const model of MODELS) {
-    const provider = createModel(model, { apiKey: 'test-key' });
+    const provider = createModel(model, { apiKey: 'test-key', accountId: 'test-account' });
     assert.equal(provider.model, model);
-    assert.ok(provider instanceof (model.startsWith('muse-') ? Meta : model.startsWith('gpt-') ? OpenAI : Cohere));
+    assert.ok(provider instanceof (model.startsWith('muse-') ? Meta : model.startsWith('gpt-') ? OpenAI : model.startsWith('claude-') ? Anthropic : model.startsWith('@cf/') ? Cloudflare : model.startsWith('mlx-community/') ? MLX : Cohere));
   }
   assert.throws(() => createModel('unknown'), /Unsupported model/);
 });
@@ -68,7 +71,7 @@ test('default model is Cohere North Mini Code', () => {
   assert.ok(createModel(MODEL, { apiKey: 'test-key' }) instanceof Cohere);
 });
 test('model input accepts numbers, case variants, and unambiguous short names', () => {
-  assert.equal(MODEL_INFO.length, 7);
+  assert.equal(MODEL_INFO.length, 13);
   assert.ok(formatModelsList().includes('1. north-mini-code-1-0'));
   assert.ok(formatModelsList().includes('4. muse-wonder-1.0'));
   assert.equal(resolveModelId('1'), MODELS[0]);
@@ -78,7 +81,7 @@ test('model input accepts numbers, case variants, and unambiguous short names', 
   for (const { id, shortName } of MODEL_INFO) {
     assert.equal(resolveModelId(shortName), id);
     assert.equal(resolveModelId(` ${shortName.toUpperCase()} `), id);
-    assert.equal(createModel(shortName, { apiKey: 'test-key' }).model, id);
+    assert.equal(createModel(shortName, { apiKey: 'test-key', accountId: 'test-account' }).model, id);
     assert.ok(formatModelsList().includes(`alias ${shortName}`));
   }
   assert.equal(resolveModelId('3'), 'command-a-plus-05-2026');
@@ -90,7 +93,20 @@ test('model input accepts numbers, case variants, and unambiguous short names', 
   assert.equal(resolveModelId('openai 6'), 'gpt-6-luna');
   assert.throws(() => resolveModelId('meta luna6'), /Unknown model/);
   assert.throws(() => resolveModelId('openai 1'), /belong to openai/);
-  assert.throws(() => resolveModelId('8'), /between 1 and 7/);
+  assert.equal(resolveModelId('9'), 'claude-opus-5-5');
+  assert.equal(resolveModelId('anthropic sonnet5.5'), 'claude-sonnet-5-5');
+  assert.equal(resolveModelId('10'), '@cf/meta/llama-3.2-1b-instruct');
+  assert.equal(resolveModelId('cloudflare cf-llama1b'), '@cf/meta/llama-3.2-1b-instruct');
+  assert.equal(resolveModelId('11'), '@cf/zai-org/glm-4.7-flash');
+  assert.equal(resolveModelId('cloudflare cf-glm47'), '@cf/zai-org/glm-4.7-flash');
+  assert.equal(resolveModelId('12'), 'mlx-community/Qwen3.5-4B-OptiQ-4bit');
+  assert.equal(resolveModelId('mlx optiq'), 'mlx-community/Qwen3.5-4B-OptiQ-4bit');
+  assert.equal(resolveModelId('13'), 'mlx-community/Llama-3.2-3B-Instruct-4bit');
+  assert.equal(resolveModelId('local llama3b'), 'mlx-community/Llama-3.2-3B-Instruct-4bit');
+  assert.equal(resolveModelId('MLX-COMMUNITY/QWEN3.5-4B-OPTIQ-4BIT'), 'mlx-community/Qwen3.5-4B-OptiQ-4bit');
+  assert.throws(() => resolveModelId('mlx 1'), /belong to mlx/);
+  assert.throws(() => resolveModelId('llama'), /several models/);
+  assert.throws(() => resolveModelId('14'), /between 1 and 13/);
   assert.throws(() => resolveModelId('muse-wonder'), /several models/);
   assert.throws(() => resolveModelId('unknown'), /Unknown model/);
   assert.throws(() => resolveModelId(''), /Choose a model/);
@@ -129,4 +145,35 @@ test('web search is off by default and never enabled for compaction', async () =
     await model.chat([]);
     assert.ok(!sent.tools?.some(tool => tool.type === 'web_search'));
   }
+});
+
+test('Anthropic requests use x-api-key, adaptive effort, default fallbacks and dated web search', async () => {
+  const requests = [];
+  const fetchImpl = async (url, init) => {
+    requests.push({ url, headers: init.headers, body: JSON.parse(init.body) });
+    return Response.json({ content: [{ type: 'thinking', thinking: 'brief', signature: 'sig' }, { type: 'text', text: 'done' }], stop_reason: 'end_turn', usage: { input_tokens: 3 } });
+  };
+  const model = new Anthropic({ apiKey: 'test-key', model: 'claude-sonnet-5-5', webSearch: true, fetchImpl });
+  const result = await model.chat([{ role: 'system', content: 'rules' }, { role: 'user', content: 'hi' }]);
+  const [{ url, headers, body }] = requests;
+  assert.equal(url, 'https://api.anthropic.com/v1/messages');
+  assert.equal(headers['x-api-key'], 'test-key');
+  assert.equal(headers.Authorization, undefined);
+  assert.equal(headers['anthropic-beta'], 'server-side-fallback-2026-07-01');
+  assert.equal(body.model, 'claude-sonnet-5-5');
+  assert.deepEqual(body.thinking, { type: 'adaptive', display: 'summarized' });
+  assert.deepEqual(body.output_config, { effort: 'high' });
+  assert.equal(body.fallbacks, 'default');
+  assert.deepEqual(body.tools, [{ type: 'web_search_20260209', name: 'web_search' }]);
+  assert.equal(result.finish_reason, 'COMPLETE');
+  assert.equal(result.message._metaContent[0].signature, 'sig');
+  const compactor = new Anthropic({ apiKey: 'test-key', purpose: 'compactor', webSearch: true, fetchImpl });
+  await compactor.chat([{ role: 'user', content: 'summarize' }]);
+  assert.equal(requests[1].body.model, 'claude-opus-5-5');
+  assert.deepEqual(requests[1].body.output_config, { effort: 'medium' });
+  assert.equal(requests[1].body.tools, undefined);
+  const saved = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  try { assert.throws(() => new Anthropic({}), /ANTHROPIC_API_KEY/); }
+  finally { if (saved !== undefined) process.env.ANTHROPIC_API_KEY = saved; }
 });

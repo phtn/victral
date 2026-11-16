@@ -18,10 +18,12 @@ Usage: victral [options]
   --project PATH          Project root (default: current directory)
   --chat-dir PATH         Persistent chat directory
   --model ID              Main agent model (number, short name, or full ID; see --models)
-  --compactor-model ID    Background memory model (default command-a; fallback depends on provider)
+  --compactor-model ID    Background memory model (default llama3b, local MLX; fallback depends on provider)
+                          Local MLX models (optiq, llama3b) need a running MLX server; see MLX_BASE_URL
   --instructions FILE     Load custom instructions instead of AGENTS.md
   --allow-shell           Enable CLI, shell and background command tools
-  --web-search            Enable Meta/OpenAI provider web search (additional provider charges)
+  --tikr                  Enable TIKR research tools (needs TIKR_UN and TIKR_PW)
+  --web-search            Enable Meta/OpenAI/Anthropic provider web search (additional provider charges)
   --mcp-config FILE       Load explicitly configured MCP integrations
   --ask TEXT              Run one turn, then exit
   --plain                 Use a line-oriented terminal (automatic for pipes)
@@ -29,6 +31,8 @@ Usage: victral [options]
   --demo                  Preview the interface without API calls or saved data
   --sfx-test              Open the sound notification TUI lab (no API calls)
   --models                List models
+  --no-compaction         Keep messages in full instead of summarizing them (or VICTRAL_COMPACTION=off;
+                          /compaction on|off changes it while running)
   --no-jev                Disable background evaluation
   --no-metrics            Hide automatic metrics
   --help, -h              Show this help
@@ -47,9 +51,11 @@ async function main(): Promise<void> {
       'web-search': { type: 'boolean', default: false },
       'mcp-config': { type: 'string' },
       'allow-shell': { type: 'boolean', default: false },
+      tikr: { type: 'boolean', default: false },
       model: { type: 'string' },
       'compactor-model': { type: 'string' },
       models: { type: 'boolean' },
+      'no-compaction': { type: 'boolean', default: false },
       'no-jev': { type: 'boolean', default: false },
       'no-metrics': { type: 'boolean', default: false },
       plain: { type: 'boolean', default: false },
@@ -93,6 +99,8 @@ async function main(): Promise<void> {
   const configuredModel = values.model ?? process.env.VICTRAL_MODEL
   const model = configuredModelId(configuredModel ?? MODEL)
   const configuredCompactor = values['compactor-model'] ?? process.env.VICTRAL_COMPACTOR_MODEL
+  const compactionOff = values['no-compaction']
+    || ['off', '0', 'false', 'no'].includes((process.env.VICTRAL_COMPACTION ?? '').trim().toLowerCase())
   const session = await SessionWorkspace.open({
     project,
     chatDir: path.resolve(values['chat-dir']),
@@ -100,8 +108,10 @@ async function main(): Promise<void> {
     compactorModel: configuredModelId(configuredCompactor ?? (configuredModel ? model : COMPACTOR_MODEL)),
     instructions: values.instructions,
     allowShell: values['allow-shell'],
+    tikr: values.tikr,
     webSearch: values['web-search'],
     mcpConfig: values['mcp-config'],
+    compaction: !compactionOff,
     jev: !values['no-jev'],
     metrics: !values['no-metrics']
   })

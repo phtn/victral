@@ -231,3 +231,25 @@ test('native nested tool interruption reaches I/O while its originating turn sig
   await state.runner.submit('first');
   expect(state.turns[0]!.status).toBe('error'); expect(canceled).toBe(true); expect(origin?.aborted).toBe(false);
 });
+
+test('a turn is offered the tools its own text selects, and the selection holds across model steps', async () => {
+  const offered: string[][] = [], seen: string[] = [];
+  const everything = [{ type: 'function', function: { name: 'read', description: '', parameters: { type: 'object', properties: {}, required: [] } } },
+    { type: 'function', function: { name: 'tikr_search', description: '', parameters: { type: 'object', properties: {}, required: [] } } }] as AgentTools['definitions'];
+  const tools: AgentTools = { definitions: everything, async execute() { return 'data'; },
+    selectTools: text => { seen.push(text); return /revenue/.test(text) ? everything : everything.filter(tool => tool.function.name !== 'tikr_search'); },
+    context: text => (/revenue/.test(text ?? '') ? 'TIKR preference' : '') };
+  let steps = 0;
+  const model: ModelPort = { model: 'selector', async stream(_messages, options) {
+    offered.push((options?.tools ?? []).map(tool => tool.function.name));
+    return steps++ === 0 ? toolResult : complete;
+  } };
+  const f = fixture(model, tools);
+  await f.runner.submit('rename the parser module');
+  // Both model steps of that turn see the same narrowed list.
+  expect(offered).toEqual([['read'], ['read']]);
+  expect(seen).toEqual(['rename the parser module']);
+  offered.length = 0; steps = 0;
+  await f.runner.submit('what was revenue last quarter?');
+  expect(offered).toEqual([['read', 'tikr_search'], ['read', 'tikr_search']]);
+});

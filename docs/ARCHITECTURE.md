@@ -20,7 +20,7 @@ instance. The default audio service is silent.
 | Providers / HTTP / MCP | Validate consumed wire fields, preserve native replay extensions, scope transports/readers and await native cleanup. |
 | Tool registry | Checks capabilities and decodes unknown arguments before invoking native Effects. Prepared batches validate all members before I/O. |
 | Commands / research workers | Retain session-owned jobs after a turn completes; originating-turn signals and explicit stop still cancel their work. Slots remain occupied through cleanup. |
-| Memory | Keeps indexed ready-queue ordering and pure view algorithms; supervises eight default compactions and callback-based settle/drain waiters. |
+| Memory | Keeps indexed ready-queue ordering and pure view algorithms; supervises eight default compactions and callback-based settle/drain waiters. With compaction off it launches no jobs, renders unbuilt messages in full, skips view merges and settles immediately; queued work resumes when it is turned on. |
 | Evaluations | Owns two default Queue consumers, complete-state guards, independent judgments and only the existing bounded transient-status retry policy. |
 | Storage | Owns the single-writer socket lock, validates extensible records and keeps synchronous durable write/publish sections. |
 | Metrics | Observes nodes/results and stores telemetry through validated synchronous Storage calls; aggregation and formatting remain incremental pure calculations. |
@@ -56,9 +56,9 @@ entry points remain usable. Runtime disposal runs outside the runtime it closes.
 
 The main agent and compactor have independent configured-model-first wrappers.
 Configuration/credential construction errors and lone typed provider failures switch
-that role to its provider-specific fallback for the session. Cohere selections
-use `command-a-plus-05-2026`; other configured providers retain
-`muse-wonder-full`. Native `createModel` remains strict for standalone callers;
+that role to its provider-specific fallback for the session. Cohere and local MLX
+selections use `command-a-plus-05-2026`; Anthropic selections use
+`claude-sonnet-5-5`; other configured providers retain `muse-wonder-full`. Native `createModel` remains strict for standalone callers;
 research workers and Jev keep their existing selection/retry policies.
 
 Fallback initialization uses the fallback provider's environment credential,
@@ -74,7 +74,11 @@ Primary stream entries already saved are retained. The failed request's pending
 result is discarded, so its tool calls cannot execute; Runner executes only the
 successful fallback result's calls. No memory, storage or callback failure is
 reclassified as a model outage. Oversized complete compactor output still follows
-its original five-attempt byte-feedback conversation.
+its original five-attempt byte-feedback conversation. Compactor adapters stop a
+request after `COMPACTOR_TIMEOUT` (five minutes, or `VICTRAL_COMPACTOR_TIMEOUT_MS`)
+and raise a lone typed transport failure once its response scope has closed, so
+an unresponsive primary is replaced like an unreachable one. Agent and research
+requests have no default limit.
 
 ## Durable data and presentation
 

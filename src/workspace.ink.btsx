@@ -86,6 +86,11 @@ setup
     const timer = setInterval(() => setTick((t) => t + 1), 160)
     return () => clearInterval(timer)
   }, [state.active])
+  useEffect(() => {
+    if (state.cloudflareFreeNeuronsRemaining === undefined) return
+    const timer = setInterval(() => setState(session.snapshot()), 60_000)
+    return () => clearInterval(timer)
+  }, [session, state.cloudflareFreeNeuronsRemaining !== undefined])
   const project = shortProject(safeText(session.options.project))
   const menu = COMMANDS.slice(
     Math.max(0, selected - Math.floor(paneContentHeight / 2)),
@@ -325,6 +330,9 @@ setup
   const afterCursor = inputChars.slice(cursor + 1).join('')
   const spinner = ['◐', '◓', '◑', '◒'][tick % 4]
   const jevStatus = state.jev ? formatJevStatus(state.jev, Math.max(12, width - 13)) : ''
+  const cloudflareNeurons = state.cloudflareFreeNeuronsRemaining
+  const cloudflareStatus = cloudflareNeurons === undefined ? ''
+    : `CF ${state.cloudflareNeuronEstimateIncomplete ? '?' : '~'}${cloudflareNeurons >= 1000 ? `${(cloudflareNeurons / 1000).toFixed(1)}k` : cloudflareNeurons.toLocaleString('en-US')} N left`
   const statusRight = focusedOffset
     ? `${focusedPane === 'thread' ? 'THREAD' : 'LOGS'} ↑ ${focusedOffset} lines`
     : panel === 'metrics'
@@ -348,7 +356,7 @@ else
         Text(bold color={bright}) Victral
         Text(color={muted}) #{` (v${VERSION})`}
       Text(color={muted} wrap="truncate-end") #{`  ${project}`}
-      Text
+      Text(color={muted} wrap="truncate-end") #{cloudflareStatus}
     Box(flexDirection="row" width={columns} paddingX={1} height={bodyHeight} flexShrink={0})
       Box(flexDirection="column" width={threadPaneWidth} paddingX={1} height={bodyHeight} flexShrink={0})
         Text(color={focusedPane === 'thread' ? codexBlue : muted} wrap="truncate-end")

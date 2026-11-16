@@ -25,18 +25,29 @@ import { COMMANDS } from './session-commands.js';
 import { SessionSettings, SessionModels, SessionStorage, SessionMemory, SessionEvaluations, SessionMetrics, releaseSessionResource, sessionExitValue, type ModelOptions } from './core/session-services.js';
 import { AudioNotifications, AudioNotificationControls } from './sfx/notifications.js';
 import { workflowAudioObserver } from './sfx/workflow.js';
+
 export { COMMANDS } from './session-commands.js';
+
+function tikrResearch() {
+  const research = TikrResearch.fromEnv();
+  if (!research) throw new Error('--tikr needs TIKR_UN and TIKR_PW in the environment.');
+  return research;
+}
 
 type SessionEnvironment = SessionSettings | SessionModels | SessionStorage | SessionMemory | SessionEvaluations | SessionMetrics | SessionInstance | AudioNotifications | AudioNotificationControls;
 type SessionRuntime = ManagedRuntime.ManagedRuntime<SessionEnvironment, unknown>;
 export interface SessionOptions {
   project: string; chatDir: string; model: string; compactorModel: string;
-  instructions?: string; webSearch?: boolean; mcpConfig?: string; allowShell: boolean; jev: boolean; metrics: boolean;
+  instructions?: string; webSearch?: boolean; mcpConfig?: string; allowShell: boolean; tikr?: boolean; jev: boolean; metrics: boolean;
+  // false starts with memory summaries off; /compaction changes it for the session.
+  compaction?: boolean;
 }
 export interface TranscriptEntry { id: number; role: 'you' | 'victral' | 'system' | 'error' | 'tool'; text: string; format?: 'markdown' }
 export interface SessionState {
   entries: readonly TranscriptEntry[]; model: string; active: boolean;
   phase: string; tool?: ToolActivity; turn?: TurnRecord; metrics: string; jev?: JevStatus;
+  cloudflareFreeNeuronsRemaining?: number;
+  cloudflareNeuronEstimateIncomplete?: boolean;
   session?: { id: string; name: string };
   sessions?: readonly { id: string; name: string }[];
   switching?: boolean;
@@ -79,7 +90,7 @@ export class Session extends EventEmitter {
         },
       }), catch: cause => cause }), agents => tools ? Effect.void : releaseSessionResource('Research workers cleanup', () => agents.close()));
       const ports = yield* Effect.acquireRelease(Effect.try({ try: () => {
-        const ports = projectTools(memory, options.project, { allowShell: options.allowShell, planStore, integrations, subagents: self.subagents, tikr: TikrResearch.fromEnv() });
+        const ports = projectTools(memory, options.project, { allowShell: options.allowShell, planStore, integrations, subagents: self.subagents, tikr: options.tikr ? tikrResearch() : undefined });
         // Handoff occurs inside uninterruptible acquisition, before publication.
         tools = ports; transferIntegrations(); return ports;
       }, catch: cause => cause }), ports => releaseSessionResource('Agent tools cleanup', () => self.runner ? self.runner.close() : ports.close?.()));
@@ -170,7 +181,13 @@ export class Session extends EventEmitter {
       // still reach metrics. Values are assigned inside synchronous construction.
       yield* Effect.addFinalizer(() => releaseSessionResource('Metrics cleanup', () => ownedMetrics?.close()));
       yield* Effect.addFinalizer(() => releaseSessionResource('Evaluations cleanup', () => ownedEvaluations?.close()));
-      const memory = yield* Effect.acquireRelease(Effect.try({ try: () => new Memory(storage, compactor), catch: cause => cause }),
+      // The full-screen UI owns the terminal: a compactor failure belongs in the
+      // transcript, with the way out, not on stderr underneath it.
+      const report = (text: string) => {
+        if (session) session.notify(`${text} Use /compaction off to continue without summaries.`);
+        else console.error(text);
+      };
+      const memory = yield* Effect.acquireRelease(Effect.try({ try: () => new Memory(storage, compactor, { compaction: settings.compaction !== false, report }), catch: cause => cause }),
         memory => releaseSessionResource('Memory cleanup', () => memory.stop()));
       const evaluations = yield* Effect.try({ try: () => ownedEvaluations = new Evaluations(memory, { enabled: settings.jev }), catch: cause => cause });
       const metrics = yield* Effect.try({ try: () => ownedMetrics = new Metrics(storage, memory, evaluations), catch: cause => cause });
@@ -209,6 +226,7 @@ export class Session extends EventEmitter {
       phase: this.phase, tool: this.tool, turn: this.turn, metrics: this.options.metrics ? this.metrics.compact() : '',
       jev: this.options.metrics ? this.metrics.jevStatus() : undefined };
   }
+  get compaction(): boolean { return this.memory.compaction; }
   get canSwitchSessions(): boolean { return !this.closed && !this.closing && !this.runner.active && !this.subagents.active; }
   notify(text: string, isError = false): void {
     this.add(isError ? 'error' : 'system', text);
@@ -250,6 +268,13 @@ export class Session extends EventEmitter {
         const enabled = yield* controls.enabled;
         return `SFX ${enabled ? 'enabled' : 'disabled'}. Session-local. Use /sfx on or /sfx off.`;
       }));
+    }
+    if (name === '/compaction') {
+      if (rest.length > 1 || (arg && arg !== 'on' && arg !== 'off')) throw new Error('Usage: /compaction [on | off]');
+      if (arg) { this.memory.setCompaction(arg === 'on'); this.update(); }
+      return this.memory.compaction
+        ? `Compaction on. Messages are summarized by ${this.compactor.model} before the next turn. Session-local; /compaction off stops it.`
+        : 'Compaction off. Nothing is summarized: messages without a summary appear in full and the context grows each turn. Session-local; /compaction on resumes where it stopped.';
     }
     if (name === '/tools') return this.runner.tools.definitions.map(t => `${t.function.name.padEnd(14)} ${t.function.description}`).join('\n') + `\n\nCommand execution: ${this.options.allowShell ? 'enabled' : 'disabled (start with --allow-shell)'}`;
     if (name === '/integrations') return this.executeTool(arg ? 'list_integration_tools' : 'list_integrations', arg ? { server: arg } : {});

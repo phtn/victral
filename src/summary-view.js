@@ -25,6 +25,10 @@ export class SummaryView {
     for (const part of parts) this.append(part);
   }
   size(part) { return bytes(this.line(part) + '\n'); }
+  recount() {
+    this.bytes = bytes('<chat>\n</chat>');
+    for (const part of this.parts) this.bytes += this.size(part);
+  }
   line(part, ids = true) {
     return `${ids ? `${this.memory.start(part)}+${2 ** part.l}|` : ''}${this.memory.text(part).replace(/\r\n|\r|\n/g, ' ')}`;
   }

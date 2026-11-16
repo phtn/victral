@@ -13,7 +13,7 @@ import { mutationTools } from './mutation-tools.js';
 import { integrationTools } from './integration-tool-registry.js';
 import { subagentTools } from './subagent-tool-registry.js';
 import { tikrTools } from './tikr-tools.js';
-import { TIKR_CONTEXT, type TikrResearch } from './tikr.js';
+import { TIKR_CONTEXT, tikrRelevant, type TikrResearch } from './tikr.js';
 import { ToolRegistry, type ToolCapability } from './tool-registry.js';
 import type { Integrations } from './integrations.js';
 import type { Subagents } from './subagents.js';
@@ -21,6 +21,7 @@ import { PARALLEL_READ_TOOLS, parallelTools } from './parallel-tools.js';
 import type { AgentTools, MemoryPort, ToolDefinition } from './types.js';
 
 const string = { type: 'string' }, integer = { type: 'integer' };
+const TIKR_TOOL_NAMES: ReadonlySet<string> = new Set(['tikr_search', 'tikr_open', 'tikr_read_page', 'tikr_find_in_page']);
 const tool = (name: string, description: string, properties: ToolDefinition['function']['parameters']['properties'], required = Object.keys(properties)): ToolDefinition => ({
   type: 'function', function: { name, description, parameters: { type: 'object', properties, required } },
 });
@@ -118,21 +119,31 @@ export function projectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project:
     ...(allowShell ? commandTools(commands, timeoutMs) : []),
     ...(integrations ? integrationTools(integrations) : []), ...(subagents ? subagentTools(subagents) : []),
   ], capabilities);
-  return { definitions, executeEffect: (name, args, nested, origin) => registry.executeEffect(name, args, nested, origin), execute: (name, args, signal, onNestedCall) => registry.execute(name, args, signal, onNestedCall),
+  // Offer TIKR only once a turn is about securities research, then keep it for
+  // the rest of the session so follow-ups can open and read what was found.
+  let tikrEngaged = false;
+  const tikrOffered = (turnText = '') => {
+    if (!tikr) return false;
+    return tikrEngaged ||= tikrRelevant(turnText);
+  };
+  return { definitions,
+    selectTools: (turnText: string) => tikrOffered(turnText) ? definitions : definitions.filter(tool => !TIKR_TOOL_NAMES.has(tool.function.name)),
+    executeEffect: (name, args, nested, origin) => registry.executeEffect(name, args, nested, origin), execute: (name, args, signal, onNestedCall) => registry.execute(name, args, signal, onNestedCall),
     close: async () => {
       // Finish every owned cleanup before releasing memory/storage, even if one fails.
       const results = await Promise.allSettled([() => commands.close(), () => integrations?.close(), () => subagents?.close(), () => tikr?.close()]
         .map(close => Promise.resolve().then(close)));
       const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
       if (errors.length) throw new AggregateError(errors, 'Tool cleanup failed.');
-    }, context: () => [plans.context(), tikr ? TIKR_CONTEXT : ''].filter(Boolean).join('\n\n') };
+    }, context: (turnText?: string) => [plans.context(), tikrOffered(turnText) ? TIKR_CONTEXT : ''].filter(Boolean).join('\n\n') };
 }
 
 export function readOnlyProjectTools(memory: Pick<MemoryPort, 'zoom' | 'date'>, project: string, options: Pick<ToolOptions, 'fetchImpl' | 'planStore'> = {}): AgentTools {
   const tools = projectTools(memory, project, options);
   const allowed = new Set([...PARALLEL_READ_TOOLS, 'parallel_tools']);
   allowed.delete('command_status'); allowed.delete('list_commands');
-  return { ...tools, definitions: tools.definitions.filter(tool => allowed.has(tool.function.name)),
+  // Subagents keep the filtered list; the inherited selector would widen it.
+  return { ...tools, selectTools: undefined, definitions: tools.definitions.filter(tool => allowed.has(tool.function.name)),
     executeEffect: (name, args, nested, origin) => allowed.has(name) ? tools.executeEffect!(name, args, nested, origin)
       : Effect.fail(new Error(`Subagents cannot use ${name}.`)),
     execute: async (name, args, signal, onNestedCall) => {

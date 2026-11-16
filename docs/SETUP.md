@@ -6,10 +6,11 @@ The [alignment report](UPSTREAM_ALIGNMENT.md) records adaptations and verificati
 The previous recipe is archived in [OPTCHAT_SPEC_ORIGINAL.md](OPTCHAT_SPEC_ORIGINAL.md).
 
 Victral runs on Bun with a TypeScript CLI, tool layer and Beast/Octane terminal
-workspace. Cohere `north-mini-code-1-0` is the default agent, `command-a-03-2025`
-is the default compactor, and `command-a-plus-05-2026` is the Cohere fallback
-for both roles. Meta and OpenAI selections keep their `muse-wonder-full`
-fallback. See [README](../README.md) for credentials,
+workspace. Cohere `north-mini-code-1-0` is the default agent, local MLX
+`mlx-community/Llama-3.2-3B-Instruct-4bit` is the default compactor, and
+`command-a-plus-05-2026` is the Cohere and MLX fallback for both roles.
+Anthropic selections fall back to `claude-sonnet-5-5`. Meta, OpenAI and Cloudflare
+selections keep their `muse-wonder-full` fallback. See [README](../README.md) for credentials,
 commands, instructions and model selection. Jev evaluations and metrics remain
 separate from the conversation memory.
 
@@ -21,6 +22,10 @@ separate from the conversation memory.
    other long text is split losslessly into consecutive messages.
 2. Each tree node is written once. A source fitting 512 bytes is copied exactly;
    longer sources use the compactor. Sibling nodes cover aligned binary ranges.
+   A reply still over 512 bytes after five attempts is cut at that limit.
+   With `--no-compaction`, `VICTRAL_COMPACTION=off` or `/compaction off`, no
+   nodes are written: unsummarized messages appear in full, the view is not
+   merged, and turns do not wait. Turning it back on resumes from the saved tree.
 3. The main view appends until it exceeds 128,000 rendered UTF-8 bytes, then
    batches toward 64,000 bytes using the age of each sibling pair's last message.
    Only built parents can merge. An unfinished batch stays active until it

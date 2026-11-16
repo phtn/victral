@@ -244,6 +244,43 @@ test('main and compactor independently fall back to muse-wonder-full with accura
   }
 });
 
+test('compaction can start off, toggles with /compaction, and reports compactor failures in the transcript', async () => {
+  const configured = await options(); configured.compaction = false;
+  let compactorCalls = 0, compactorDown = false; const agentRequests: string[] = [];
+  spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async (_url: URL | RequestInfo, init?: RequestInit) => {
+    if (JSON.parse(String(init?.body)).stream) { agentRequests.push(String(init?.body)); return offlineMeta(init, [{ type: 'text', text: 'answer' }]); }
+    compactorCalls++;
+    return compactorDown ? new Response('compactor offline', { status: 503 }) : offlineMeta(init, [{ type: 'text', text: 'summary line' }]);
+  }, { preconnect() {} }));
+  const session = await Session.open(configured); sessions.push(session);
+  const output = () => session.snapshot().entries.at(-1)?.text;
+  const long = 'q'.repeat(2000);
+  session.memory.append('echo', long);
+  await session.submit('do task'); await session.settle();
+  expect(agentRequests).toHaveLength(1); expect(agentRequests[0]).toContain(long); expect(agentRequests[0]).toContain('Compaction is off');
+  expect(compactorCalls).toBe(0); expect(session.storage.nodes.size).toBe(0);
+  expect(session.snapshot().metrics).toContain('compaction off');
+  await session.submit('/compaction'); expect(output()).toContain('Compaction off.');
+  await session.submit('/compaction wrong'); expect(output()).toBe('Usage: /compaction [on | off]');
+  await session.submit('/help'); expect(output()).toContain('/compaction [on | off]');
+  await session.submit('/compaction on'); expect(output()).toContain('Compaction on.'); expect(session.compaction).toBe(true);
+  await session.settle();
+  expect(compactorCalls).toBeGreaterThan(0); expect(session.storage.nodes.has('0:0')).toBe(true);
+  expect(session.snapshot().metrics).not.toContain('compaction off');
+  await session.submit('next task'); await session.settle();
+  expect(agentRequests[1]).not.toContain(long); expect(agentRequests[1]).not.toContain('Compaction is off');
+  // A failing compactor names its reason in the transcript instead of stderr.
+  compactorDown = true; const stderr = spyOn(console, 'error').mockImplementation(() => {});
+  session.memory.append('echo', 'r'.repeat(2000));
+  await session.submit('blocked task');
+  const texts = session.snapshot().entries.map(entry => entry.text);
+  expect(texts.some(text => /^Compactor \d+:\d+: .*HTTP 503.*\/compaction off/s.test(text))).toBe(true);
+  expect(texts.some(text => /^Memory compaction failed: .*HTTP 503/s.test(text))).toBe(true);
+  expect(stderr).not.toHaveBeenCalled();
+  await session.submit('/compaction off'); expect(output()).toContain('Compaction off.');
+  await session.submit('unblocked task'); await session.settle();
+  expect(agentRequests.at(-1)).toContain('r'.repeat(2000)); expect(session.snapshot().turn?.status).toBe('completed');
+});
 
 test('/sfx reports and changes session audio without playing sound or calling the model', async () => {
   const play = spyOn(NativeSoundPlayer.prototype, 'play');

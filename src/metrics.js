@@ -1,5 +1,13 @@
 import { bytes } from './constants.js';
 
+const CLOUDFLARE_DAILY_FREE_NEURONS = 10_000;
+// Current Workers AI pricing, expressed in neurons per one million tokens.
+// Refresh these rates from Cloudflare's pricing table when provider prices change.
+const CLOUDFLARE_NEURON_RATES = {
+  '@cf/meta/llama-3.2-1b-instruct': { input: 2_457, output: 18_252 },
+  '@cf/zai-org/glm-4.7-flash': { input: 5_500, output: 36_400 },
+};
+
 const number = value => typeof value === 'number' && Number.isFinite(value) ? value : 0;
 const percent = value => typeof value === 'number' ? `${(value * 100).toFixed(1)}%` : 'n/a';
 const seconds = ms => `${(ms / 1000).toFixed(2)}s`;
@@ -40,6 +48,23 @@ export function usageTotals(records) {
   }
   return result;
 }
+
+export function estimateCloudflareNeurons(records, now = new Date()) {
+  const utcDate = now.toISOString().slice(0, 10);
+  let used = 0, incomplete = false;
+  for (const record of records) {
+    const rates = CLOUDFLARE_NEURON_RATES[record.model];
+    if (!rates || typeof record.date !== 'string' || record.date.slice(0, 10) !== utcDate
+      || ['error', 'canceled'].includes(record.status)) continue;
+    const usage = record.usage ?? {};
+    const input = usage.input_tokens ?? usage.prompt_tokens;
+    const output = usage.output_tokens ?? usage.completion_tokens;
+    if (!Number.isFinite(input) || !Number.isFinite(output)) { incomplete = true; continue; }
+    used += (input * rates.input + output * rates.output) / 1_000_000;
+  }
+  return { remaining: Math.max(0, Math.floor(CLOUDFLARE_DAILY_FREE_NEURONS - used)), incomplete };
+}
+
 export class Metrics {
   constructor(storage, memory, evaluations) {
     Object.assign(this, { storage, memory, evaluations });
@@ -119,6 +144,7 @@ export class Metrics {
       messages: memory.storage.root.length, nodes: memory.storage.nodes.size, raw_bytes: this.rawBytes, view_bytes: viewBytes,
       view_budget: memory.viewBudget, compression: viewBytes ? this.rawBytes / viewBytes : 0,
       pending_summaries: memory.view.filter(p => !memory.node(p.l, p.i)).length,
+      compaction: memory.compaction !== false,
       compactor_running: [...memory.busy.values()].filter(e => !e.timer).length,
       compactor_retries: memory.failures?.size ?? [...memory.busy.values()].filter(e => e.timer).length,
       generated: this.generated, free: this.free,
@@ -134,7 +160,7 @@ export class Metrics {
     const last = s.jev.latest;
     return [
       `[metrics] ${lastTurn ? `turn ${seconds(lastTurn.duration_ms)} · wait ${seconds(lastTurn.settle_ms)} · ` : ''}session tokens ${u.input} in / ${u.output} out · cached ${u.cacheKnown ? u.cached : 'n/a'} · zoom ${s.retrievals}`,
-      `[memory] ${s.messages} messages · ${s.nodes} nodes · view ${s.view_bytes}/${s.view_budget} B · raw/view ${s.compression.toFixed(2)}x · ${s.pending_summaries} pending summaries`,
+      `[memory] ${s.messages} messages · ${s.nodes} nodes · view ${s.view_bytes}/${s.view_budget} B · raw/view ${s.compression.toFixed(2)}x · ${s.pending_summaries} pending summaries${s.compaction ? '' : ' · compaction off'}`,
       `[jev] ${s.jev.state} · ${s.jev.completed} evaluated / ${s.jev.pending} pending / ${s.jev.errors} errors / ${s.jev.skipped} skipped${last ? ` · latest risks: unsupported ${percent(last.answers.unsupported_claim.noul)}, omitted ${percent(last.answers.user_decision_omitted.noul)}, inflated ${percent(last.answers.progress_inflated.noul)}` : ''}`,
     ].join('\n');
   }
@@ -156,7 +182,7 @@ export class Metrics {
         ['Messages', count(s.messages)], ['Saved nodes', count(s.nodes)],
         ['Raw text', `${count(s.raw_bytes)} B`], ['View size', `${count(s.view_bytes)} B`],
         ['View budget', `${count(s.view_budget)} B`], ['Raw / view', `${s.compression.toFixed(2)}x`],
-        ['Pending summaries', count(s.pending_summaries)], ['Generated summaries', count(s.generated)],
+        ['Compaction', s.compaction ? 'on' : 'off'], ['Pending summaries', count(s.pending_summaries)], ['Generated summaries', count(s.generated)],
         ['Exact-copy nodes', count(s.free)], ['Active compactors', count(s.compactor_running)],
         ['Waiting to retry', count(s.compactor_retries)],
       ]),

@@ -15,10 +15,13 @@ export interface ToolDefinition {
 }
 export interface AgentTools {
   definitions: ToolDefinition[];
+  // Every tool the session can run. selectTools narrows that to the ones a given
+  // turn should be offered; context likewise sees the turn's text.
+  selectTools?(turnText: string): ToolDefinition[];
   execute(name: string, args: unknown, signal?: AbortSignal, onNestedCall?: (name: string) => void): Promise<string>;
   executeEffect?(name: string, args: unknown, onNestedCall?: (name: string) => void, origin?: AbortSignal): Effect.Effect<string, unknown>;
   close?(): Promise<void>;
-  context?(): string;
+  context?(turnText?: string): string;
 }
 export interface MemoryPort {
   configure?(system: string, tools: ToolDefinition[]): void;
@@ -26,6 +29,10 @@ export interface MemoryPort {
   settle(signal?: AbortSignal): Promise<boolean>;
   settleEffect?(signal?: AbortSignal): Effect.Effect<boolean, unknown>;
   render(): string;
+  // Optional: a line about the view's current mode, and the reason the last
+  // settle failed. Both are already safe to show; thrown errors stay private.
+  viewNote?(): string;
+  failureReason?(): string | undefined;
   zoom(id: number, n: number, page?: number): string;
   date(id: number): string;
 }

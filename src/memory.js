@@ -11,6 +11,15 @@ import { viewBlocks } from './view.js';
 
 export const SCALE = '-'.repeat(NODE);
 
+// A compound Cause keeps every reason: a failed primary and a failed fallback
+// both belong in the one line the user reads.
+function causeMessage(cause) {
+  const messages = cause.reasons
+    .map(reason => Cause.isFailReason(reason) ? reason.error : Cause.isDieReason(reason) ? reason.defect : undefined)
+    .filter(error => error instanceof Error && error.message).map(error => error.message);
+  return [...new Set(messages)].join(' ') || 'Compaction failed';
+}
+
 // One ordered queue per level preserves the pump's (level, index) priority,
 // including nodes whose sources finish out of order and retries of older work.
 class IndexQueue {
@@ -46,9 +55,15 @@ class IndexQueue {
 export class Memory extends EventEmitter {
   /** @type {import("./storage.js").Storage} */
   storage;
-  constructor(storage, model, { viewBudget = VIEW, viewMinimum = viewBudget === VIEW ? VIEW_MIN : Math.floor(viewBudget / 2), compactBudget = COMPACT_VIEW, compactMinimum = compactBudget === COMPACT_VIEW ? COMPACT_VIEW_MIN : Math.floor(compactBudget / 2), nodeBudget = NODE, jobs = JOBS, report = console.error } = {}) {
+  constructor(storage, model, { viewBudget = VIEW, viewMinimum = viewBudget === VIEW ? VIEW_MIN : Math.floor(viewBudget / 2), compactBudget = COMPACT_VIEW, compactMinimum = compactBudget === COMPACT_VIEW ? COMPACT_VIEW_MIN : Math.floor(compactBudget / 2), nodeBudget = NODE, jobs = JOBS, report = console.error, compaction = true } = {}) {
     super();
     Object.assign(this, { storage, model, viewBudget, viewMinimum, compactBudget, compactMinimum, nodeBudget, jobs, report });
+    // Off: no summaries are written. A message without one stands in for itself
+    // in the view, the view is never merged, and turns do not wait. Saved logs
+    // and nodes are untouched, so turning it on resumes where it stopped.
+    this.compaction = compaction !== false;
+    /** @type {string | undefined} */
+    this.lastError = undefined;
     this.system = systemPrompt(); this.tools = [];
     this.ready = [];
     this.queued = new Set();
@@ -68,8 +83,8 @@ export class Memory extends EventEmitter {
     // installations have no view.json: initialize once and persist immediately.
     const end = parts.length ? this.end(parts.at(-1)) : 0;
     for (let i = end; i < storage.root.length; i++) this.mainView.append({ l: 0, i });
-    if (this.mainView.shrinking || this.viewBytes > viewBudget) storage.saveView?.(true, 'view-batch');
-    const merged = (saved == null || end < storage.root.length || this.mainView.shrinking || this.viewBytes > viewBudget) ? this.mainView.fit(storage.root.length) : 0;
+    if (this.compaction && (this.mainView.shrinking || this.viewBytes > viewBudget)) storage.saveView?.(true, 'view-batch');
+    const merged = this.compaction && (saved == null || end < storage.root.length || this.mainView.shrinking || this.viewBytes > viewBudget) ? this.mainView.fit(storage.root.length) : 0;
     const compact = storage.loadView?.('compaction-view');
     this.compactView = compact == null ? null : new SummaryView(this, compactBudget, compactMinimum, restoreParts(compact.parts, this, { built: true }), compact.shrinking === true);
     if (merged) this.syncCompact(true);
@@ -95,7 +110,12 @@ export class Memory extends EventEmitter {
   node(l, i) { return this.storage.nodes.get(`${l}:${i}`); }
   start(part) { return part.i * 2 ** part.l; }
   end(part) { return (part.i + 1) * 2 ** part.l; }
-  text(part) { return this.node(part.l, part.i)?.text ?? '(not summarized yet: zoom it)'; }
+  text(part) {
+    const node = this.node(part.l, part.i);
+    if (node) return node.text;
+    if (!this.compaction && part.l === 0) { const record = this.storage.root[part.i]; return `${record.kind}: ${record.text}`; }
+    return '(not summarized yet: zoom it)';
+  }
   size(part) { return this.mainView.size(part); }
   addPart(part) { this.mainView.append(part); }
   persistView() {
@@ -107,6 +127,7 @@ export class Memory extends EventEmitter {
     }
   }
   fit(T = this.storage.root.length) {
+    if (!this.compaction) { this.persistView(); this.notify('change'); return; }
     const batching = this.mainView.shrinking || this.viewBytes > this.viewBudget;
     // Persist intent BEFORE changing a batch, including one stalled on parents.
     if (batching && this.persistedShrinking !== true) {
@@ -136,6 +157,21 @@ export class Memory extends EventEmitter {
     return this.mainView.render(this.mainView.prefix(end), ids);
   }
   first() { return this.builtThrough; }
+  // Line sizes depend on the mode (placeholder or full text), so recount, then
+  // either resume the queued work or release anything waiting on it.
+  setCompaction(enabled) {
+    enabled = enabled !== false;
+    if (this.compaction === enabled) return;
+    this.compaction = enabled;
+    this.mainView.recount();
+    if (enabled) { this.retryFailed(); this.fit(); this.pump(); }
+    else this.notify('change');
+  }
+  viewNote() {
+    return this.compaction ? '' : 'Compaction is off: a message that has no summary yet appears in full on its line (newlines shown as spaces), so it needs no zoom.';
+  }
+  /** @returns {string | undefined} */
+  failureReason() { return this.lastError; }
   retryFailed() {
     const failed = [...this.failures]; this.failures.clear();
     for (const key of failed) { const [l, i] = key.split(':').map(Number); this.enqueue(l, i); }
@@ -175,7 +211,7 @@ export class Memory extends EventEmitter {
     if ((Math.floor(i / 2) + 1) * 2 ** (l + 1) <= this.storage.root.length) this.enqueue(l + 1, Math.floor(i / 2));
   }
   pump() {
-    if (this.stopped) return;
+    if (this.stopped || !this.compaction) return;
     for (let l = 0; l < this.ready.length; l++) {
       const queue = this.ready[l];
       while (queue?.peek() !== undefined) {
@@ -188,13 +224,15 @@ export class Memory extends EventEmitter {
           ? this.buildEffect(l, i, signal)
           : toolPromise(actual => this.build(l, i, actual), signal), exit => {
           if (this.stopped) return;
-          let error;
+          let message;
           if (Exit.isSuccess(exit)) {
             try { this.failures.delete(key); this.fit(); this.pump(); return; }
-            catch (cause) { error = cause; this.supervisor.lastFailure = Cause.fail(cause); }
-          } else error = Cause.squash(exit.cause);
+            catch (cause) { message = causeMessage(Cause.fail(cause)); this.supervisor.lastFailure = Cause.fail(cause); }
+          } else message = causeMessage(exit.cause);
           this.failures.add(key);
-          try { this.report(`Compactor ${key}: ${error instanceof Error ? error.message : 'Compaction failed'}; retrying at the next message.`); }
+          // Eight jobs usually fail for one reason: say it once until it changes.
+          const repeated = message === this.lastError; this.lastError = message;
+          try { if (!repeated) this.report(`Compactor ${key}: ${message}; retrying at the next message.`); }
           catch (cause) { this.observerFailure = cause; }
           this.notify('change'); this.pump();
         });
@@ -252,8 +290,11 @@ export class Memory extends EventEmitter {
         messages.push(result.message, { role: 'user', content: `Too long: your line is ${bytes(line)} bytes, over the ${this.nodeBudget}-byte limit. Write\nthe whole line again for the same <input>, cutting just enough of the\nleast valuable items to fit before this cut:\n${cutBytes(line, this.nodeBudget)}| ← LIMIT` });
       }
       signal?.throwIfAborted();
-      const summary = attempts.reduce((a, b) => bytes(a) <= bytes(b) ? a : b);
+      // Nodes are permanent. A compactor that never fits is cut at the limit
+      // rather than saved oversized into every later view.
+      const summary = cutBytes(attempts.reduce((a, b) => bytes(a) <= bytes(b) ? a : b), this.nodeBudget);
       this.saveNode(l, i, summary);
+      this.lastError = undefined; // The compactor answered: a later failure is news again.
       this.notify('node', { l, i, generated: true, context_parts: contextParts, attempts: attempts.length, source_bytes: bytes(source), summary_bytes: bytes(summary), duration_ms: performance.now() - started });
     });
   }
@@ -262,6 +303,7 @@ export class Memory extends EventEmitter {
     return Effect.gen({ self: this }, function*() {
       this.retryFailed(); yield* this.pumpEffect();
       return yield* this.waitEffect(() => {
+        if (!this.compaction) return !signal?.aborted && !this.stopped;
         const failed = !this.busy.size && this.failures.size && this.first() < this.storage.root.length;
         return signal?.aborted || this.stopped || failed || this.first() === this.storage.root.length
           ? !signal?.aborted && !this.stopped && !failed : undefined;
@@ -276,6 +318,7 @@ export class Memory extends EventEmitter {
       return yield* this.waitEffect(() => {
         if (this.stopped || signal?.aborted) return false;
         if (this.remaining === 0) return true;
+        if (!this.compaction) return false;
         if (!this.busy.size && this.failures.size) return false;
         return undefined;
       }, signal);

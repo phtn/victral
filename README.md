@@ -3,7 +3,8 @@
 A persistent coding workspace with a TypeScript CLI and a full-screen terminal
 interface, implementing the latest OptChat / UniiChat memory design with Cohere,
 Meta and OpenAI models. The defaults are Cohere `north-mini-code-1-0` for the
-agent and `command-a-03-2025` for the compactor.
+agent and the local MLX `mlx-community/Llama-3.2-3B-Instruct-4bit` for the
+compactor, so background summaries stay on the machine.
 The [upstream specification](docs/OPTCHAT_SPEC.md) is pinned to gist revision
 `3c190e06f34aba0c69f49042c526093269604935` (October 8, 2026).
 [Alignment notes](docs/UPSTREAM_ALIGNMENT.md) describe the implementation and
@@ -70,9 +71,11 @@ bun install
 ```
 
 Set `COHERE_API_KEY` for the default models and fallback, `META_API_KEY` (or
-`MODEL_API_KEY`) for Meta, or `OPENAI_API_KEY` for OpenAI, in your environment
-or in a local `.env` file. The example
-in `.env.example` lists the available settings. Never commit your keys.
+`MODEL_API_KEY`) for Meta, `OPENAI_API_KEY` for OpenAI, or `ANTHROPIC_API_KEY`
+for Anthropic, in your environment or in a local `.env` file. Cloudflare needs
+`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. The local MLX models need no
+credential, only a running MLX server. The example in `.env.example`
+lists the available settings. Never commit your keys.
 
 ```sh
 bun run start --project /absolute/path/to/your/project
@@ -115,6 +118,12 @@ and [the Effect migration plan](docs/EFFECT_MIGRATION_PLAN.md) for integration t
 | `mwfull` | `muse-wonder-full` | Meta | `META_API_KEY` or `MODEL_API_KEY` |
 | `luna6` | `gpt-6-luna` | OpenAI | `OPENAI_API_KEY` |
 | `sol6.1` | `gpt-6.1-sol` | OpenAI | `OPENAI_API_KEY` |
+| `sonnet5.5` | `claude-sonnet-5-5` | Anthropic | `ANTHROPIC_API_KEY` |
+| `opus5.5` | `claude-opus-5-5` | Anthropic | `ANTHROPIC_API_KEY` |
+| `cf-llama1b` | `@cf/meta/llama-3.2-1b-instruct` | Cloudflare Workers AI | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` |
+| `cf-glm47` | `@cf/zai-org/glm-4.7-flash` | Cloudflare Workers AI | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` |
+| `optiq` | `mlx-community/Qwen3.5-4B-OptiQ-4bit` | MLX (local) | none; `MLX_BASE_URL` |
+| `llama3b` | `mlx-community/Llama-3.2-3B-Instruct-4bit` | MLX (local) | none; `MLX_BASE_URL` |
 
 ```sh
 bun run start --project /absolute/path/to/your/project --model north-mini
@@ -122,11 +131,14 @@ bun run start --project /absolute/path/to/your/project --model luna6
 ```
 
 Choose the compactor separately if desired. The default pair uses
-`north-mini-code-1-0` for the agent and `command-a-03-2025` for compaction.
-When `--model` or `VICTRAL_MODEL` is set without a compactor selection, the
-compactor follows that selected model.
+`north-mini-code-1-0` for the agent and the local `llama3b` for compaction,
+which needs a running MLX server and no credential; without one, compaction
+falls back to `command-a-plus-05-2026`. Set `--compactor-model command-a` for a
+hosted compactor instead. When `--model` or `VICTRAL_MODEL` is set without a
+compactor selection, the compactor follows that selected model.
 
 ```sh
+bun run start --model north-mini --compactor-model llama3b
 bun run start --model north-mini --compactor-model command-a
 ```
 
@@ -149,8 +161,10 @@ name and updates when switching with `/model`.
 
 Both the main agent and compactor try their configured model first. If startup
 configuration/credentials are invalid, or a provider request fails, that role
-switches to its provider's fallback for the rest of the session. Cohere models
-switch to `command-a-plus-05-2026`; Meta and OpenAI models keep using
+switches to its provider's fallback for the rest of the session. Cohere and
+local MLX models switch to `command-a-plus-05-2026`, which covers a local server
+that is unreachable or has no model loaded; Anthropic models switch to
+`claude-sonnet-5-5`; Meta, OpenAI and Cloudflare models keep using
 `muse-wonder-full`. Set the corresponding provider key so the fallback can
 authenticate. `/model` and the status bar
 report the active models; fallback notices appear in the workspace. Restarting or
@@ -164,9 +178,35 @@ execute. Oversized compactor summaries retain their normal shortening attempts.
 Usage records include the failed primary and actual fallback model calls. Research
 worker selection and optional Jev evaluations keep their existing policies.
 
+A compactor request that has not answered within five minutes is stopped and
+treated as a provider failure, so it can use the fallback instead of holding the
+next turn. Set `VICTRAL_COMPACTOR_TIMEOUT_MS` to change the limit. When
+compaction still fails, the workspace shows the provider's reason beside
+"Memory compaction failed". If no attempt fits the 512-byte line limit, the
+shortest reply is cut at the limit before it is saved.
+
+### Running without compaction
+
+`--no-compaction` (or `VICTRAL_COMPACTION=off`) starts a session that writes no
+summaries, and `/compaction off` does the same in a running chat, including one
+that is waiting on a failed or slow compactor. While it is off:
+
+- a message that has no summary yet appears in the view in full, with newlines
+  shown as spaces like every other view line; `zoom(id, 1)` still returns the
+  original text;
+- turns do not wait for memory, no compactor requests are made, and the view is
+  never merged, so the context grows with every message until the agent
+  model's limit;
+- nothing is written to the summary tree. Existing summaries stay in use, and
+  `/compaction on` or a later launch without the option summarizes what was
+  skipped before the next turn.
+
+`/compaction` reports the current setting, and the memory metrics line shows
+`compaction off`. The setting is session-local and follows `/new` and `/session`.
+
 The status bar suggests matching command words as you type. `/m` shows `/metrics`
 and `/model`; `/mo` narrows to `/model`. Tab completes the selected word and adds
-a space, revealing the next choices: `cohere`, `meta` and `openai`, followed by that
+a space, revealing the next choices: `cohere`, `meta`, `openai`, `anthropic`, `cloudflare` and `mlx`, followed by that
 provider's models. For example, type `/mo`, Tab, `o`, Tab, `s`, Tab to compose
 `/model openai sol6.1 `. Up/Down or Shift+Tab changes the selected suggestion;
 Enter runs the completed command. Suggestions occupy the status bar while
@@ -193,11 +233,58 @@ tools, and reports a failed turn if a tool step contains no calls.
 See [Meta models](https://dev.meta.ai/docs/models) and the
 [Messages API](https://dev.meta.ai/docs/protocols/messages) documentation.
 
+Anthropic requests go to `https://api.anthropic.com/v1/messages` through the
+same Messages adapter as Meta, authenticated with `x-api-key`. Both Claude 5.5
+models always think adaptively; the adapter requests summarized thinking for the
+reasoning stream and sets effort explicitly (`high` for the agent, `medium` for
+the compactor, since Opus 5.5 otherwise defaults to `medium`). Requests opt into
+server-side refusal fallbacks (`fallbacks: "default"`, beta
+`server-side-fallback-2026-07-01`). `--web-search` adds `web_search_20260209`.
+
 Cohere uses the Chat V2 API with native tool calls and SSE streaming. It
 preserves Cohere assistant tool plans and calls when replaying messages, and
 maps usage and citations into Victral's provider-neutral results. The optional
-`--web-search` provider-hosted search flag is currently supported by Meta and
-OpenAI; Cohere Chat V2 requires a user-defined search tool.
+`--web-search` provider-hosted search flag is currently supported by Meta,
+OpenAI and Anthropic; Cohere Chat V2 requires a user-defined search tool.
+Neither Cloudflare Workers AI nor a local MLX server exposes provider-hosted
+web search.
+
+Cloudflare Workers AI uses the OpenAI-compatible chat completions endpoint and
+requires a Cloudflare API token with Workers AI access plus the account ID.
+`cf-llama1b` selects Meta's Llama 3.2 1B text model. Workers AI parses that
+family's tool calls on the non-streaming endpoint only, so the adapter buffers a
+Llama turn whenever tools are sent: the reply arrives in one piece instead of
+token by token, and the call reaches the agent parsed rather than as raw JSON
+text. Llama turns without tools still stream. A 1B model chooses tools poorly,
+so for agent work such as TIKR prefer `cf-glm47` with `/model cloudflare
+cf-glm47` (or start with `--model cf-glm47`). It selects
+`@cf/zai-org/glm-4.7-flash`, which streams native function calls. Cloudflare's
+Free plan includes 10,000 Neurons per day, shared across Workers AI models and
+reset at 00:00 UTC. See [Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/)
+and [the model catalog](https://developers.cloudflare.com/workers-ai/models/).
+The TUI top bar shows an estimate based on Cloudflare usage recorded in Victral's
+saved sessions. It does not include Workers AI requests made outside Victral;
+Cloudflare's dashboard remains the account-wide source for neuron usage.
+
+MLX runs models locally on Apple silicon. Start an OpenAI-compatible server
+first, for example `mlx_lm.server --model mlx-community/Qwen3.5-4B-OptiQ-4bit
+--port 8080`, then select `optiq` or `llama3b`. Requests go to
+`$MLX_BASE_URL/v1/chat/completions`, defaulting to `http://127.0.0.1:8080`, and
+carry no credential; set `MLX_API_KEY` only when a proxy in front of the server
+expects a bearer token. The adapter replays the server's own assistant message
+across the tool steps of a turn, so local reasoning and native tool-call shapes
+survive, and it streams `reasoning` deltas as thoughts. `llama3b` is the default
+compactor: summaries never leave the machine, compactor output is capped at
+8,192 tokens, and the role falls back to `command-a-plus-05-2026` when the
+server is down. A local model reports
+`stop` even when it emitted calls, so the presence of tool calls decides the
+turn. `prompt_tokens` and `completion_tokens` are mapped to Victral's token
+counters. Use `/model mlx optiq` or `/model local llama3b` to switch; `local` is
+an accepted alias for the MLX provider. These are small quantized models: expect
+weaker tool selection than the hosted providers, and keep `COHERE_API_KEY` set
+so the fallback works when the server is down. See
+[MLX LM](https://github.com/ml-explore/mlx-lm) and
+[the mlx-community models](https://huggingface.co/mlx-community).
 
 The runner defaults to one persistent chat at `~/.local/share/victral/chat`.
 Use that same chat directory across launches to retain history. Project file
@@ -617,7 +704,7 @@ remain in saved memory.
 ## Standalone Jev evaluation
 
 Jev produces typed judgments, rather than summary text. Cohere `north-mini-code-1-0`
-is the default main agent and `command-a-03-2025` the default compactor. Jev observes the original memory algorithm without
+is the default main agent and the local MLX `llama3b` the default compactor. Jev observes the original memory algorithm without
 automatic filtering, deletion, rewriting, or gating.
 
 Set `TYPESAFE_API_KEY` locally, then evaluate an explicitly chosen source and

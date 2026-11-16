@@ -9,6 +9,7 @@ export const COMMANDS = [
   ['/zoom', 'Expand memory: /zoom ID N [PAGE]'], ['/date', 'Message timestamp: /date ID'],
   ['/usage', 'Last ten provider usage records'], ['/import', 'Import a transcript: /import FILE'],
   ['/backup', 'Back up this chat: /backup NEW_PATH'], ['/cancel', 'Cancel the current turn'],
+  ['/compaction', 'Memory summaries: /compaction [on | off]'],
   ['/sfx', 'Sound effects: /sfx [on | off]'],
   ['/exit', 'Save and close the session'],
 ] as const;

@@ -4,7 +4,7 @@ import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import * as Fiber from 'effect/Fiber';
 import * as Redacted from 'effect/Redacted';
-import { TikrResearch } from '../src/tikr.js';
+import { TikrResearch, tikrRelevant } from '../src/tikr.js';
 import { TikrFailure, isTikrSearchResponse, tikrBrowserEnvironment, type TikrBrowser, type TikrBrowserFactory } from '../src/tikr-browser.js';
 import { parseTikrOpen, parseTikrSearch, tikrCompanyUrl } from '../src/tikr-schema.js';
 import { projectTools, readOnlyProjectTools } from '../src/tools.js';
@@ -47,8 +47,8 @@ test('TIKR configuration stays lazy and runtime preference appears only with the
   expect(f.launched).toBe(0);
   expect(f.tools.definitions.filter(tool => tool.function.name.startsWith('tikr_')).map(tool => tool.function.name))
     .toEqual(['tikr_search', 'tikr_open', 'tikr_read_page', 'tikr_find_in_page']);
-  expect(f.tools.context?.()).toContain('use tikr_search and tikr_open first');
-  expect(JSON.stringify(f.tools.definitions) + f.tools.context?.()).not.toContain('private-');
+  expect(f.tools.context?.('NVDA revenue')).toContain('use tikr_search and tikr_open first');
+  expect(JSON.stringify(f.tools.definitions) + f.tools.context?.('NVDA revenue')).not.toContain('private-');
   for (const create of [projectTools, readOnlyProjectTools]) {
     const tools = create({ zoom: () => '', date: () => '' }, import.meta.dir); owners.push(tools);
     expect(tools.definitions.some(tool => tool.function.name.startsWith('tikr_'))).toBe(false);
@@ -197,4 +197,31 @@ test('TIKR search completion matches the exact query on the UI search provider',
   expect(isTikrSearchResponse('https://algolia.net.evil.test/queries', body, 'A&B Corp')).toBe(false);
   expect(isTikrSearchResponse(url, '{bad json', 'TEST')).toBe(false);
   expect(isTikrSearchResponse(url, JSON.stringify({ query: 'TEST' }), 'TEST')).toBe(true);
+});
+
+const TIKR_TOOL_NAMES = ['tikr_search', 'tikr_open', 'tikr_read_page', 'tikr_find_in_page'];
+
+test('TIKR relevance matches securities research and leaves ordinary turns alone', () => {
+  for (const text of ['$AAPL', 'NASDAQ:NVDA', 'check TIKR coverage', 'the p/e ratio', 'read the 10-K', 'market cap', 'earnings transcript', 'what is the dividend?'])
+    expect(tikrRelevant(text)).toBe(true);
+  for (const text of ['', 'fix the failing test', 'refactor the API client', 'what is 2+2?', 'say hello', 'list the files in this project'])
+    expect(tikrRelevant(text)).toBe(false);
+});
+
+test('TIKR tools and context reach a turn only when it is about securities, then stay for follow-ups', () => {
+  const f = fixture();
+  const offered = (text: string) => (f.tools.selectTools?.(text) ?? f.tools.definitions).map(tool => tool.function.name).filter(name => name.startsWith('tikr_'));
+  expect(offered('rename the parser module')).toEqual([]);
+  expect(f.tools.context?.('rename the parser module')).not.toContain('tikr_search');
+  expect(offered('what was NVDA revenue last quarter?')).toEqual(TIKR_TOOL_NAMES);
+  expect(f.tools.context?.('what was NVDA revenue last quarter?')).toContain('use tikr_search and tikr_open first');
+  // Relevance latches so a follow-up that names no securities keeps the tools.
+  expect(offered('now open the financials')).toEqual(TIKR_TOOL_NAMES);
+  expect(f.tools.context?.('now open the financials')).toContain('use tikr_search and tikr_open first');
+});
+
+test('TIKR stays absent from read-only tools whatever the turn says', () => {
+  const tools = readOnlyProjectTools({ zoom: () => '', date: () => '' }, import.meta.dir);
+  owners.push(tools);
+  expect((tools.selectTools?.('NVDA revenue') ?? tools.definitions).some(tool => tool.function.name.startsWith('tikr_'))).toBe(false);
 });

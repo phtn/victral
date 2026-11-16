@@ -3,15 +3,35 @@ import * as Cause from 'effect/Cause';
 import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import * as Fiber from 'effect/Fiber';
-import { FALLBACK_MODEL, FallbackModel, type ModelFactory } from '../src/fallback-model.js';
+import { ANTHROPIC_FALLBACK_MODEL, COHERE_FALLBACK_MODEL, FALLBACK_MODEL, FallbackModel, fallbackModelFor, type ModelFactory } from '../src/fallback-model.js';
 import { ProviderCallbackFailure, ProviderFailure, ProviderOutputLimit, type ProviderService } from '../src/providers/core.js';
 import { Runner } from '../src/runner.js';
 import { toolPromise } from '../src/tool-effects.js';
 import type { Message } from '../src/types.js';
+import { COMPACTOR_MODEL } from '../src/constants.js';
 
 const result = { finish_reason: 'COMPLETE', message: { role: 'assistant', content: [{ type: 'text', text: 'summary' }] } };
 const unavailable = () => new ProviderFailure({ provider: 'primary', reason: 'http', status: 503, message: 'primary unavailable', cause: undefined });
 function provider(model: string, run: ProviderService['chat']): { model: string; effects: ProviderService } { return { model, effects: { model, chat: run, stream: run } }; }
+
+test('each provider falls back to the model its credential covers', () => {
+  expect(fallbackModelFor('north-mini')).toBe(COHERE_FALLBACK_MODEL);
+  expect(fallbackModelFor('opus5.5')).toBe(ANTHROPIC_FALLBACK_MODEL);
+  expect(fallbackModelFor('luna6')).toBe(FALLBACK_MODEL);
+  expect(fallbackModelFor('cf-glm47')).toBe(FALLBACK_MODEL);
+  // A local MLX selection shares the Cohere fallback, since COHERE_API_KEY is
+  // the credential the default agent and the default MLX compactor assume.
+  expect(fallbackModelFor('llama3b')).toBe(COHERE_FALLBACK_MODEL);
+  expect(fallbackModelFor('mlx-community/Qwen3.5-4B-OptiQ-4bit')).toBe(COHERE_FALLBACK_MODEL);
+});
+
+test('the default compactor is the local MLX model and keeps a Cohere fallback', () => {
+  expect(COMPACTOR_MODEL).toBe('mlx-community/Llama-3.2-3B-Instruct-4bit');
+  const model = new FallbackModel(COMPACTOR_MODEL, { purpose: 'compactor' }, undefined, id => provider(id, () => Effect.succeed(result)));
+  expect(model.configuredModel).toBe('mlx-community/Llama-3.2-3B-Instruct-4bit');
+  expect(model.fallbackModel).toBe(COHERE_FALLBACK_MODEL);
+  expect(model.fallbackActive).toBe(false);
+});
 
 test('healthy requests preserve result identity and never construct or call the fallback', async () => {
   const constructed: string[] = []; let notices = 0;

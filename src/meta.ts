@@ -44,33 +44,32 @@ function normalize(content: NativeBlock[], reason?: string | null, usage?: Recor
   if (calls.length) message.tool_calls = calls;
   return { message, finish_reason: finishReason(reason), usage };
 }
-export class Meta extends ProviderAdapter {
-  constructor(options: ProviderOptions = {}) {
-    const apiKey = options.apiKey ?? (process.env.META_API_KEY || process.env.MODEL_API_KEY);
-    if (!apiKey) throw new Error('Set META_API_KEY (or MODEL_API_KEY) in your environment before selecting Meta.');
-    super('Meta', apiKey, options, META_MODEL);
-  }
+// Shared adapter for Anthropic-compatible Messages endpoints (Meta, Anthropic).
+export abstract class MessagesAdapter extends ProviderAdapter {
+  protected abstract readonly endpoint: string;
+  protected abstract readonly webSearchTool: NativeBlock;
+  protected abstract headers(): Record<string, string>;
+  protected adjustBody(body: ReturnType<typeof metaRequest>): Record<string, unknown> { return body; }
   private requestBody(messages: Message[], options: RequestOptions, stream: boolean) {
-    const body = metaRequest(messages, options.tools, this.model, options.maxTokens, this.purpose);
-    const tools = this.webSearch && this.purpose !== 'compactor' ? [...(body.tools ?? []), { type: 'web_search' }] : body.tools;
+    const body = this.adjustBody(metaRequest(messages, options.tools, this.model, options.maxTokens, this.purpose));
+    const tools = this.webSearch && this.purpose !== 'compactor' ? [...((body.tools as NativeBlock[] | undefined) ?? []), this.webSearchTool] : body.tools;
     // Preserve absent tools vs explicitly present arrays and JSON property order.
     return { ...body, ...(tools ? { tools } : {}), stream };
   }
   protected readonly rawEffects: ProviderService = {
     model: this.model,
-    chat: Effect.fn('Meta.chat')((messages, options = {}) => Effect.suspend(() => this.response('https://api.meta.ai/v1/messages',
-      this.requestBody(messages, options, false), { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01' },
+    chat: Effect.fn('Messages.chat')((messages, options = {}) => Effect.suspend(() => this.response(this.endpoint,
+      this.requestBody(messages, options, false), this.headers(),
       response => Effect.gen({ self: this }, function*() {
         const raw = yield* this.json(response);
         const result = yield* this.parse(() => {
           const parsed = Wire.checkedWire(Wire.MetaResponse, raw);
           return normalize([...parsed.content], parsed.stop_reason, parsed.usage);
         });
-        return yield* providerOutcome('Meta', result);
+        return yield* providerOutcome(this.provider, result);
       })))),
-    stream: Effect.fn('Meta.stream')((messages, { onText = () => {}, onThought = () => {}, onEntry = () => {}, ...options } = {}) =>
-      Effect.suspend(() => this.response('https://api.meta.ai/v1/messages', this.requestBody(messages, options, true),
-        { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01' },
+    stream: Effect.fn('Messages.stream')((messages, { onText = () => {}, onThought = () => {}, onEntry = () => {}, ...options } = {}) =>
+      Effect.suspend(() => this.response(this.endpoint, this.requestBody(messages, options, true), this.headers(),
         response => Effect.gen({ self: this }, function*() {
           const content = new Map<number, NativeBlock>(), argumentsByIndex = new Map<number, string>();
           let ended = false, reason: string | null | undefined, usage: Record<string, unknown> = {};
@@ -89,7 +88,7 @@ export class Meta extends ProviderAdapter {
             if (e.type === 'content_block_delta') {
               const delta = yield* this.parse(() => Wire.checkedWire(Wire.MetaBlockDelta, e));
               const block = content.get(delta.index);
-              if (!block) return yield* Effect.fail(this.failure('malformed', 'Meta delta arrived without a content block.'));
+              if (!block) return yield* Effect.fail(this.failure('malformed', `${this.provider} delta arrived without a content block.`));
               yield* this.parse(() => {
                 if (delta.delta.type === 'text_delta') {
                   block.text = Wire.checkedWire(Wire.MetaText, block).text + Wire.checkedWire(Wire.TextDelta, delta.delta).text;
@@ -132,16 +131,26 @@ export class Meta extends ProviderAdapter {
             }
             if (e.type === 'error') {
               const error = yield* this.parse(() => Wire.checkedWire(Wire.MetaError, e));
-              return yield* Effect.fail(this.failure('provider', `Meta stream: ${error.error?.message ?? 'unknown error'}`));
+              return yield* Effect.fail(this.failure('provider', `${this.provider} stream: ${error.error?.message ?? 'unknown error'}`));
             }
             if (e.type === 'message_stop') ended = true;
             return !ended;
           }));
-          if (!ended) return yield* Effect.fail(this.failure('truncated', 'Meta stream ended before message_stop.'));
+          if (!ended) return yield* Effect.fail(this.failure('truncated', `${this.provider} stream ended before message_stop.`));
           const result = yield* this.parse(() => normalize([...content.values()], reason, usage));
           const citations = citationFooter([...content.values()]);
           if (citations) { yield* this.textCallback(() => onText(citations)); yield* this.callback(() => onEntry('talk', citations)); }
-          return yield* providerOutcome('Meta', result);
+          return yield* providerOutcome(this.provider, result);
         })))),
   };
+}
+export class Meta extends MessagesAdapter {
+  protected readonly endpoint = 'https://api.meta.ai/v1/messages';
+  protected readonly webSearchTool = { type: 'web_search' };
+  constructor(options: ProviderOptions = {}) {
+    const apiKey = options.apiKey ?? (process.env.META_API_KEY || process.env.MODEL_API_KEY);
+    if (!apiKey) throw new Error('Set META_API_KEY (or MODEL_API_KEY) in your environment before selecting Meta.');
+    super('Meta', apiKey, options, META_MODEL);
+  }
+  protected headers() { return { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01' }; }
 }

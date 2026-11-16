@@ -103,6 +103,11 @@ export class Runner {
     // Optional observers (including audio) never fail or retry the workflow.
     try { this.onWorkflow(event, signal); } catch { /* Independent observer. */ }
   }
+  private settleFailure(): string {
+    let reason: string | undefined;
+    try { reason = this.memory.failureReason?.()?.replace(/[.\s]+$/, ''); } catch { /* A diagnostic never replaces the failure. */ }
+    return `Memory compaction failed${reason ? `: ${reason}` : ''}. Send another message to retry.`;
+  }
   private attempt<A>(phase: TurnFailure['phase'], run: () => A): Effect.Effect<A, TurnFailure> {
     return turnFailure(Effect.try({ try: run, catch: error => error }), phase);
   }
@@ -143,15 +148,20 @@ export class Runner {
     return Effect.gen({ self: this }, function*() {
       if (signal.aborted) return yield* Effect.interrupt;
       const ready = yield* turnFailure(this.memory.settleEffect ? this.memory.settleEffect(signal) : toolPromise(actual => this.memory.settle(actual)), 'settle');
-      if (!ready) return yield* Effect.fail(new TurnFailure({ phase: 'settle', message: 'Memory compaction failed. Send another message to retry.', cause: undefined }));
+      if (!ready) return yield* Effect.fail(new TurnFailure({ phase: 'settle', message: this.settleFailure(), cause: undefined }));
+      // The tools a turn is offered are chosen once, from the turn's own text, so
+      // every model step within it sees the same list.
+      let turnTools = this.tools.definitions;
       const messages = yield* this.attempt<Message[]>('callback', () => {
         state.settled = performance.now();
         const view = this.memory.render(); // Always before new input is logged.
-        const entries = this.take(), context = this.tools.context?.();
+        const entries = this.take(), turnText = entries.map(entry => entry.text).join('\n\n');
+        const context = this.tools.context?.(turnText), note = this.memory.viewNote?.();
+        turnTools = this.tools.selectTools?.(turnText) ?? this.tools.definitions;
         this.inCall = true;
         return [
           { role: 'system', content: this.system },
-          { role: 'user', content: [...viewBlocks(view), ...(context ? [{ type: 'text', text: context }] : []), { type: 'text', text: entries.map(entry => entry.text).join('\n\n') }] },
+          { role: 'user', content: [...viewBlocks(view), ...(note ? [{ type: 'text', text: note }] : []), ...(context ? [{ type: 'text', text: context }] : []), { type: 'text', text: turnText }] },
         ] satisfies Message[];
       });
       let modelSteps = 0;
@@ -166,7 +176,7 @@ export class Runner {
           const streamedEntries: { kind: MessageKind; text: string }[] = [];
           this.streamedEntries = streamedEntries;
           const result = yield* turnFailure(smoothResponseEffect(this.model, messages, {
-            tools: this.tools.definitions, onText: this.onText, onThought: this.onThought,
+            tools: turnTools, onText: this.onText, onThought: this.onThought,
             onEntry: (kind, text) => this.recordStreamedEntry(kind, text),
           }), 'model').pipe(Effect.onExit(() => this.attempt('callback', () => {
             this.flushStreamedEntries(streamedEntries);
@@ -221,8 +231,9 @@ export class Runner {
           const status: TurnRecord['status'] = canceled ? 'canceled' : Exit.isFailure(exit) ? 'error' : 'completed';
           try {
             if (state.settled === undefined) {
+              const failure = this.settleFailure(); // Before logging input retries the failed work.
               this.take(); // Retain unanswered input when settle fails/cancels.
-              if (!canceled) this.onError('Memory compaction failed. Send another message to retry.');
+              if (!canceled) this.onError(failure);
             } else if (Exit.isFailure(exit)) {
               this.onError(canceled ? 'Turn canceled. Completed entries remain saved.'
                 : Cause.hasDies(exit.cause) ? 'An unexpected error occurred.' : errorMessage(Cause.squash(exit.cause)));

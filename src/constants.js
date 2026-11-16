@@ -6,11 +6,17 @@ export const COMPACT_VIEW_MIN = 16_000
 export const MESSAGE = 30_000
 export const JOBS = 8
 export const TRIES = 5
+// One compactor request, including time queued behind others on a local server.
+export const COMPACTOR_TIMEOUT = 300_000
 export const CAP = 30_000
 export const BLOCK_LINES = 4
 export const MODEL = 'north-mini-code-1-0'
-export const COMPACTOR_MODEL = 'command-a-03-2025'
+// Local MLX compactor: background summaries cost nothing and stay on the
+// machine. command-a-plus-05-2026 still covers the role when the local server
+// is unreachable or has no model loaded.
+export const COMPACTOR_MODEL = 'mlx-community/Llama-3.2-3B-Instruct-4bit'
 export const META_MODEL = 'muse-wonder-1.0'
+export const ANTHROPIC_MODEL = 'claude-opus-5-5'
 export const bytes = (text) => Buffer.byteLength(text, 'utf8')
 export function cutBytes(text, limit) {
   const data = Buffer.from(text)

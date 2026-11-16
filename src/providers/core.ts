@@ -9,6 +9,7 @@ import type * as Scope from 'effect/Scope';
 import { EffectAdapterError, legacyExitValue } from '../core/async.js';
 import { Http, HttpFailure, readResponseBytes, responseAbort } from '../core/http.js';
 import type { Message } from '../types.js';
+import { COMPACTOR_TIMEOUT } from '../constants.js';
 import type { ProviderOptions, ProviderResult, ProviderPurpose, StreamOptions, RequestOptions, UsageRecord } from './types.js';
 
 export class ProviderFailure extends Schema.TaggedError<ProviderFailure>()('ProviderFailure', {
@@ -35,11 +36,19 @@ export class ProviderModel extends Context.Service<ProviderModel, ProviderServic
 export const providerOutcome = (provider: string, result: ProviderResult): Effect.Effect<ProviderResult, ProviderOutputLimit> =>
   result.finish_reason === 'MAX_TOKENS' ? Effect.fail(new ProviderOutputLimit({ provider, result })) : Effect.succeed(result);
 
+// A background summary that never answers would hold every later turn. An agent
+// turn has a person watching and a cancel key, so it gets no default limit.
+function compactorTimeout(): number {
+  const configured = Number(process.env.VICTRAL_COMPACTOR_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured > 0 ? configured : COMPACTOR_TIMEOUT;
+}
+
 export abstract class ProviderAdapter {
   readonly apiKey: string;
   readonly model: string;
   readonly purpose: ProviderPurpose;
   readonly webSearch: boolean;
+  readonly timeoutMs?: number;
   fetchImpl: typeof fetch;
   private readonly usage: (record: UsageRecord) => void;
   private readonly instrument: boolean;
@@ -47,6 +56,7 @@ export abstract class ProviderAdapter {
     this.apiKey = apiKey; this.model = options.model ?? defaultModel; this.purpose = options.purpose ?? 'agent';
     this.webSearch = options.webSearch ?? false; this.fetchImpl = options.fetchImpl ?? fetch;
     this.usage = options.usage ?? (() => {}); this.instrument = options.instrument ?? false;
+    this.timeoutMs = options.timeoutMs ?? (this.purpose === 'compactor' ? compactorTimeout() : undefined);
     this.effects = {
       model: this.model,
       chat: Effect.fn('Provider.chat')((messages, options = {}) => this.record(messages, options, false)),
@@ -108,7 +118,12 @@ export abstract class ProviderAdapter {
         if (text && ttft === undefined) ttft = performance.now() - start;
         options.onText?.(text);
       } } : options;
-      const effect = streaming ? this.rawEffects.stream(messages, callbacks) : this.rawEffects.chat(messages, options);
+      const request = streaming ? this.rawEffects.stream(messages, callbacks) : this.rawEffects.chat(messages, options);
+      // The request is interrupted and its response scope closed before this
+      // typed failure is raised, so a configured fallback may replace it.
+      const limit = this.timeoutMs;
+      const effect = limit === undefined ? request : request.pipe(Effect.timeoutOrElse({ duration: limit,
+        orElse: () => Effect.fail(this.failure('transport', `${this.provider} did not respond within ${limit >= 1000 ? `${Math.round(limit / 1000)}s` : `${limit}ms`}.`)) }));
       return effect.pipe(Effect.onExit(exit => Effect.sync(() => {
         const failure = Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
         const result = Exit.isSuccess(exit) ? exit.value : failure instanceof ProviderOutputLimit && Exit.isFailure(exit) && !Cause.hasDies(exit.cause) && !Cause.hasInterrupts(exit.cause) ? failure.result : undefined;

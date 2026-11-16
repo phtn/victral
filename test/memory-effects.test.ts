@@ -41,7 +41,7 @@ test('native compactions preserve the full legacy request conversation, shortest
   }
   expect(nativeRequests).toEqual(legacyRequests); expect(nativeRequests).toHaveLength(5);
   expect(native.storage.nodes.get('0:0')).toEqual(legacy.storage.nodes.get('0:0'));
-  expect(native.storage.nodes.get('0:0')?.size).toBe(518);
+  expect(native.storage.nodes.get('0:0')?.size).toBe(512);
   expect(native.memory.observerFailure).toBeUndefined();
 });
 

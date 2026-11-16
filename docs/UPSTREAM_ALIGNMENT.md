@@ -45,6 +45,15 @@ recipe is preserved in [OPTCHAT_SPEC_ORIGINAL.md](OPTCHAT_SPEC_ORIGINAL.md).
   existing history, causing a one-time prefix change. Later launches load the
   saved view. The main and compaction batch-state files supplement the gist's
   range file so unfinished batches and compaction caching survive restart.
+- **Bounded nodes:** The gist retains the shortest of five attempts even when
+  none fits. Nodes are immutable, so Victral cuts that shortest reply at the
+  512-byte limit on a UTF-8 boundary instead of saving an oversized line that
+  every later view and merge would carry.
+- **Compaction off:** `--no-compaction`, `VICTRAL_COMPACTION=off` and
+  `/compaction off` suspend the algorithm rather than change it. No nodes or
+  merges are produced, unbuilt messages render in full, and a one-line note
+  tells the agent so. The saved log, tree and view ranges keep their formats;
+  enabling compaction again continues from them.
 - **Optional integrations:** Subagents, `zoom("Name")`, images and device tools
   remain unimplemented. The project retains its file/Git/command tools, plans,
   UI and evaluation features. The prompt omits device-specific claims and uses

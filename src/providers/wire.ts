@@ -38,6 +38,19 @@ export const CohereToolCallDelta = Schema.Struct({ index: Schema.Int.check(Schem
 export const CohereMessageEnd = Schema.Struct({ delta: Schema.Struct({ finish_reason: optional(Schema.NullOr(Schema.String)), usage: optional(Usage) }) });
 export const CohereCitationStart = Schema.Struct({ delta: Schema.Struct({ message: Schema.Struct({ citations: Schema.Unknown }) }) });
 export const CohereError = Schema.Struct({ message: optional(Schema.String), error: optional(Schema.Struct({ message: optional(Schema.String) })) });
+const ChatToolFunction = Schema.Struct({ name: optional(Schema.String), arguments: optional(Schema.String) });
+export const ChatToolCall = Schema.Struct({ id: optional(Schema.String), index: optional(Schema.Int), type: optional(Schema.String), function: optional(ChatToolFunction) });
+// A local MLX server reports its reasoning stream as a sibling of content.
+export const ChatMessage = Schema.Struct({ role: optional(Schema.String), content: optional(Schema.NullOr(Schema.String)),
+  refusal: optional(Schema.NullOr(Schema.String)), reasoning: optional(Schema.NullOr(Schema.String)),
+  tool_calls: optional(Schema.Array(ChatToolCall)) });
+export const ChatChoice = Schema.Struct({ index: optional(Schema.Int), message: optional(ChatMessage),
+  delta: optional(Schema.Struct({ role: optional(Schema.String), content: optional(Schema.NullOr(Schema.String)),
+    refusal: optional(Schema.NullOr(Schema.String)), reasoning: optional(Schema.NullOr(Schema.String)),
+    tool_calls: optional(Schema.Array(ChatToolCall)) })),
+  finish_reason: optional(Schema.NullOr(Schema.String)) });
+export const ChatResponse = Schema.Struct({ choices: optional(Schema.Array(ChatChoice)), usage: optional(Usage),
+  error: optional(Schema.Struct({ message: optional(Schema.String) })) });
 export const OpenaiResponse = Schema.Struct({ status: optional(Schema.String), output: Schema.Array(Native), usage: optional(Usage),
   error: optional(Schema.NullOr(ErrorDetail)), incomplete_details: optional(Schema.NullOr(Schema.Struct({ reason: optional(Schema.String) }))) });
 export const SignatureState = Schema.Struct({ signature: optional(Schema.String) });

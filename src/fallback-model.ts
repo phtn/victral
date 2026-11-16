@@ -10,8 +10,13 @@ import { toolExitValue } from './tool-effects.js';
 
 export const FALLBACK_MODEL = 'muse-wonder-full';
 export const COHERE_FALLBACK_MODEL = 'command-a-plus-05-2026';
+export const ANTHROPIC_FALLBACK_MODEL = 'claude-sonnet-5-5';
 export function fallbackModelFor(model: string): string {
-  return findModel(model.trim().toLowerCase())?.provider === 'Cohere' ? COHERE_FALLBACK_MODEL : FALLBACK_MODEL;
+  const provider = findModel(model.trim().toLowerCase())?.provider;
+  // A local MLX selection falls back to Cohere rather than Meta: COHERE_API_KEY
+  // is the credential the default agent and the default MLX compactor assume.
+  return provider === 'Cohere' || provider === 'MLX' ? COHERE_FALLBACK_MODEL
+    : provider === 'Anthropic' ? ANTHROPIC_FALLBACK_MODEL : FALLBACK_MODEL;
 }
 type Provider = { model: string; effects: ProviderService };
 export type ModelFactory = (model: string, options: ProviderOptions) => Provider;
@@ -45,7 +50,7 @@ export class FallbackModel {
   }
   get model(): string { return this.current.model; }
   get fallbackActive(): boolean { return this.configuredModel !== this.fallbackModel && this.model === this.fallbackModel; }
-  private get fallbackCredential(): string { return this.fallbackModel === COHERE_FALLBACK_MODEL ? 'COHERE_API_KEY' : 'META_API_KEY or MODEL_API_KEY'; }
+  private get fallbackCredential(): string { return findModel(this.fallbackModel)?.credential ?? 'META_API_KEY or MODEL_API_KEY'; }
   private getFallback(): Provider { return this.fallback ??= this.factory(this.fallbackModel, { ...this.options, apiKey: undefined }); }
   private notify() { try { this.onFallback(this.fallbackModel); } catch { /* Presentation cannot fail a model request. */ } }
   private validate(result: ProviderResult): Effect.Effect<ProviderResult, ProviderFailure> {

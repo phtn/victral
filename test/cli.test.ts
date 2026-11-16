@@ -8,7 +8,7 @@ const cli = path.resolve(import.meta.dir, '../src/cli.ts');
 test('CLI help and terminal validation run without provider requests', async () => {
   const help = Bun.spawn([process.execPath, cli, '--help'], { stdout: 'pipe', stderr: 'pipe' });
   const helpText = await new Response(help.stdout).text();
-  expect(helpText).toContain('--allow-shell'); expect(helpText).toContain('--web-search'); expect(helpText).toContain('--mcp-config'); expect(helpText).toContain('--sfx-test'); expect(await help.exited).toBe(0);
+  expect(helpText).toContain('--allow-shell'); expect(helpText).toContain('--tikr'); expect(helpText).toContain('--web-search'); expect(helpText).toContain('--mcp-config'); expect(helpText).toContain('--sfx-test'); expect(await help.exited).toBe(0);
   const tui = Bun.spawn([process.execPath, cli, '--tui'], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
   expect(await new Response(tui.stderr).text()).toContain('requires an interactive terminal'); expect(await tui.exited).toBe(1);
 });
@@ -22,7 +22,12 @@ test('model listing names providers, credentials, and selection format', async (
   expect(output).toContain('4. muse-wonder-1.0 (Meta; alias mw1.0; needs META_API_KEY or MODEL_API_KEY)');
   expect(output).toContain('6. gpt-6-luna (OpenAI; alias luna6; needs OPENAI_API_KEY)');
   expect(output).toContain('7. gpt-6.1-sol (OpenAI; alias sol6.1; needs OPENAI_API_KEY)');
-  expect(output.match(/^  \d+\./gm)).toHaveLength(7);
+  expect(output).toContain('9. claude-opus-5-5 (Anthropic; alias opus5.5; needs ANTHROPIC_API_KEY)');
+  expect(output).toContain('10. @cf/meta/llama-3.2-1b-instruct (Cloudflare; alias cf-llama1b; needs CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID)');
+  expect(output).toContain('11. @cf/zai-org/glm-4.7-flash (Cloudflare; alias cf-glm47; needs CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID)');
+  expect(output).toContain('12. mlx-community/Qwen3.5-4B-OptiQ-4bit (MLX; alias optiq; needs none (local MLX_BASE_URL, default http://127.0.0.1:8080))');
+  expect(output).toContain('13. mlx-community/Llama-3.2-3B-Instruct-4bit (MLX; alias llama3b; needs none (local MLX_BASE_URL, default http://127.0.0.1:8080))');
+  expect(output.match(/^  \d+\./gm)).toHaveLength(13);
   expect(output).toContain('--model <number, short name, or ID>');
 });
 
@@ -41,6 +46,21 @@ test('provider-qualified commands switch OpenAI models and preserve the startup 
     expect(providerList).toContain('gpt-6-luna'); expect(providerList).not.toContain('muse-spark');
     expect(error).toContain('Unknown model "luna6" for meta');
     expect(output.match(/Agent: gpt-6.1-sol/g)).toHaveLength(2);
+  } finally { await fs.rm(directory, { recursive: true, force: true }); }
+});
+test('--no-compaction and VICTRAL_COMPACTION start a session with compaction off', async () => {
+  const help = Bun.spawn([process.execPath, cli, '--help'], { stdout: 'pipe', stderr: 'pipe' });
+  expect(await new Response(help.stdout).text()).toContain('--no-compaction');
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'victral-compaction-cli-'));
+  try {
+    for (const [flags, value, expected] of [[['--no-compaction'], '', 'Compaction off.'], [[], 'off', 'Compaction off.'], [[], '', 'Compaction on.']] as const) {
+      const child = Bun.spawn([process.execPath, cli, '--plain', '--model', 'mw1.0', '--compactor-model', 'mwfull', ...flags, '--project', directory, '--chat-dir', path.join(directory, 'chat'), '--no-jev'], {
+        cwd: directory, env: { ...process.env, META_API_KEY: 'offline-test', TYPESAFE_API_KEY: '', VICTRAL_COMPACTION: value },
+        stdin: new TextEncoder().encode('/compaction\n/exit\n'), stdout: 'pipe', stderr: 'pipe',
+      });
+      const [output, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+      expect(code).toBe(0); expect(output).toContain(expected);
+    }
   } finally { await fs.rm(directory, { recursive: true, force: true }); }
 });
 test('plain piped commands close cleanly and release chat storage', async () => {
